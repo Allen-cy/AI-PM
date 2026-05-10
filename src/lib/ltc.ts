@@ -1,5 +1,6 @@
-// Re-exported from ltc.types.ts to avoid circular dependency
-export type { LTCStage, RACIMatrix, LTCProject } from './ltc.types';
+import type { LTCStage, RACIMatrix, LTCProject } from './ltc.types';
+
+export type { LTCStage, RACIMatrix, LTCProject };
 
 export const LTC_STAGES: LTCStage[] = [
   {
