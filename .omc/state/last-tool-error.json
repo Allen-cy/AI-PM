@@ -1,7 +1,7 @@
 {
   "tool_name": "Bash",
-  "tool_input_preview": "{\"command\":\"npx vercel --yes --prod --scope chongzhengchais-projects 2>&1\",\"timeout\":120000,\"description\":\"Deploy to Vercel production\"}",
-  "error": "Exit code 1\n<claude-code-hint v=\"1\" type=\"plugin\" value=\"vercel@claude-plugins-official\" />\nRetrieving project…\nDeploying chongzhengchais-projects/ai-pm-system\nUploading [--------------------] (0.0B/15.5KB)\nUploading [=====---------------] (4.4KB/15.5KB)\nUploading [====================] (15.5KB/15.5KB)\nInspect: https://vercel.com/chongzhengchais-projects/ai-pm-system/BTXWzBHqiVRqzW4FnU12ADJWMnQ9 [8s]\nProduction: https://ai-pm-system-kjxpobet7-chongzhengchais-projects.vercel.app [8s]\nBuilding...\n...",
-  "timestamp": "2026-05-10T14:52:52.958Z",
+  "tool_input_preview": "{\"command\":\"npx vercel --yes --prod --scope chongzhengchais-projects 2>&1\",\"timeout\":120000,\"description\":\"Deploy updated version with Supabase\"}",
+  "error": "Exit code 1\n<claude-code-hint v=\"1\" type=\"plugin\" value=\"vercel@claude-plugins-official\" />\nRetrieving project…\nDeploying chongzhengchais-projects/ai-pm-system\nUploading [--------------------] (0.0B/27.1KB)\nUploading [======--------------] (9.5KB/27.1KB)\nUploading [===========---------] (15.1KB/27.1KB)\nUploading [====================] (27.1KB/27.1KB)\nInspect: https://vercel.com/chongzhengchais-projects/ai-pm-system/4FTYfwS3rozPP63UFdQRgCtqWUm3 [6s]\nProduction: https://ai-pm-system-89r1hwua7-chon...",
+  "timestamp": "2026-05-10T15:10:11.078Z",
   "retry_count": 1
 }

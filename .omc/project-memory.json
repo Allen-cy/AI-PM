@@ -158,6 +158,12 @@
       "type": "file"
     },
     {
+      "path": "src/lib/db.ts",
+      "accessCount": 3,
+      "lastAccessed": 1778426005732,
+      "type": "file"
+    },
+    {
       "path": "test-cpm.ts",
       "accessCount": 1,
       "lastAccessed": 1778418700506,

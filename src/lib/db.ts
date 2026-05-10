@@ -1,19 +1,22 @@
 /**
  * Database Layer - Supabase with localStorage fallback
+ * Supports both Supabase (production) and localStorage (development/demo)
  */
 
 import { isSupabaseConfigured } from './supabase';
 
-const STORAGE_KEYS = {
+// Storage keys
+const STORAGE_KEYS: Record<string, string> = {
   risks: 'ai_pm_risks',
   contracts: 'ai_pm_contracts',
   stakeholders: 'ai_pm_stakeholders',
   projects: 'ai_pm_projects',
   reports: 'ai_pm_reports',
   okrs: 'ai_pm_okrs',
-} as const;
+};
 
-function getFromStorage<T>(key: string, defaultValue: T[]): T[] {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function getFromStorage(key: string, defaultValue: any[]): any[] {
   if (typeof window === 'undefined') return defaultValue;
   try {
     const stored = localStorage.getItem(key);
@@ -21,7 +24,8 @@ function getFromStorage<T>(key: string, defaultValue: T[]): T[] {
   } catch { return defaultValue; }
 }
 
-function saveToStorage<T>(key: string, data: T[]): void {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function saveToStorage(key: string, data: any[]): void {
   if (typeof window === 'undefined') return;
   try { localStorage.setItem(key, JSON.stringify(data)); } catch (e) { console.error(e); }
 }
@@ -42,7 +46,7 @@ export async function getRisks(projectId?: string) {
   return getFromStorage(STORAGE_KEYS.risks, []);
 }
 
-export async function saveRisk(risk: any) {
+export async function saveRisk(risk: Record<string, unknown>) {
   if (isSupabaseConfigured()) {
     const { supabase } = await import('./supabase');
     const { data, error } = await supabase.from('risks').upsert(risk).select().single();
@@ -50,7 +54,7 @@ export async function saveRisk(risk: any) {
     return data;
   }
   const risks = getFromStorage(STORAGE_KEYS.risks, []);
-  const index = risks.findIndex((r: any) => r.id === risk.id);
+  const index = risks.findIndex((r) => r.id === risk.id);
   if (index >= 0) risks[index] = risk;
   else risks.push({ ...risk, createdAt: new Date().toISOString() });
   saveToStorage(STORAGE_KEYS.risks, risks);
@@ -65,7 +69,7 @@ export async function deleteRisk(id: string) {
     return;
   }
   const risks = getFromStorage(STORAGE_KEYS.risks, []);
-  saveToStorage(STORAGE_KEYS.risks, risks.filter((r: any) => r.id !== id));
+  saveToStorage(STORAGE_KEYS.risks, risks.filter((r) => r.id !== id));
 }
 
 // =====================
@@ -84,19 +88,19 @@ export async function getContracts(projectId?: string) {
   return getFromStorage(STORAGE_KEYS.contracts, []);
 }
 
-export async function saveContract(contract: any) {
+export async function saveContract(contract: Record<string, unknown>) {
   if (isSupabaseConfigured()) {
     const { supabase } = await import('./supabase');
     const { data: contractData, error: contractError } = await supabase.from('contracts').upsert(contract).select().single();
     if (contractError) throw contractError;
     if (contract.milestones?.length) {
-      const milestones = contract.milestones.map((m: any) => ({ ...m, contract_id: contractData.id }));
+      const milestones = contract.milestones.map((m: Record<string, unknown>) => ({ ...m, contract_id: contractData.id }));
       await supabase.from('payment_milestones').upsert(milestones);
     }
     return contractData;
   }
   const contracts = getFromStorage(STORAGE_KEYS.contracts, []);
-  const index = contracts.findIndex((c: any) => c.id === contract.id);
+  const index = contracts.findIndex((c) => c.id === contract.id);
   if (index >= 0) contracts[index] = contract;
   else contracts.push({ ...contract, createdAt: new Date().toISOString() });
   saveToStorage(STORAGE_KEYS.contracts, contracts);
@@ -111,7 +115,7 @@ export async function deleteContract(id: string) {
     return;
   }
   const contracts = getFromStorage(STORAGE_KEYS.contracts, []);
-  saveToStorage(STORAGE_KEYS.contracts, contracts.filter((c: any) => c.id !== id));
+  saveToStorage(STORAGE_KEYS.contracts, contracts.filter((c) => c.id !== id));
 }
 
 // =====================
@@ -130,7 +134,7 @@ export async function getStakeholders(projectId?: string) {
   return getFromStorage(STORAGE_KEYS.stakeholders, []);
 }
 
-export async function saveStakeholder(stakeholder: any) {
+export async function saveStakeholder(stakeholder: Record<string, unknown>) {
   if (isSupabaseConfigured()) {
     const { supabase } = await import('./supabase');
     const { data, error } = await supabase.from('stakeholders').upsert(stakeholder).select().single();
@@ -138,7 +142,7 @@ export async function saveStakeholder(stakeholder: any) {
     return data;
   }
   const stakeholders = getFromStorage(STORAGE_KEYS.stakeholders, []);
-  const index = stakeholders.findIndex((s: any) => s.id === stakeholder.id);
+  const index = stakeholders.findIndex((s) => s.id === stakeholder.id);
   if (index >= 0) stakeholders[index] = stakeholder;
   else stakeholders.push({ ...stakeholder, createdAt: new Date().toISOString() });
   saveToStorage(STORAGE_KEYS.stakeholders, stakeholders);
@@ -153,7 +157,7 @@ export async function deleteStakeholder(id: string) {
     return;
   }
   const stakeholders = getFromStorage(STORAGE_KEYS.stakeholders, []);
-  saveToStorage(STORAGE_KEYS.stakeholders, stakeholders.filter((s: any) => s.id !== id));
+  saveToStorage(STORAGE_KEYS.stakeholders, stakeholders.filter((s) => s.id !== id));
 }
 
 // =====================
@@ -172,19 +176,19 @@ export async function getOKRs(projectId?: string) {
   return getFromStorage(STORAGE_KEYS.okrs, []);
 }
 
-export async function saveOKR(okr: any) {
+export async function saveOKR(okr: Record<string, unknown>) {
   if (isSupabaseConfigured()) {
     const { supabase } = await import('./supabase');
     const { data: okrData, error: okrError } = await supabase.from('okrs').upsert(okr).select().single();
     if (okrError) throw okrError;
     if (okr.keyResults?.length) {
-      const keyResults = okr.keyResults.map((kr: any) => ({ ...kr, okr_id: okrData.id }));
+      const keyResults = okr.keyResults.map((kr: Record<string, unknown>) => ({ ...kr, okr_id: okrData.id }));
       await supabase.from('okr_key_results').upsert(keyResults);
     }
     return okrData;
   }
   const okrs = getFromStorage(STORAGE_KEYS.okrs, []);
-  const index = okrs.findIndex((o: any) => o.id === okr.id);
+  const index = okrs.findIndex((o) => o.id === okr.id);
   if (index >= 0) okrs[index] = okr;
   else okrs.push({ ...okr, createdAt: new Date().toISOString() });
   saveToStorage(STORAGE_KEYS.okrs, okrs);
@@ -207,7 +211,7 @@ export async function getReports(projectId?: string) {
   return getFromStorage(STORAGE_KEYS.reports, []);
 }
 
-export async function saveReport(report: any) {
+export async function saveReport(report: Record<string, unknown>) {
   if (isSupabaseConfigured()) {
     const { supabase } = await import('./supabase');
     const { data, error } = await supabase.from('reports').insert(report).select().single();
@@ -234,7 +238,7 @@ export async function getProjects() {
   return getFromStorage(STORAGE_KEYS.projects, []);
 }
 
-export async function saveProject(project: any) {
+export async function saveProject(project: Record<string, unknown>) {
   if (isSupabaseConfigured()) {
     const { supabase } = await import('./supabase');
     const { data, error } = await supabase.from('projects').upsert(project).select().single();
@@ -242,7 +246,7 @@ export async function saveProject(project: any) {
     return data;
   }
   const projects = getFromStorage(STORAGE_KEYS.projects, []);
-  const index = projects.findIndex((p: any) => p.id === project.id);
+  const index = projects.findIndex((p) => p.id === project.id);
   if (index >= 0) projects[index] = { ...project, updatedAt: new Date().toISOString() };
   else projects.push({ ...project, createdAt: new Date().toISOString() });
   saveToStorage(STORAGE_KEYS.projects, projects);
