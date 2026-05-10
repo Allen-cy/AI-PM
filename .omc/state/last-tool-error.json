@@ -1,7 +1,7 @@
 {
   "tool_name": "Bash",
-  "tool_input_preview": "{\"command\":\"npx vercel --yes --prod --scope chongzhengchais-projects 2>&1\",\"timeout\":120000,\"description\":\"Deploy to Vercel with scope\"}",
-  "error": "Exit code 1\n<claude-code-hint v=\"1\" type=\"plugin\" value=\"vercel@claude-plugins-official\" />\nLoading scopes…\nSearching for existing projects…\n> Auto-detected Project Settings for Next.js\n\nLinked to chongzhengchais-projects/ai-pm-system (created .vercel)\n> Connecting GitHub repository: https://github.com/Allen-cy/AI-PM\n> Connected\nDeploying chongzhengchais-projects/ai-pm-system\nUploading [--------------------] (0.0B/1.2MB)\nUploading [=====---------------] (307.4KB/1.2MB)\nUploading [==========-----...",
-  "timestamp": "2026-05-10T14:45:19.401Z",
+  "tool_input_preview": "{\"command\":\"npx vercel --yes --prod --scope chongzhengchais-projects 2>&1\",\"timeout\":120000,\"description\":\"Deploy to Vercel production\"}",
+  "error": "Exit code 1\n<claude-code-hint v=\"1\" type=\"plugin\" value=\"vercel@claude-plugins-official\" />\nRetrieving project…\nDeploying chongzhengchais-projects/ai-pm-system\nUploading [--------------------] (0.0B/14.8KB)\nUploading [==============------] (10.5KB/14.8KB)\nUploading [==================--] (14.0KB/14.8KB)\nUploading [====================] (14.8KB/14.8KB)\nInspect: https://vercel.com/chongzhengchais-projects/ai-pm-system/3V3W4jfjmBcqeRp9xtfrc3F4HUB9 [6s]\nProduction: https://ai-pm-system-gce6c5md8-cho...",
+  "timestamp": "2026-05-10T14:48:41.572Z",
   "retry_count": 1
 }
