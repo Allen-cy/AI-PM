@@ -152,15 +152,15 @@
       "type": "file"
     },
     {
-      "path": "PROJECT_STATUS.md",
-      "accessCount": 4,
-      "lastAccessed": 1778423477913,
+      "path": "src/lib/db.ts",
+      "accessCount": 5,
+      "lastAccessed": 1778426109193,
       "type": "file"
     },
     {
-      "path": "src/lib/db.ts",
-      "accessCount": 3,
-      "lastAccessed": 1778426005732,
+      "path": "PROJECT_STATUS.md",
+      "accessCount": 4,
+      "lastAccessed": 1778423477913,
       "type": "file"
     },
     {

@@ -93,9 +93,10 @@ export async function saveContract(contract: Record<string, unknown>) {
     const { supabase } = await import('./supabase');
     const { data: contractData, error: contractError } = await supabase.from('contracts').upsert(contract).select().single();
     if (contractError) throw contractError;
-    if (contract.milestones?.length) {
-      const milestones = contract.milestones.map((m: Record<string, unknown>) => ({ ...m, contract_id: contractData.id }));
-      await supabase.from('payment_milestones').upsert(milestones);
+    const milestones = contract.milestones as Array<Record<string, unknown>> | undefined;
+    if (milestones?.length) {
+      const mapped = milestones.map((m) => ({ ...m, contract_id: contractData.id }));
+      await supabase.from('payment_milestones').upsert(mapped);
     }
     return contractData;
   }
@@ -181,9 +182,10 @@ export async function saveOKR(okr: Record<string, unknown>) {
     const { supabase } = await import('./supabase');
     const { data: okrData, error: okrError } = await supabase.from('okrs').upsert(okr).select().single();
     if (okrError) throw okrError;
-    if (okr.keyResults?.length) {
-      const keyResults = okr.keyResults.map((kr: Record<string, unknown>) => ({ ...kr, okr_id: okrData.id }));
-      await supabase.from('okr_key_results').upsert(keyResults);
+    const keyResults = okr.keyResults as Array<Record<string, unknown>> | undefined;
+    if (keyResults?.length) {
+      const mapped = keyResults.map((kr) => ({ ...kr, okr_id: okrData.id }));
+      await supabase.from('okr_key_results').upsert(mapped);
     }
     return okrData;
   }

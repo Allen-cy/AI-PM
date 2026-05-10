@@ -1,7 +1,7 @@
 {
   "tool_name": "Bash",
-  "tool_input_preview": "{\"command\":\"npx vercel --yes --prod --scope chongzhengchais-projects 2>&1\",\"timeout\":120000,\"description\":\"Deploy updated version with Supabase\"}",
-  "error": "Exit code 1\n<claude-code-hint v=\"1\" type=\"plugin\" value=\"vercel@claude-plugins-official\" />\nRetrieving project…\nDeploying chongzhengchais-projects/ai-pm-system\nUploading [--------------------] (0.0B/27.1KB)\nUploading [======--------------] (9.5KB/27.1KB)\nUploading [===========---------] (15.1KB/27.1KB)\nUploading [====================] (27.1KB/27.1KB)\nInspect: https://vercel.com/chongzhengchais-projects/ai-pm-system/4FTYfwS3rozPP63UFdQRgCtqWUm3 [6s]\nProduction: https://ai-pm-system-89r1hwua7-chon...",
-  "timestamp": "2026-05-10T15:10:11.078Z",
+  "tool_input_preview": "{\"command\":\"git add -A && git commit -m \\\"fix: type safety in db.ts\\\" && git push && npx vercel --yes --prod --scope chongzhengchais-projects 2>&1\",\"timeout\":180000,\"description\":\"Push fix and redeplo...",
+  "error": "Exit code 1\n[main d10f419] fix: type safety in db.ts\n 3 files changed, 33 insertions(+), 23 deletions(-)\nTo https://github.com/Allen-cy/AI-PM.git\n   2605e70..d10f419  main -> main\n<claude-code-hint v=\"1\" type=\"plugin\" value=\"vercel@claude-plugins-official\" />\nRetrieving project…\nDeploying chongzhengchais-projects/ai-pm-system\nUploading [--------------------] (0.0B/14.4KB)\nUploading [=====---------------] (3.8KB/14.4KB)\nUploading [====================] (14.4KB/14.4KB)\nInspect: https://vercel.com/...",
+  "timestamp": "2026-05-10T15:14:32.254Z",
   "retry_count": 1
 }
