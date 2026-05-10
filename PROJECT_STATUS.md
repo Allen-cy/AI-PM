@@ -1,0 +1,121 @@
+# AI-PM-System 项目进展报告
+
+> 更新日期：2026-05-10 | 版本：V3.0 | 状态：主体功能完成
+
+---
+
+## 一、本次修复内容
+
+### 问题描述
+关键路径（CPM）计算结果严重错误：项目工期显示5天而非43天，关键路径仅显示A而非A→B→C→E→F→G。
+
+### 根因分析
+`topologicalSort` 函数中存在对象引用bug：
+- `topologicalSort` 内部创建了新的任务对象（`{...t}` spread拷贝）
+- `calculateCPM` 中的 `taskMap` 指向原始浅拷贝的任务对象
+- forward pass 时 B/C/D 的 `ef` 始终为 `undefined`（因为从错误的map查询）
+- 导致所有任务的 ES 都变成 0 或 max(0, undefined)，项目工期变成5
+
+### 修复方案
+重写 `topologicalSort`，直接操作传入的任务数组对象，不创建中间拷贝：
+
+```typescript
+// 修复前：创建了新的任务对象副本
+const taskMap = new Map(tasks.map(t => [t.id, { ...t, predecessors: [...t.predecessors] }]));
+
+// 修复后：直接使用传入的任务对象
+const taskById = new Map(tasks.map(t => [t.id, t]));
+```
+
+### 验证结果
+```
+项目总工期: 43天 ✓
+关键路径: A → B → C → E → F → G ✓
+D任务浮动: 5天 ✓
+```
+
+---
+
+## 二、系统现状
+
+### 已完成模块（18个）
+| 模块 | 路径 | 状态 |
+|------|------|------|
+| 立项与启动 | /initiation | ✅ 完成 |
+| 项目组合看板 | /dashboard | ✅ 完成 |
+| AI WBS智能拆解 | /wbs | ✅ 完成 |
+| 关键路径计算 | /cpm | ✅ 完成 |
+| 挣值分析 | /evm | ✅ 完成 |
+| 风险管理 | /risk | ✅ 完成 |
+| 合同与回款 | /contract | ✅ 完成 |
+| 规划中心 | /planning | ✅ 完成 |
+| 执行与交付 | /execution | ✅ 完成 |
+| 质量管理 | /quality | ✅ 完成 |
+| 监控中心 | /monitoring | ✅ 完成 |
+| 项目收尾 | /closing | ✅ 完成 |
+| AI报告生成 | /reports | ✅ 完成 |
+| 干系人管理 | /stakeholder | ✅ 完成 |
+| LTC全流程 | /ltc | ✅ 完成 |
+| 流程设计白板 | /process | ✅ 完成 |
+| 知识库与AI问答 | /knowledge | ✅ 完成 |
+| PMO治理中心 | /pmo | ✅ 完成 |
+
+### 核心功能
+- **本地CPM算法**：ES/EF/LS/LF/浮动时间计算，关键路径识别
+- **AI增强模式**：集成DeepSeek模型，提供计算推理过程
+- **甘特图可视化**：关键路径高亮，工期比例显示
+
+---
+
+## 三、后续优化方向
+
+### 已完成功能
+- [x] 挣值分析(EVM) /evm
+- [x] 风险管理 /risk
+- [x] 合同与回款 /contract
+- [x] 规划中心 /planning
+- [x] 执行与交付 /execution
+- [x] 质量管理 /quality
+- [x] 监控中心 /monitoring
+- [x] 项目收尾 /closing
+- [x] AI报告生成 /reports
+- [x] 干系人管理 /stakeholder
+- [x] LTC全流程 /ltc
+- [x] 流程设计白板 /process
+- [x] 知识库与AI问答 /knowledge
+- [x] PMO治理中心 /pmo
+
+### 待优化项（技术债务）
+1. **数据持久化**：目前所有数据存在内存/ localStorage，需对接飞书多维表格
+2. **WBS模板库**：需要建立4类项目模板（信息化/课程/工程/运营）
+3. **LTC流程引擎**：12阶段尚未实现BPMN自动化
+4. **LLM路由优化**：DeepSeek/MiniMax自动切换逻辑
+
+---
+
+## 四、技术债务
+
+### 需要重构的部分
+1. **LLM路由**：需要统一 llm.ts 的模型选择逻辑，支持 DeepSeek/MiniMax 自动切换
+2. **数据持久化**：目前所有数据存在内存/ localStorage，需对接飞书多维表格
+3. **WBS模板库**：需要建立4类项目模板（信息化/课程/工程/运营）
+4. **流程引擎**：LTC 12阶段尚未实现BPMN自动化
+
+---
+
+## 五、上下文续接指南
+
+如需继续开发，请执行以下任一操作：
+
+### 选项A：继续优化
+直接说"继续开发"或"下一步"，我将基于当前上下文继续。
+
+### 选项B：数据集成
+说"对接飞书数据"，我将为现有模块添加飞书多维表格的数据持久化。
+
+### 选项C：修复问题
+说"修复XXX"，描述问题，我将在保持当前上下文的情况下进行修复。
+
+---
+
+*本报告自动生成，开发服务器运行在 http://localhost:3000*

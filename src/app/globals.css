@@ -1,26 +1,179 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --bg: #0a0e17;
+  --surface: #131a26;
+  --surface2: #1a2332;
+  --border: #253049;
+  --text: #e2e8f0;
+  --text2: #94a3b8;
+  --accent: #3b82f6;
+  --accent2: #60a5fa;
+  --green: #10b981;
+  --amber: #f59e0b;
+  --red: #ef4444;
+  --purple: #8b5cf6;
+  --cyan: #06b6d4;
+  --feishu: #3370ff;
+  --radius: 12px;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-background: var(--bg);
+  --color-foreground: var(--text);
+  --font-sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+  min-height: 100vh;
+}
+
+@layer components {
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px 24px;
+  }
+
+  .card-hover {
+    transition: all 0.2s ease;
+  }
+  .card-hover:hover {
+    border-color: var(--accent);
+    transform: translateY(-1px);
+  }
+
+  .btn-primary {
+    background: var(--accent);
+    color: white;
+    padding: 10px 20px;
+    border-radius: 8px;
+    font-weight: 600;
+    font-size: 0.9rem;
+    border: none;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+  .btn-primary:hover {
+    background: var(--accent2);
+    transform: translateY(-1px);
+  }
+
+  .btn-secondary {
+    background: var(--surface2);
+    color: var(--text);
+    padding: 10px 20px;
+    border-radius: 8px;
+    font-weight: 600;
+    font-size: 0.9rem;
+    border: 1px solid var(--border);
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+  .btn-secondary:hover {
+    border-color: var(--accent);
+    background: rgba(59, 130, 246, 0.1);
+  }
+
+  .input {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 14px;
+    color: var(--text);
+    font-size: 0.9rem;
+    width: 100%;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+  .input:focus {
+    border-color: var(--accent);
+  }
+  .input::placeholder {
+    color: var(--text2);
+  }
+
+  .label {
+    font-size: 0.8rem;
+    color: var(--text2);
+    font-weight: 500;
+    margin-bottom: 6px;
+    display: block;
+  }
+
+  .stat-card {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+    text-align: center;
+  }
+
+  .stat-num {
+    font-size: 2rem;
+    font-weight: 800;
+    line-height: 1;
+  }
+
+  .stat-label {
+    font-size: 0.8rem;
+    color: var(--text2);
+    margin-top: 6px;
+  }
+
+  .health-green { color: var(--green); }
+  .health-yellow { color: var(--amber); }
+  .health-red { color: var(--red); }
+
+  .tag {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+  .tag-blue { background: rgba(59, 130, 246, 0.15); color: var(--accent2); }
+  .tag-green { background: rgba(16, 185, 129, 0.15); color: var(--green); }
+  .tag-amber { background: rgba(245, 158, 11, 0.15); color: var(--amber); }
+  .tag-purple { background: rgba(139, 92, 246, 0.15); color: var(--purple); }
+
+  .section-title {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--text);
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .code-block {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    font-family: "SF Mono", "Fira Code", monospace;
+    font-size: 0.82rem;
+    color: var(--accent2);
+    overflow-x: auto;
+  }
+
+  .prose h1 { font-size: 1.8rem; font-weight: 800; margin-bottom: 16px; }
+  .prose h2 { font-size: 1.3rem; font-weight: 700; margin: 24px 0 12px; }
+  .prose h3 { font-size: 1.1rem; font-weight: 600; margin: 20px 0 10px; }
+  .prose p { color: var(--text2); line-height: 1.7; margin-bottom: 12px; }
+  .prose ul { padding-left: 20px; color: var(--text2); line-height: 1.8; }
+  .prose li { margin-bottom: 6px; }
+  .prose strong { color: var(--text); font-weight: 600; }
+  .prose code { background: var(--surface2); padding: 2px 6px; border-radius: 4px; font-size: 0.85em; }
 }
