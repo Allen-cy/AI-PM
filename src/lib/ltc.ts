@@ -1,6 +1,6 @@
 import type { LTCStage, RACIMatrix, LTCProject } from './ltc';
 
-export { LTCStage, RACIMatrix, LTCProject } from './ltc';
+export type { LTCStage, RACIMatrix, LTCProject };
 
 export const LTC_STAGES: LTCStage[] = [
   {

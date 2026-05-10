@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"npx vercel --yes --prod --scope chongzhengchais-projects 2>&1\",\"timeout\":120000,\"description\":\"Deploy to Vercel with scope\"}",
+  "error": "Exit code 1\n<claude-code-hint v=\"1\" type=\"plugin\" value=\"vercel@claude-plugins-official\" />\nLoading scopes…\nSearching for existing projects…\n> Auto-detected Project Settings for Next.js\n\nLinked to chongzhengchais-projects/ai-pm-system (created .vercel)\n> Connecting GitHub repository: https://github.com/Allen-cy/AI-PM\n> Connected\nDeploying chongzhengchais-projects/ai-pm-system\nUploading [--------------------] (0.0B/1.2MB)\nUploading [=====---------------] (307.4KB/1.2MB)\nUploading [==========-----...",
+  "timestamp": "2026-05-10T14:45:19.401Z",
+  "retry_count": 1
+}
