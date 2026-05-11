@@ -4,6 +4,9 @@
 -- Enable UUID extension
 create extension if not exists "uuid-ossp";
 
+-- Enable pgvector for embeddings (optional - needed for knowledge base AI features)
+create extension if not exists "vector";
+
 -- =====================
 -- Core Project Tables
 -- =====================

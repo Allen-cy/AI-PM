@@ -204,9 +204,13 @@ export default function Home() {
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <span style={{ fontSize: "1.4rem" }}>🏗️</span>
           <span style={{ fontWeight: 800, fontSize: "1.05rem" }}>AI项目管理助手</span>
-          <span className="tag tag-blue">V2.0</span>
+          <span className="tag tag-blue">V3.0</span>
         </div>
-        <div style={{ display: "flex", gap: 16, fontSize: "0.8rem", color: "var(--text2)" }}>
+        <div style={{ display: "flex", gap: 16, fontSize: "0.8rem", color: "var(--text2)", alignItems: "center" }}>
+          <span>作者：柴春宇</span>
+          <span style={{ color: "var(--border)" }}>|</span>
+          <span>{new Date().toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' })}</span>
+          <span style={{ color: "var(--border)" }}>|</span>
           <span>飞书底座 + Vercel AI增强</span>
           <span style={{ color: "var(--border)" }}>|</span>
           <span>DeepSeek + MiniMax</span>
@@ -220,7 +224,13 @@ export default function Home() {
         borderBottom: "1px solid var(--border)",
       }}>
         <h1 style={{ fontSize: "2rem", fontWeight: 800, marginBottom: 12, letterSpacing: "-0.02em" }}>
-          让AI成为项目管理的<span style={{ color: "var(--accent2)" }}>超级助手</span>
+          {(() => {
+            const h = new Date().getHours();
+            if (h < 12) return '☀️ 早上好，开启高效的一天';
+            if (h < 18) return '🌤️ 下午好，保持专注';
+            return '🌙 晚上好，整理一天收获';
+          })()}
+          <br />让AI成为项目管理的<span style={{ color: "var(--accent2)" }}>超级助手</span>
         </h1>
         <p style={{ color: "var(--text2)", fontSize: "0.92rem", maxWidth: 520, margin: "0 auto 24px", lineHeight: 1.7 }}>
           融合PMBOK与PRINCE2方法论，覆盖项目全生命周期5大阶段 + 12大核心模块。
