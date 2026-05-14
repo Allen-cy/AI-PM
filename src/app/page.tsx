@@ -178,6 +178,27 @@ const PHASE_MODULES = [
       },
     ],
   },
+  {
+    phase: "蓝图中心",
+    emoji: "🗺️",
+    tag: "流程总览",
+    modules: [
+      {
+        href: "/blueprint-v1",
+        icon: "📊",
+        title: "蓝图视图 V1",
+        desc: "卡片式流程总览，5大阶段17子流程",
+        color: "blue",
+      },
+      {
+        href: "/blueprint-v2",
+        icon: "🔵",
+        title: "蓝图视图 V2",
+        desc: "圆形辐射图，图形化展示全流程",
+        color: "purple",
+      },
+    ],
+  },
 ];
 
 const COLOR_MAP: Record<string, { bg: string; color: string }> = {
