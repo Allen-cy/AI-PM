@@ -1,392 +1,475 @@
 "use client";
 
 import Link from "next/link";
-import { useState, useEffect, useRef } from "react";
+import { useState } from "react";
 
-interface SubProcess {
+interface ProcessNode {
   id: string;
   name: string;
   href: string;
+  status: "done" | "current" | "pending";
 }
 
-interface MainProcess {
+interface Module {
   id: string;
   name: string;
   icon: string;
   color: string;
-  subProcesses: SubProcess[];
+  items: ProcessNode[];
 }
 
-const BLUEPRINT_DATA: MainProcess[] = [
+const MODULES: Module[] = [
   {
-    id: "initiation",
-    name: "启动",
-    icon: "🚀",
-    color: "#f97316",
-    subProcesses: [
-      { id: "opportunity", name: "商机立项", href: "/ltc" },
-      { id: "requirements", name: "需求调研", href: "/execution" },
-    ],
-  },
-  {
-    id: "execution",
-    name: "交付",
-    icon: "⚙️",
+    id: "sales",
+    name: "销售管理",
+    icon: "💼",
     color: "#3b82f6",
-    subProcesses: [
-      { id: "construction", name: "施工调试", href: "/execution" },
-      { id: "acceptance", name: "验收培训", href: "/quality" },
-      { id: "contract", name: "合同管理", href: "/contract" },
+    items: [
+      { id: "opportunity", name: "商机", href: "/initiation", status: "done" },
+      { id: "sign", name: "合同签约", href: "/contract", status: "done" },
+      { id: "contract-order", name: "合同/订单", href: "/contract", status: "current" },
+      { id: "payment-plan", name: "回款计划", href: "/contract", status: "pending" },
+      { id: "receivable", name: "应收", href: "/contract", status: "pending" },
+      { id: "writeoff", name: "核销", href: "/contract", status: "pending" },
+      { id: "aftersale", name: "售后服务", href: "/execution", status: "pending" },
     ],
   },
   {
-    id: "monitoring",
-    name: "运维",
-    icon: "📡",
-    color: "#22c55e",
-    subProcesses: [
-      { id: "incident", name: "故障响应", href: "/monitoring" },
-      { id: "report", name: "服务报告", href: "/reports" },
-    ],
-  },
-  {
-    id: "administration",
-    name: "行政",
+    id: "project",
+    name: "项目管理",
     icon: "📋",
-    color: "#a855f7",
-    subProcesses: [
-      { id: "budget", name: "预算管理", href: "/evm" },
-      { id: "archive", name: "档案验收", href: "/closing" },
+    color: "#22c55e",
+    items: [
+      { id: "initiation", name: "项目立项", href: "/initiation", status: "done" },
+      { id: "planning", name: "项目规划", href: "/planning", status: "current" },
+      { id: "execution", name: "项目执行", href: "/execution", status: "pending" },
+      { id: "closure", name: "项目收尾", href: "/closing", status: "pending" },
+      { id: "monitoring", name: "监控管理", href: "/monitoring", status: "pending" },
     ],
   },
   {
-    id: "support",
-    name: "客服",
-    icon: "💬",
-    color: "#ec4899",
-    subProcesses: [
-      { id: "satisfaction", name: "客户满意度", href: "/reports" },
-      { id: "retrospective", name: "项目复盘", href: "/pmo" },
+    id: "cost",
+    name: "成本管理",
+    icon: "💰",
+    color: "#f59e0b",
+    items: [
+      { id: "estimate", name: "项目概算", href: "/evm", status: "done" },
+      { id: "budget", name: "项目预算", href: "/evm", status: "current" },
+      { id: "budget-exec", name: "预算执行(核算)", href: "/evm", status: "pending" },
+      { id: "final", name: "决算", href: "/evm", status: "pending" },
+    ],
+  },
+  {
+    id: "tools",
+    name: "工具",
+    icon: "🛠️",
+    color: "#8b5cf6",
+    items: [
+      { id: "wecom", name: "项目与企业微信", href: "/process", status: "pending" },
+      { id: "pmo-board", name: "PMO看板", href: "/pmo", status: "pending" },
+      { id: "template", name: "项目模版", href: "/knowledge", status: "pending" },
+      { id: "doc", name: "结构化文档", href: "/knowledge", status: "pending" },
+      { id: "other", name: "其他", href: "/knowledge", status: "pending" },
     ],
   },
 ];
 
+// Central flow nodes (top to bottom)
+const FLOW_NODES = [
+  { id: "start", name: "启动", icon: "🚀", color: "#64748b", y: 5 },
+  { id: "demand", name: "需求", icon: "📝", color: "#3b82f6", y: 20 },
+  { id: "plan", name: "方案/规划", icon: "📐", color: "#8b5cf6", y: 35 },
+  { id: "bid", name: "招投标", icon: "📋", color: "#f59e0b", y: 50 },
+  { id: "contract", name: "合同签约", icon: "✍️", color: "#22c55e", y: 65 },
+  { id: "execute", name: "项目执行", icon: "⚙️", color: "#3b82f6", y: 80 },
+  { id: "accept", name: "验收交付", icon: "✅", color: "#22c55e", y: 95 },
+  { id: "close", name: "项目收尾", icon: "🏁", color: "#64748b", y: 110 },
+  { id: "payment", name: "回款", icon: "💵", color: "#ec4899", y: 125 },
+  { id: "archive", name: "归档", icon: "📁", color: "#64748b", y: 140 },
+];
+
+const STATUS_STYLE = {
+  done: { bg: "rgba(34, 197, 94, 0.2)", border: "#22c55e", text: "已完成" },
+  current: { bg: "rgba(59, 130, 246, 0.2)", border: "#3b82f6", text: "进行中" },
+  pending: { bg: "rgba(148, 163, 184, 0.2)", border: "#94a3b8", text: "待启动" },
+};
+
 export default function BlueprintV2Page() {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [dimensions, setDimensions] = useState({ width: 1200, height: 800 });
+  const [editingModule, setEditingModule] = useState<string | null>(null);
+  const [modules, setModules] = useState<Module[]>(MODULES);
+  const [editName, setEditName] = useState("");
+  const [hoveredNode, setHoveredNode] = useState<string | null>(null);
 
-  useEffect(() => {
-    const updateDimensions = () => {
-      if (containerRef.current) {
-        setDimensions({
-          width: containerRef.current.offsetWidth,
-          height: Math.max(600, containerRef.current.offsetHeight),
-        });
+  const handleEditModule = (module: Module) => {
+    setEditingModule(module.id);
+    setEditName(module.name);
+  };
+
+  const handleSaveModule = () => {
+    if (editingModule) {
+      setModules(modules.map(m =>
+        m.id === editingModule ? { ...m, name: editName } : m
+      ));
+      setEditingModule(null);
+    }
+  };
+
+  const handleEditItem = (moduleId: string, itemId: string) => {
+    const module = modules.find(m => m.id === moduleId);
+    const item = module?.items.find(i => i.id === itemId);
+    if (item) {
+      const newName = prompt("修改节点名称", item.name);
+      if (newName && newName !== item.name) {
+        setModules(modules.map(m =>
+          m.id === moduleId
+            ? { ...m, items: m.items.map(i => i.id === itemId ? { ...i, name: newName } : i) }
+            : m
+        ));
       }
-    };
+    }
+  };
 
-    updateDimensions();
-    window.addEventListener("resize", updateDimensions);
-    return () => window.removeEventListener("resize", updateDimensions);
-  }, []);
-
-  const centerX = dimensions.width / 2;
-  const centerY = dimensions.height / 2;
-  const mainRadius = Math.min(dimensions.width, dimensions.height) * 0.35;
-  const subRadius = Math.min(dimensions.width, dimensions.height) * 0.55;
-
-  const getPosition = (angle: number, radius: number) => ({
-    x: centerX + radius * Math.cos(angle),
-    y: centerY + radius * Math.sin(angle),
-  });
+  const handleStatusChange = (moduleId: string, itemId: string) => {
+    const module = modules.find(m => m.id === moduleId);
+    const item = module?.items.find(i => i.id === itemId);
+    if (item) {
+      const nextStatus = item.status === "done" ? "current" : item.status === "current" ? "pending" : "done";
+      setModules(modules.map(m =>
+        m.id === moduleId
+          ? { ...m, items: m.items.map(i => i.id === itemId ? { ...i, status: nextStatus } : i) }
+          : m
+      ));
+    }
+  };
 
   return (
     <div style={{ minHeight: "100vh", background: "var(--bg)", display: "flex", flexDirection: "column" }}>
       {/* Header */}
       <header style={{
         borderBottom: "1px solid var(--border)",
-        padding: "14px 32px",
+        padding: "12px 24px",
         display: "flex",
         alignItems: "center",
-        gap: 16,
+        justifyContent: "space-between",
         background: "var(--surface)",
       }}>
-        <a href="/" style={{ color: "var(--text2)", textDecoration: "none", fontSize: "0.85rem" }}>← 返回首页</a>
-        <span style={{ color: "var(--border)" }}>|</span>
-        <span style={{ fontWeight: 700 }}>🗺️ 项目全流程交付管理蓝图 V2</span>
-        <span className="tag" style={{ fontSize: "0.7rem", background: "rgba(59, 130, 246, 0.1)", color: "#3b82f6" }}>图形化视图</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+          <a href="/" style={{ color: "var(--text2)", textDecoration: "none", fontSize: "0.85rem" }}>← 返回首页</a>
+          <span style={{ color: "var(--border)" }}>|</span>
+          <span style={{ fontWeight: 700, fontSize: "0.95rem" }}>🗺️ 项目全流程交付管理蓝图 V2</span>
+          <span className="tag" style={{ fontSize: "0.7rem", background: "rgba(139, 92, 246, 0.1)", color: "#8b5cf6" }}>可编辑</span>
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <span style={{ fontSize: "0.75rem", color: "var(--text2)", padding: "4px 12px", background: "var(--surface2)", borderRadius: 6 }}>
+            💡 点击模块名称或节点可编辑
+          </span>
+        </div>
       </header>
 
-      {/* Blueprint Canvas */}
-      <main
-        ref={containerRef}
-        style={{
-          flex: 1,
-          position: "relative",
+      {/* Main Content */}
+      <main style={{ flex: 1, display: "flex", overflow: "hidden" }}>
+        {/* Left Sidebar - Modules */}
+        <aside style={{
+          width: 280,
+          borderRight: "1px solid var(--border)",
+          background: "var(--surface)",
+          display: "flex",
+          flexDirection: "column",
           overflow: "hidden",
-          background: "radial-gradient(circle at center, rgba(59, 130, 246, 0.03) 0%, transparent 70%)",
-        }}
-      >
-        <svg
-          width={dimensions.width}
-          height={dimensions.height}
-          style={{ position: "absolute", top: 0, left: 0 }}
-        >
-          <defs>
-            {/* Gradient for center */}
-            <radialGradient id="centerGradient" cx="50%" cy="50%" r="50%">
-              <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.2" />
-              <stop offset="100%" stopColor="#8b5cf6" stopOpacity="0.05" />
-            </radialGradient>
+        }}>
+          <div style={{ padding: "16px", borderBottom: "1px solid var(--border)" }}>
+            <h2 style={{ fontSize: "0.85rem", fontWeight: 700, color: "var(--text2)", marginBottom: 4 }}>业务场景 & 工具模块</h2>
+            <p style={{ fontSize: "0.7rem", color: "var(--text2)" }}>共 {modules.length} 个模块 · {modules.reduce((sum, m) => sum + m.items.length, 0)} 个节点</p>
+          </div>
 
-            {/* Arrow marker */}
-            <marker
-              id="arrowhead"
-              markerWidth="10"
-              markerHeight="7"
-              refX="9"
-              refY="3.5"
-              orient="auto"
-            >
-              <polygon points="0 0, 10 3.5, 0 7" fill="#64748b" />
-            </marker>
-
-            {/* Glowing center gradient */}
-            <filter id="glow">
-              <feGaussianBlur stdDeviation="3" result="coloredBlur" />
-              <feMerge>
-                <feMergeNode in="coloredBlur" />
-                <feMergeNode in="SourceGraphic" />
-              </feMerge>
-            </filter>
-          </defs>
-
-          {/* Connection lines from center to main processes */}
-          {BLUEPRINT_DATA.map((main, index) => {
-            const angle = (index / BLUEPRINT_DATA.length) * 2 * Math.PI - Math.PI / 2;
-            const mainPos = getPosition(angle, mainRadius);
-
-            return (
-              <g key={`connections-${main.id}`}>
-                {/* Line from center to main process */}
-                <line
-                  x1={centerX}
-                  y1={centerY}
-                  x2={mainPos.x}
-                  y2={mainPos.y}
-                  stroke="#e2e8f0"
-                  strokeWidth="2"
-                  strokeDasharray="4 4"
-                  opacity="0.5"
-                />
-
-                {/* Lines from main process to sub processes */}
-                {main.subProcesses.map((sub, subIndex) => {
-                  const subAngle = angle + (subIndex - (main.subProcesses.length - 1) / 2) * 0.3;
-                  const subPos = getPosition(subAngle, subRadius);
-
-                  return (
-                    <g key={`sub-line-${sub.id}`}>
-                      {/* Curved or straight line */}
-                      <path
-                        d={`M ${mainPos.x} ${mainPos.y} Q ${(mainPos.x + subPos.x) / 2} ${mainPos.y - 30} ${subPos.x} ${subPos.y}`}
-                        stroke={main.color}
-                        strokeWidth="2"
-                        fill="none"
-                        opacity="0.6"
-                        markerEnd="url(#arrowhead)"
-                      />
-                    </g>
-                  );
-                })}
-              </g>
-            );
-          })}
-        </svg>
-
-        {/* Main Process Nodes */}
-        {BLUEPRINT_DATA.map((main, index) => {
-          const angle = (index / BLUEPRINT_DATA.length) * 2 * Math.PI - Math.PI / 2;
-          const pos = getPosition(angle, mainRadius);
-
-          return (
-            <div
-              key={main.id}
-              style={{
-                position: "absolute",
-                left: pos.x,
-                top: pos.y,
-                transform: "translate(-50%, -50%)",
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                gap: 4,
-              }}
-            >
+          {/* Module List */}
+          <div style={{ flex: 1, overflow: "auto", padding: 12 }}>
+            {modules.map((module) => (
               <div
+                key={module.id}
                 style={{
-                  width: 80,
-                  height: 80,
-                  borderRadius: "50%",
-                  background: `linear-gradient(135deg, ${main.color} 0%, ${main.color}88 100%)`,
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  boxShadow: `0 4px 20px ${main.color}40`,
-                  border: `3px solid ${main.color}`,
-                  cursor: "pointer",
-                  transition: "all 0.3s ease",
+                  marginBottom: 16,
+                  background: "var(--bg)",
+                  borderRadius: 12,
+                  overflow: "hidden",
+                  border: `1px solid var(--border)`,
                 }}
               >
-                <span style={{ fontSize: "1.8rem" }}>{main.icon}</span>
-              </div>
-              <span
-                style={{
-                  fontSize: "0.85rem",
-                  fontWeight: 700,
-                  color: main.color,
-                  textShadow: "0 1px 3px rgba(0,0,0,0.3)",
-                }}
-              >
-                {main.name}
-              </span>
-            </div>
-          );
-        })}
-
-        {/* Sub Process Nodes */}
-        {BLUEPRINT_DATA.map((main, index) => {
-          const angle = (index / BLUEPRINT_DATA.length) * 2 * Math.PI - Math.PI / 2;
-
-          return main.subProcesses.map((sub, subIndex) => {
-            const subAngle = angle + (subIndex - (main.subProcesses.length - 1) / 2) * 0.3;
-            const pos = getPosition(subAngle, subRadius);
-
-            return (
-              <Link
-                key={sub.id}
-                href={sub.href}
-                style={{
-                  position: "absolute",
-                  left: pos.x,
-                  top: pos.y,
-                  transform: "translate(-50%, -50%)",
-                  textDecoration: "none",
-                }}
-              >
+                {/* Module Header */}
                 <div
                   style={{
-                    padding: "8px 16px",
-                    background: "var(--surface)",
-                    border: `2px solid ${main.color}`,
-                    borderRadius: 20,
-                    fontSize: "0.8rem",
-                    fontWeight: 600,
-                    color: main.color,
-                    whiteSpace: "nowrap",
-                    boxShadow: `0 2px 12px ${main.color}30`,
+                    padding: "10px 12px",
+                    background: `${module.color}15`,
+                    borderBottom: `1px solid ${module.color}30`,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
                     cursor: "pointer",
-                    transition: "all 0.2s ease",
                   }}
-                  onMouseEnter={e => {
-                    (e.currentTarget as HTMLElement).style.transform = "translate(-50%, -50%) scale(1.08)";
-                    (e.currentTarget as HTMLElement).style.boxShadow = `0 4px 20px ${main.color}50`;
-                  }}
-                  onMouseLeave={e => {
-                    (e.currentTarget as HTMLElement).style.transform = "translate(-50%, -50%) scale(1)";
-                    (e.currentTarget as HTMLElement).style.boxShadow = `0 2px 12px ${main.color}30`;
+                  onClick={() => handleEditModule(module)}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontSize: "1.2rem" }}>{module.icon}</span>
+                    {editingModule === module.id ? (
+                      <input
+                        type="text"
+                        value={editName}
+                        onChange={e => setEditName(e.target.value)}
+                        onBlur={handleSaveModule}
+                        onKeyDown={e => e.key === "Enter" && handleSaveModule()}
+                        autoFocus
+                        style={{
+                          background: "var(--surface)",
+                          border: `1px solid ${module.color}`,
+                          borderRadius: 4,
+                          padding: "2px 6px",
+                          fontSize: "0.8rem",
+                          width: 100,
+                          color: "var(--text)",
+                        }}
+                        onClick={e => e.stopPropagation()}
+                      />
+                    ) : (
+                      <span style={{ fontWeight: 700, fontSize: "0.85rem", color: module.color }}>
+                        {module.name}
+                      </span>
+                    )}
+                  </div>
+                  <span style={{ fontSize: "0.7rem", color: "var(--text2)" }}>
+                    {module.items.length}项
+                  </span>
+                </div>
+
+                {/* Module Items */}
+                <div style={{ padding: 8 }}>
+                  {module.items.map((item, idx) => {
+                    const status = STATUS_STYLE[item.status];
+                    return (
+                      <div
+                        key={item.id}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          padding: "8px 10px",
+                          borderRadius: 6,
+                          marginBottom: idx < module.items.length - 1 ? 4 : 0,
+                          background: status.bg,
+                          border: `1px solid ${status.border}40`,
+                          cursor: "pointer",
+                          transition: "all 0.2s",
+                        }}
+                        onClick={() => handleEditItem(module.id, item.id)}
+                        onDoubleClick={() => handleStatusChange(module.id, item.id)}
+                        onMouseEnter={e => {
+                          (e.currentTarget as HTMLElement).style.transform = "translateX(2px)";
+                          (e.currentTarget as HTMLElement).style.boxShadow = `0 2px 8px ${status.border}30`;
+                        }}
+                        onMouseLeave={e => {
+                          (e.currentTarget as HTMLElement).style.transform = "none";
+                          (e.currentTarget as HTMLElement).style.boxShadow = "none";
+                        }}
+                      >
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <div style={{
+                            width: 6,
+                            height: 6,
+                            borderRadius: "50%",
+                            background: status.border,
+                          }} />
+                          <span style={{ fontSize: "0.78rem", color: "var(--text)", fontWeight: 500 }}>
+                            {item.name}
+                          </span>
+                        </div>
+                        <span style={{ fontSize: "0.65rem", color: status.border, fontWeight: 600 }}>
+                          {item.status === "done" ? "✓" : item.status === "current" ? "●" : "○"}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </aside>
+
+        {/* Right Canvas - Flow Diagram */}
+        <div style={{
+          flex: 1,
+          background: "linear-gradient(180deg, rgba(59, 130, 246, 0.02) 0%, rgba(139, 92, 246, 0.02) 100%)",
+          position: "relative",
+          overflow: "auto",
+          padding: 24,
+        }}>
+          {/* Flow Title */}
+          <div style={{
+            textAlign: "center",
+            marginBottom: 24,
+            padding: "12px 20px",
+            background: "var(--surface)",
+            borderRadius: 12,
+            border: "1px solid var(--border)",
+            width: "fit-content",
+            margin: "0 auto 24px",
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+          }}>
+            <span style={{ fontSize: "1.2rem" }}>📋</span>
+            <span style={{ fontWeight: 700, fontSize: "0.95rem" }}>项目全流程交付管理</span>
+          </div>
+
+          {/* Central Flow Canvas */}
+          <div style={{
+            display: "flex",
+            justifyContent: "center",
+            position: "relative",
+          }}>
+            {/* Vertical Flow Line */}
+            <div style={{
+              position: "absolute",
+              left: "50%",
+              top: 60,
+              bottom: 60,
+              width: 2,
+              background: "linear-gradient(180deg, #64748b 0%, #3b82f6 50%, #64748b 100%)",
+              transform: "translateX(-50%)",
+              opacity: 0.3,
+            }} />
+
+            {/* Flow Nodes */}
+            <div style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 12,
+              position: "relative",
+              zIndex: 1,
+            }}>
+              {FLOW_NODES.map((node, idx) => {
+                const isHovered = hoveredNode === node.id;
+                return (
+                  <Link
+                    key={node.id}
+                    href="/"
+                    style={{ textDecoration: "none" }}
+                    onMouseEnter={() => setHoveredNode(node.id)}
+                    onMouseLeave={() => setHoveredNode(null)}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 16,
+                        padding: "12px 24px",
+                        background: isHovered ? `${node.color}20` : "var(--surface)",
+                        border: `2px solid ${isHovered ? node.color : "var(--border)"}`,
+                        borderRadius: 12,
+                        minWidth: 200,
+                        transition: "all 0.2s",
+                        transform: isHovered ? "scale(1.05)" : "scale(1)",
+                        boxShadow: isHovered ? `0 8px 24px ${node.color}30` : "0 2px 8px rgba(0,0,0,0.05)",
+                        cursor: "pointer",
+                      }}
+                    >
+                      <div style={{
+                        width: 40,
+                        height: 40,
+                        borderRadius: "50%",
+                        background: `${node.color}20`,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontSize: "1.2rem",
+                        border: `2px solid ${node.color}`,
+                      }}>
+                        {node.icon}
+                      </div>
+                      <div>
+                        <div style={{ fontWeight: 700, fontSize: "0.9rem", color: node.color }}>
+                          {node.name}
+                        </div>
+                        <div style={{ fontSize: "0.7rem", color: "var(--text2)", marginTop: 2 }}>
+                          {idx + 1} / {FLOW_NODES.length}
+                        </div>
+                      </div>
+                    </div>
+                  </Link>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Monitoring Module - Horizontal across the middle */}
+          <div style={{
+            position: "absolute",
+            top: "38%",
+            left: 0,
+            right: 0,
+            display: "flex",
+            justifyContent: "center",
+          }}>
+            <div style={{
+              display: "flex",
+              gap: 12,
+              flexWrap: "wrap",
+              justifyContent: "center",
+              padding: "16px 24px",
+              background: "rgba(34, 197, 94, 0.1)",
+              border: "2px dashed #22c55e",
+              borderRadius: 16,
+              transform: "rotate(-90deg)",
+              transformOrigin: "center",
+            }}>
+              <span style={{ fontSize: "0.75rem", fontWeight: 700, color: "#22c55e" }}>
+                📡 监控管理（贯穿全流程）
+              </span>
+              {["进度监控", "风险监控", "成本监控", "需求监控", "变更监控"].map((item, idx) => (
+                <span
+                  key={item}
+                  style={{
+                    padding: "4px 12px",
+                    background: "var(--surface)",
+                    border: "1px solid #22c55e40",
+                    borderRadius: 12,
+                    fontSize: "0.7rem",
+                    color: "#22c55e",
+                    fontWeight: 500,
                   }}
                 >
-                  {sub.name}
-                </div>
-              </Link>
-            );
-          });
-        })}
+                  {item}
+                </span>
+              ))}
+            </div>
+          </div>
 
-        {/* Center Hub */}
-        <div
-          style={{
-            position: "absolute",
-            left: centerX,
-            top: centerY,
-            transform: "translate(-50%, -50%)",
-            width: 140,
-            height: 140,
-            borderRadius: "50%",
-            background: "linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%)",
+          {/* Legend */}
+          <div style={{
+            position: "fixed",
+            bottom: 24,
+            right: 24,
             display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-            boxShadow: "0 8px 40px rgba(59, 130, 246, 0.4)",
-            zIndex: 10,
-          }}
-        >
-          <span style={{ fontSize: "2.5rem" }}>🎯</span>
-          <span style={{ color: "white", fontWeight: 800, fontSize: "0.9rem" }}>项目管理</span>
-          <span style={{ color: "rgba(255,255,255,0.8)", fontSize: "0.7rem" }}>全流程</span>
-        </div>
-
-        {/* Legend */}
-        <div
-          style={{
-            position: "absolute",
-            bottom: 20,
-            left: "50%",
-            transform: "translateX(-50%)",
-            display: "flex",
-            gap: 20,
-            padding: "12px 24px",
+            gap: 16,
+            padding: "12px 20px",
             background: "var(--surface)",
             border: "1px solid var(--border)",
             borderRadius: 12,
             boxShadow: "0 4px 20px rgba(0,0,0,0.1)",
-          }}
-        >
-          {BLUEPRINT_DATA.map((main) => (
-            <div
-              key={main.id}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-              }}
-            >
-              <div
-                style={{
-                  width: 12,
-                  height: 12,
+          }}>
+            <span style={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--text2)" }}>状态：</span>
+            {Object.entries(STATUS_STYLE).map(([key, val]) => (
+              <div key={key} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <div style={{
+                  width: 8,
+                  height: 8,
                   borderRadius: "50%",
-                  background: main.color,
-                  boxShadow: `0 0 8px ${main.color}60`,
-                }}
-              />
-              <span style={{ fontSize: "0.78rem", color: "var(--text)" }}>
-                {main.icon} {main.name}
-              </span>
-            </div>
-          ))}
-        </div>
-
-        {/* Title */}
-        <div
-          style={{
-            position: "absolute",
-            top: 20,
-            left: "50%",
-            transform: "translateX(-50%)",
-            padding: "8px 20px",
-            background: "var(--surface)",
-            border: "1px solid var(--border)",
-            borderRadius: 20,
-            boxShadow: "0 4px 20px rgba(0,0,0,0.1)",
-          }}
-        >
-          <span style={{ fontSize: "0.85rem", fontWeight: 600, color: "var(--text)" }}>
-            📋 项目全流程交付管理蓝图
-          </span>
+                  background: val.border,
+                }} />
+                <span style={{ fontSize: "0.72rem", color: "var(--text)" }}>{val.text}</span>
+              </div>
+            ))}
+            <span style={{ color: "var(--border)" }}>|</span>
+            <span style={{ fontSize: "0.72rem", color: "var(--text2)" }}>双击切换状态</span>
+          </div>
         </div>
       </main>
     </div>

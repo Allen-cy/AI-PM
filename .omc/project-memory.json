@@ -164,6 +164,12 @@
       "type": "file"
     },
     {
+      "path": "src/app/blueprint-v2/page.tsx",
+      "accessCount": 3,
+      "lastAccessed": 1778726819465,
+      "type": "file"
+    },
+    {
       "path": "test-cpm.ts",
       "accessCount": 1,
       "lastAccessed": 1778418700506,
