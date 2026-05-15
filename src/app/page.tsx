@@ -197,6 +197,20 @@ const PHASE_MODULES = [
         desc: "圆形辐射图，图形化展示全流程",
         color: "purple",
       },
+      {
+        href: "/blueprint-v3",
+        icon: "🗺️",
+        title: "蓝图视图 V3",
+        desc: "业务场景与工具画布，支持节点编辑",
+        color: "green",
+      },
+      {
+        href: "/ppt-guide",
+        icon: "📊",
+        title: "PPT制作难点",
+        desc: "AI做PPT的局限性与最佳实践指南",
+        color: "cyan",
+      },
     ],
   },
 ];
