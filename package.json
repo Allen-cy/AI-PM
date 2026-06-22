@@ -1,12 +1,14 @@
 {
   "name": "ai-pm-system",
-  "version": "0.1.0",
+  "version": "4.0.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "corpus:build": "node scripts/build-rag-corpus.mjs",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "node --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-transform-types --test --test-concurrency=1 tests/*.test.ts"
   },
   "dependencies": {
     "@prisma/client": "^7.8.0",

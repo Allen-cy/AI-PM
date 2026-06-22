@@ -1,6 +1,6 @@
 # AI PM System API 接口文档
 
-> 版本：V3.0 | 更新时间：2026-05-14 | 基础路径：`https://pmai.chunyu2026.qzz.io`
+> 版本：V4.0 | 更新时间：2026-06-22 | 基础路径：`https://pmai.chunyu2026.qzz.io`
 
 ---
 
@@ -25,6 +25,9 @@
 - [17. 报告生成](#17-报告生成-api)
 - [18. 流程设计](#18-流程设计-api)
 - [19. 治理分析](#19-治理分析-api)
+- [20. RAG查询](#20-rag查询-api)
+- [21. RAG健康检查](#21-rag健康检查-api)
+- [22. 飞书连接健康检查](#22-飞书连接健康检查-api)
 
 ---
 
@@ -757,6 +760,56 @@ AI自动识别项目风险。
   }
 }
 ```
+
+---
+
+## 20. RAG查询 `/api/rag/query`
+
+基于已审 AI-PMO 知识快照进行可追溯查询。当前实际检索模式为 `keyword`，不会虚报为向量或混合检索。
+
+### POST
+
+```json
+{
+  "query": "PMO三位一体中的PGG、EPG和SQA如何分工？",
+  "filters": {
+    "domains": ["PMO治理"],
+    "confidentiality_max": "internal",
+    "status": ["reviewed", "published"]
+  },
+  "top_k": 5
+}
+```
+
+成功响应包含 `answer_status`、`confidence`、真实 `citations`、实际检索模式、索引版本和 `trace_id`。需要飞书实时项目数据时返回 `insufficient_evidence`，不会生成虚构项目清单。
+
+语义校验失败返回 HTTP 422 与 RFC 9457 问题详情；非法 JSON 返回 HTTP 400。所有响应包含 `X-Request-Id`。
+
+## 21. RAG健康检查 `/api/rag/health`
+
+### GET
+
+```json
+{
+  "status": "ok",
+  "provider": "local-corpus",
+  "index_version": "2026-06-22.10",
+  "page_count": 10,
+  "chunk_count": 10,
+  "embedded_chunk_count": 0,
+  "retrieval_mode": "keyword"
+}
+```
+
+旧 `/api/knowledge` POST 接口保留兼容，但内部已改为调用真实知识 Provider，不再生成 Mock 答案。
+
+## 22. 飞书连接健康检查 `/api/integrations/feishu/health`
+
+### GET
+
+使用服务端应用身份验证 Base 可访问性和已配置表ID。未配置凭据时返回HTTP 503与`not_configured`；不会返回appSecret、tenant token、Base token或表ID。
+
+当前不提供公开项目记录接口。项目、合同、回款等业务数据必须等用户身份和行级权限完成后再开放。
 
 ---
 
