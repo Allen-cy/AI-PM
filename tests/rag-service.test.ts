@@ -67,6 +67,20 @@ test('refuses questions that require live project data', () => {
   assert.match(result.answer, /实时|飞书/);
 });
 
+test('refuses when a required technical term is absent from the corpus', () => {
+  const service = getRagService();
+
+  for (const query of [
+    'WBS拆解如何满足100%原则？',
+    'SPI和CPI分别反映什么？',
+    'Obsidian、Feishu Base、GBrain和Supabase分别管理什么事实？',
+  ]) {
+    const result = service.query({ query });
+    assert.equal(result.answer_status, 'insufficient_evidence', query);
+    assert.equal(result.citations.length, 0, query);
+  }
+});
+
 test('blocks internal evidence when the caller is limited to public content', () => {
   const service = createLocalRagService({ documents, indexVersion: 'test-1' });
   const result = service.query({
@@ -101,5 +115,17 @@ test('loads the reviewed ten-page production corpus', () => {
   assert.equal(result.answer_status, 'answered');
   assert.equal(result.citations[0]?.page_id, 'KB-0001');
   assert.doesNotMatch(result.citations[0]?.excerpt ?? '', /2026-06-22|证据时间线/);
-  assert.match(result.citations[0]?.excerpt ?? '', /有效PMO|一线交付|流程与工具改进/);
+  assert.match(result.citations[0]?.excerpt ?? '', /有效PMO|一线交付|流程与工具改进|PGG|EPG/);
+});
+
+test('selects an informative sentence instead of a Markdown heading', () => {
+  const service = getRagService();
+
+  const governance = service.query({ query: 'PGG、EPG和SQA在PMO三位一体中如何分工？', top_k: 1 });
+  const knowledge = service.query({ query: '如何把原始材料转化为可复利知识？', top_k: 1 });
+
+  assert.doesNotMatch(governance.citations[0]?.excerpt ?? '', /^#/);
+  assert.match(governance.citations[0]?.excerpt ?? '', /PGG|EPG|SQA|一线交付/);
+  assert.doesNotMatch(knowledge.citations[0]?.excerpt ?? '', /^#/);
+  assert.ok((knowledge.citations[0]?.excerpt ?? '').length >= 20);
 });

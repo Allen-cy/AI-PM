@@ -67,9 +67,18 @@ function selectExcerpt(document: RagDocument, queryTokens: string[]): string {
   const candidates = document.content
     .split(/(?<=[。！？])|\n+/u)
     .map(item => item.trim())
-    .filter(item => item.length >= 12);
+    .filter(item => !/^(?:#{1,6}\s|```|flowchart\b)/u.test(item))
+    .filter(item => !/^\|(?:\s*:?-+:?\s*\|)+$/u.test(item))
+    .map(item => item.startsWith('|')
+      ? item.split('|').map(cell => cell.trim()).filter(Boolean).join('；')
+      : item.replace(/^(?:>\s*|[-*]\s+)/u, '').trim())
+    .filter(item => item.length >= 20);
 
-  const best = candidates
+  const windows = candidates.flatMap((_, index) => [1, 2, 3]
+    .filter(size => index + size <= candidates.length)
+    .map(size => candidates.slice(index, index + size).join('；')));
+
+  const best = windows
     .map(text => ({ text, hits: queryTokens.filter(token => normalize(text).includes(token)).length }))
     .sort((a, b) => b.hits - a.hits || b.text.length - a.text.length)[0]?.text
     ?? document.content;
@@ -119,6 +128,18 @@ function requiresLiveData(query: string): boolean {
   const timeSensitive = /(当前|现在|实时|今天|本周|下周|逾期|正在执行|所有项目)/u.test(query);
   const operational = /(项目|任务|风险|问题|里程碑|回款|成本|资源)/u.test(query);
   return timeSensitive && operational;
+}
+
+function hasUnsupportedTechnicalTerm(documents: RagDocument[], query: string): boolean {
+  const requiredTerms = new Set(
+    [...query.matchAll(/\b[A-Za-z][A-Za-z0-9-]{1,}\b|\d+(?:\.\d+)?%/g)].map(match => normalize(match[0])),
+  );
+  if (requiredTerms.size === 0) return false;
+
+  const corpus = normalize(documents.map(document => (
+    `${document.title} ${document.aliases.join(' ')} ${document.domains.join(' ')} ${document.tags.join(' ')} ${document.content}`
+  )).join(' '));
+  return [...requiredTerms].some(term => !corpus.includes(term));
 }
 
 function citation(item: RankedDocument): RagCitation {
@@ -184,6 +205,16 @@ export function createLocalRagService(options: LocalRagOptions): RagService {
       const permitted = scoped.filter(document => (
         confidentialityRank[document.confidentiality] <= confidentialityRank[maxConfidentiality]
       ));
+
+      if (permitted.length > 0 && hasUnsupportedTechnicalTerm(permitted, input.query)) {
+        return response(
+          options.indexVersion,
+          'insufficient_evidence',
+          '问题包含当前已审语料中不存在的专业术语。为避免把相近主题误当成直接证据，本次不生成答案，请先补充并审核对应来源。',
+          [],
+          0,
+        );
+      }
 
       const rankedPermitted = rankDocuments(permitted, input.query);
       const topK = input.top_k ?? 5;

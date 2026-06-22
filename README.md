@@ -45,7 +45,7 @@ V4.0 将知识问答从演示 Mock 切换为真实、可追溯的项目管理知
 - `GET /api/rag/health`：索引版本、页面数、检索模式和向量状态。
 - `/knowledge`：展示真实 `KB-xxxx` 与 `SRC-xxxx` 引用。
 - `/api/knowledge`：旧客户端兼容入口，已移除 Mock 生成器。
-- `npm test`：18个RAG、飞书、契约、拒答、权限和客户端映射测试。
+- `npm test`：20个RAG、飞书、契约、拒答、权限、证据门槛和摘录质量测试。
 - `GET /api/integrations/feishu/health`：以长期 Bot 身份验证 Base 与表映射；未配置时关闭失败。
 
 ### 知识快照更新
