@@ -1,6 +1,8 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
+import { toAssistantMessage } from '@/features/rag/client-adapter';
+import type { RagQueryResult } from '@/features/rag/types';
 import {
   knowledgeCategories,
   suggestedQuestions,
@@ -43,30 +45,25 @@ export default function KnowledgePage() {
     setMessages(prev => [...prev, userMessage]);
 
     try {
-      const response = await fetch('/api/knowledge/ask', {
+      const selectedDomain = knowledgeCategories.find(category => category.id === selectedCategory)?.name;
+      const response = await fetch('/api/rag/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          question: questionToSend,
-          category: selectedCategory,
-          sessionId: currentSessionId,
+          query: questionToSend,
+          conversation_id: currentSessionId,
+          ...(selectedDomain ? { filters: { domains: [selectedDomain] } } : {}),
         }),
       });
 
-      if (!response.ok) throw new Error('Failed to get answer');
+      if (!response.ok) throw new Error('RAG request failed');
 
-      const data = await response.json();
-      setCurrentSessionId(data.sessionId);
+      const data = await response.json() as RagQueryResult;
+      setCurrentSessionId(data.trace_id);
 
-      const assistantMessage: QAMessage = {
-        role: 'assistant',
-        content: data.answer,
-        sources: data.sources,
-        confidence: data.confidence,
-      };
+      const assistantMessage = toAssistantMessage(data);
       setMessages(prev => [...prev, assistantMessage]);
-    } catch (error) {
-      console.error('Error sending question:', error);
+    } catch {
       const errorMessage: QAMessage = {
         role: 'assistant',
         content: '抱歉，AI知识库暂时无法回答您的问题。请稍后再试。',
@@ -115,7 +112,7 @@ export default function KnowledgePage() {
           </button>
         </div>
         <p style={{ color: 'var(--text2)', fontSize: '0.9rem' }}>
-          基于项目管理知识库的智能问答助手 · 支持PMBOK · PRINCE2 · LTC最佳实践
+          基于10篇已审AI-PMO知识的可追溯问答 · 证据不足时主动拒答
         </p>
       </div>
 
@@ -188,28 +185,16 @@ export default function KnowledgePage() {
             </div>
           </div>
 
-          {/* Document Upload Placeholder */}
-          <div className="card" style={{ border: '2px dashed var(--border)' }}>
-            <div className="section-title" style={{ color: 'var(--text2)' }}>
-              <span>📎</span>
-              文档上传
+          <div className="card">
+            <div className="section-title">
+              <span>🛡️</span>
+              当前检索边界
             </div>
-            <p style={{ fontSize: '0.8rem', color: 'var(--text2)', marginBottom: '12px' }}>
-              上传文档以扩展知识库（开发中）
-            </p>
-            <div
-              style={{
-                background: 'var(--surface2)',
-                borderRadius: '8px',
-                padding: '24px',
-                textAlign: 'center',
-                color: 'var(--text2)',
-                fontSize: '0.85rem',
-              }}
-            >
-              拖拽文件到此处
-              <br />
-              <span style={{ fontSize: '0.75rem' }}>支持 PDF, DOCX, TXT</span>
+            <div style={{ color: 'var(--text2)', fontSize: '0.8rem', lineHeight: 1.7 }}>
+              <div>索引：10篇 reviewed 知识页</div>
+              <div>模式：中文关键词检索</div>
+              <div>密级：最高 internal</div>
+              <div>实时业务数据：尚未接入飞书</div>
             </div>
           </div>
         </div>
@@ -334,6 +319,14 @@ export default function KnowledgePage() {
                             >
                               {getConfidenceLabel(msg.confidence)} · {Math.round(msg.confidence * 100)}%
                             </span>
+                            {msg.answerStatus && (
+                              <span className={`tag ${msg.answerStatus === 'answered' ? 'tag-green' : 'tag-amber'}`}>
+                                {msg.answerStatus === 'answered' ? '已引用回答' : msg.answerStatus === 'forbidden' ? '权限受限' : '证据不足'}
+                              </span>
+                            )}
+                            {msg.retrievalMode && (
+                              <span className="tag tag-blue">{msg.retrievalMode}</span>
+                            )}
                           </div>
                         )}
 
@@ -411,6 +404,10 @@ export default function KnowledgePage() {
                                     </div>
                                     <div style={{ color: 'var(--text2)', fontSize: '0.75rem' }}>
                                       {source.excerpt}
+                                    </div>
+                                    <div style={{ color: 'var(--text2)', fontSize: '0.7rem', marginTop: '6px' }}>
+                                      {source.pageId}{source.sourceIds?.length ? ` · ${source.sourceIds.join(', ')}` : ''}
+                                      {source.authority ? ` · ${source.authority}` : ''}
                                     </div>
                                   </div>
                                 ))}

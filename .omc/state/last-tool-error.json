@@ -1,7 +1,0 @@
-{
-  "tool_name": "Bash",
-  "tool_input_preview": "{\"command\":\"git push\",\"description\":\"Retry git push\"}",
-  "error": "Exit code 128\nfatal: unable to access 'https://github.com/Allen-cy/AI-PM.git/': LibreSSL SSL_connect: SSL_ERROR_SYSCALL in connection to github.com:443",
-  "timestamp": "2026-05-14T02:47:52.581Z",
-  "retry_count": 2
-}
