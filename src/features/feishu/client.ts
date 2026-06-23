@@ -11,6 +11,7 @@ interface TableListResponse {
   code: number;
   msg?: string;
   data?: {
+    tables?: Array<{ table_id: string; name: string }>;
     items?: Array<{ table_id: string; name: string }>;
   };
 }
@@ -127,7 +128,7 @@ export class FeishuBaseClient {
     if (payload.code !== 0) {
       throw new FeishuApiError('Feishu Base is not accessible to the configured app.', `FEISHU_BASE_${payload.code}`);
     }
-    return payload.data?.items ?? [];
+    return payload.data?.tables ?? payload.data?.items ?? [];
   }
 
   async claimEvent(input: FeishuEventClaimInput): Promise<FeishuEventClaim> {
