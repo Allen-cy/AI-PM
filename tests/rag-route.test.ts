@@ -50,8 +50,8 @@ test('GET /api/rag/health reports the deployed corpus', async () => {
   const body = await response.json();
 
   assert.equal(response.status, 200);
-  assert.equal(body.page_count, 10);
-  assert.equal(body.retrieval_mode, 'keyword');
+  assert.equal(body.page_count, 27);
+  assert.equal(body.retrieval_mode, 'lexical-hybrid');
   assert.ok(response.headers.get('x-request-id'));
 });
 

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import { createLocalRagService } from '../src/features/rag/local-rag-service.ts';
@@ -67,17 +68,17 @@ test('refuses questions that require live project data', () => {
   assert.match(result.answer, /实时|飞书/);
 });
 
-test('refuses when a required technical term is absent from the corpus', () => {
+test('answers WBS, earned value, and system-boundary questions from the expanded corpus', () => {
   const service = getRagService();
 
-  for (const query of [
-    'WBS拆解如何满足100%原则？',
-    'SPI和CPI分别反映什么？',
-    'Obsidian、Feishu Base、GBrain和Supabase分别管理什么事实？',
+  for (const [query, expectedPage] of [
+    ['WBS拆解如何满足100%原则？', 'KB-0025'],
+    ['SPI和CPI分别反映什么？', 'KB-0026'],
+    ['Obsidian、飞书Base、GBrain和AI-PM分别管理什么事实？', 'KB-0027'],
   ]) {
     const result = service.query({ query });
-    assert.equal(result.answer_status, 'insufficient_evidence', query);
-    assert.equal(result.citations.length, 0, query);
+    assert.equal(result.answer_status, 'answered', query);
+    assert.equal(result.citations[0]?.page_id, expectedPage, query);
   }
 });
 
@@ -97,21 +98,21 @@ test('validates empty and oversized questions at the boundary', () => {
   assert.throws(() => validateRagQuery({ query: 'a'.repeat(2001) }), /2000/);
 });
 
-test('reports corpus health without claiming vector or hybrid retrieval', () => {
+test('reports the truthful lexical-hybrid retrieval mode', () => {
   const service = createLocalRagService({ documents, indexVersion: 'test-1' });
   const health = service.health();
 
   assert.equal(health.status, 'ok');
   assert.equal(health.page_count, 2);
   assert.equal(health.embedded_chunk_count, 0);
-  assert.equal(health.retrieval_mode, 'keyword');
+  assert.equal(health.retrieval_mode, 'lexical-hybrid');
 });
 
-test('loads the reviewed ten-page production corpus', () => {
+test('loads the reviewed 27-page production corpus', () => {
   const service = getRagService();
   const result = service.query({ query: 'PGG EPG SQA三类能力如何形成闭环？' });
 
-  assert.equal(service.health().page_count, 10);
+  assert.equal(service.health().page_count, 27);
   assert.equal(result.answer_status, 'answered');
   assert.equal(result.citations[0]?.page_id, 'KB-0001');
   assert.doesNotMatch(result.citations[0]?.excerpt ?? '', /2026-06-22|证据时间线/);
@@ -128,4 +129,31 @@ test('selects an informative sentence instead of a Markdown heading', () => {
   assert.match(governance.citations[0]?.excerpt ?? '', /PGG|EPG|SQA|一线交付/);
   assert.doesNotMatch(knowledge.citations[0]?.excerpt ?? '', /^#/);
   assert.ok((knowledge.citations[0]?.excerpt ?? '').length >= 20);
+});
+
+test('passes all 30 V2 golden questions at Top1', () => {
+  const golden = JSON.parse(readFileSync(
+    new URL('./fixtures/rag-golden-v2.json', import.meta.url),
+    'utf8',
+  )) as Array<{
+    id: string;
+    question: string;
+    expected_behavior: 'answer' | 'live';
+    expected_pages: string[];
+  }>;
+  const service = getRagService();
+
+  for (const item of golden) {
+    const result = service.query({ query: item.question, top_k: 5 });
+    if (item.expected_behavior === 'live') {
+      assert.equal(result.answer_status, 'insufficient_evidence', item.id);
+      continue;
+    }
+    assert.equal(result.answer_status, 'answered', item.id);
+    assert.ok(item.expected_pages.includes(result.citations[0]?.page_id ?? ''), [
+      item.id,
+      `expected ${item.expected_pages.join(', ')}`,
+      `got ${result.citations.map(citation => citation.page_id).join(', ')}`,
+    ].join(': '));
+  }
 });
