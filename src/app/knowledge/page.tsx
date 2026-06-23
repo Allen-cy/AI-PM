@@ -112,7 +112,7 @@ export default function KnowledgePage() {
           </button>
         </div>
         <p style={{ color: 'var(--text2)', fontSize: '0.9rem' }}>
-          基于10篇已审AI-PMO知识的可追溯问答 · 证据不足时主动拒答
+          基于27篇已审AI-PMO知识的可追溯问答 · 30题黄金评测 Top1 通过
         </p>
       </div>
 
@@ -191,10 +191,10 @@ export default function KnowledgePage() {
               当前检索边界
             </div>
             <div style={{ color: 'var(--text2)', fontSize: '0.8rem', lineHeight: 1.7 }}>
-              <div>索引：10篇 reviewed 知识页</div>
-              <div>模式：中文关键词检索</div>
+              <div>索引：27篇 reviewed 知识页</div>
+              <div>模式：中文词元 + 元数据加权检索</div>
               <div>密级：最高 internal</div>
-              <div>实时业务数据：尚未接入飞书</div>
+              <div>飞书：动作已接入，实时清单查询仍受限</div>
             </div>
           </div>
         </div>

@@ -38,6 +38,9 @@ function tokens(value: string): string[] {
   for (const match of normalized.matchAll(/[a-z0-9]+/g)) {
     if (match[0].length > 1) result.add(match[0]);
   }
+  for (const match of normalized.matchAll(/约?\d+(?:[–-]\d+)?(?:%|人|个|月|年|天)/gu)) {
+    result.add(match[0]);
+  }
   for (const match of normalized.matchAll(/[\p{Script=Han}]+/gu)) {
     const sequence = match[0];
     if (sequence.length <= 6) result.add(sequence);
@@ -169,7 +172,7 @@ function response(
     confidence,
     citations,
     retrieval: {
-      mode: 'keyword',
+      mode: 'lexical-hybrid',
       provider: 'local-corpus',
       index_version: indexVersion,
       result_count: citations.length,
@@ -260,7 +263,7 @@ export function createLocalRagService(options: LocalRagOptions): RagService {
         page_count: documents.length,
         chunk_count: documents.length,
         embedded_chunk_count: 0,
-        retrieval_mode: 'keyword',
+        retrieval_mode: 'lexical-hybrid',
         generated_at: generatedAt,
       };
     },

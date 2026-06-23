@@ -12,6 +12,12 @@ export interface FeishuConfig {
   appId: string;
   appSecret: string;
   baseToken: string;
+  verificationToken?: string;
+  encryptKey?: string;
+  actionApiKey?: string;
+  documentParentToken?: string;
+  documentGrantOpenId?: string;
+  allowedEventTypes: string[];
   tables: Partial<Record<FeishuTableKey, string>>;
   publicSummary: {
     identity: 'bot';
@@ -45,10 +51,21 @@ export function readFeishuConfig(environment: Environment = process.env): Feishu
     if (value) tables[key] = value;
   }
 
+  const allowedEventTypes = (environment.FEISHU_EVENT_ALLOWED_TYPES ?? 'im.message.receive_v1')
+    .split(',')
+    .map(value => value.trim())
+    .filter(Boolean);
+
   return {
     appId,
     appSecret,
     baseToken,
+    verificationToken: environment.FEISHU_VERIFICATION_TOKEN?.trim() || undefined,
+    encryptKey: environment.FEISHU_ENCRYPT_KEY?.trim() || undefined,
+    actionApiKey: environment.AI_PM_INTEGRATION_API_KEY?.trim() || undefined,
+    documentParentToken: environment.FEISHU_DOCUMENT_PARENT_TOKEN?.trim() || undefined,
+    documentGrantOpenId: environment.FEISHU_DOCUMENT_GRANT_OPEN_ID?.trim() || undefined,
+    allowedEventTypes,
     tables,
     publicSummary: {
       identity: 'bot',

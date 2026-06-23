@@ -48,7 +48,7 @@ export interface RagQueryResult {
   confidence: number;
   citations: RagCitation[];
   retrieval: {
-    mode: 'keyword';
+    mode: 'lexical-hybrid';
     provider: 'local-corpus';
     index_version: string;
     result_count: number;
@@ -64,7 +64,7 @@ export interface RagHealth {
   page_count: number;
   chunk_count: number;
   embedded_chunk_count: number;
-  retrieval_mode: 'keyword';
+  retrieval_mode: 'lexical-hybrid';
   generated_at: string;
 }
 
