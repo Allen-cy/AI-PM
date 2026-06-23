@@ -35,7 +35,7 @@ test('loads app identity and table mapping without exposing the secret', () => {
   assert.doesNotMatch(JSON.stringify(config.publicSummary), /action-api-key/);
 });
 
-test('authenticates as the app and verifies the expected Base tables', async () => {
+test('authenticates as the app and verifies the Base v3 data.tables response', async () => {
   const calls: Array<{ url: string; init?: RequestInit }> = [];
   const fakeFetch: typeof fetch = async (input, init) => {
     const url = String(input);
@@ -46,7 +46,7 @@ test('authenticates as the app and verifies the expected Base tables', async () 
     return Response.json({
       code: 0,
       data: {
-        items: [
+        tables: [
           { table_id: 'tbl-project', name: '项目台账' },
           { table_id: 'tbl-ledger', name: '同步账本' },
         ],
