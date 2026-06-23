@@ -47,8 +47,8 @@ test('authenticates as the app and verifies the Base v3 data.tables response', a
       code: 0,
       data: {
         tables: [
-          { table_id: 'tbl-project', name: '项目台账' },
-          { table_id: 'tbl-ledger', name: '同步账本' },
+          { id: 'tbl-project', name: '项目台账' },
+          { id: 'tbl-ledger', name: '同步账本' },
         ],
       },
     });
