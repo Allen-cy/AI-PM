@@ -6,7 +6,7 @@ const PHASE_MODULES = [
   {
     phase: "启动阶段",
     emoji: "🚀",
-    tag: "PMBOK Phase 1",
+    tag: "阶段门治理",
     modules: [
       {
         href: "/initiation",
@@ -27,7 +27,7 @@ const PHASE_MODULES = [
   {
     phase: "规划阶段",
     emoji: "📋",
-    tag: "PMBOK Phase 2",
+    tag: "计划与基线",
     modules: [
       {
         href: "/planning",
@@ -62,7 +62,7 @@ const PHASE_MODULES = [
   {
     phase: "执行阶段",
     emoji: "⚙️",
-    tag: "PMBOK Phase 3",
+    tag: "交付协同",
     modules: [
       {
         href: "/execution",
@@ -90,7 +90,7 @@ const PHASE_MODULES = [
   {
     phase: "监控阶段",
     emoji: "📡",
-    tag: "PMBOK Phase 4",
+    tag: "绩效与风险",
     modules: [
       {
         href: "/monitoring",
@@ -118,7 +118,7 @@ const PHASE_MODULES = [
   {
     phase: "收尾阶段",
     emoji: "🎯",
-    tag: "PMBOK Phase 5",
+    tag: "验收与归档",
     modules: [
       {
         href: "/closing",
@@ -186,21 +186,14 @@ const PHASE_MODULES = [
       {
         href: "/blueprint-v1",
         icon: "📊",
-        title: "蓝图视图 V1",
+        title: "蓝图v1-看板视图",
         desc: "卡片式流程总览，5大阶段17子流程",
         color: "blue",
       },
       {
-        href: "/blueprint-v2",
-        icon: "🔵",
-        title: "蓝图视图 V2",
-        desc: "圆形辐射图，图形化展示全流程",
-        color: "purple",
-      },
-      {
         href: "/blueprint-v3",
         icon: "🗺️",
-        title: "蓝图视图 V3",
+        title: "蓝图v2-BPM视图",
         desc: "业务场景与工具画布，支持节点编辑",
         color: "green",
       },
@@ -239,7 +232,7 @@ export default function Home() {
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <span style={{ fontSize: "1.4rem" }}>🏗️</span>
           <span style={{ fontWeight: 800, fontSize: "1.05rem" }}>AI项目管理助手</span>
-          <span className="tag tag-blue">V5.0.4</span>
+          <span className="tag tag-blue">V5.0.5</span>
         </div>
         <div style={{ display: "flex", gap: 16, fontSize: "0.8rem", color: "var(--text2)", alignItems: "center" }}>
           <span>作者：柴春宇</span>

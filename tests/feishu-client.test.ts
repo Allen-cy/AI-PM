@@ -92,6 +92,52 @@ test('reports missing required table IDs as degraded', async () => {
   assert.deepEqual(health.missing_required_tables, ['syncLedger']);
 });
 
+test('creates a project ledger record with initiation fields', async () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const fakeFetch: typeof fetch = async (input, init) => {
+    const url = String(input);
+    calls.push({ url, init });
+    if (url.includes('/auth/')) {
+      return Response.json({ code: 0, tenant_access_token: 'tenant-token', expire: 7200 });
+    }
+    return Response.json({ code: 0, data: { record: { record_id: 'rec-project-1' } } });
+  };
+  const config = readFeishuConfig({
+    FEISHU_APP_ID: 'cli_test',
+    FEISHU_APP_SECRET: 'secret-value',
+    FEISHU_BASE_TOKEN: 'base-token',
+    FEISHU_PROJECT_TABLE_ID: 'tbl-project',
+  });
+  assert.ok(config);
+
+  const result = await new FeishuBaseClient(config, fakeFetch).createProject({
+    name: 'AI-PM测试项目',
+    type: '信息化',
+    level: 'A',
+    applyDate: '2026-06-29',
+    expectedStart: '2026-07-01',
+    sponsor: 'PMO办公室',
+    businessJustification: '验证立项页保存至飞书。',
+  });
+
+  assert.deepEqual(result, { recordId: 'rec-project-1' });
+  const create = calls.find(call => call.url.includes('/open-apis/bitable/v1/apps/base-token/tables/tbl-project/records'));
+  assert.ok(create);
+  const body = JSON.parse(String(create.init?.body));
+  assert.equal(body.fields['项目名称'], 'AI-PM测试项目');
+  assert.equal(body.fields['项目类型'], '信息化');
+  assert.equal(body.fields['项目等级'], 'A');
+  assert.equal(body.fields['项目状态'], '待立项');
+  assert.equal(body.fields['当前阶段'], '立项');
+  assert.equal(body.fields['申请日期'], '2026-06-29 00:00:00');
+  assert.equal(body.fields['计划开始'], '2026-07-01 00:00:00');
+  assert.equal(body.fields['项目发起人'], 'PMO办公室');
+  assert.equal(body.fields['业务立项理由'], '验证立项页保存至飞书。');
+  assert.equal(body.fields.source_system, 'ai-pm');
+  assert.equal(body.fields.sync_status, 'synced');
+  assert.match(body.fields.project_id, /^AI-PM-\d+$/);
+});
+
 test('claims a new event in the Feishu sync ledger before processing', async () => {
   const calls: Array<{ url: string; init?: RequestInit }> = [];
   const fakeFetch: typeof fetch = async (input, init) => {

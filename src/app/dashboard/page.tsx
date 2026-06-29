@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { feishuTableUrl } from "@/features/feishu/links";
 
 const MOCK_DATA = {
   kpi: {
@@ -450,7 +451,7 @@ export default function DashboardPage() {
                 ))}
               </tbody>
             </table>
-            <a href="#" style={{ display: "block", marginTop: 12, fontSize: "0.8rem", color: "var(--feishu)", textDecoration: "none" }}>
+            <a href={feishuTableUrl("risk")} target="_blank" rel="noopener noreferrer" style={{ display: "block", marginTop: 12, fontSize: "0.8rem", color: "var(--feishu)", textDecoration: "none" }}>
               查看全部风险项目 →
             </a>
           </div>
@@ -488,7 +489,7 @@ export default function DashboardPage() {
             </table>
             <div style={{ marginTop: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <span style={{ fontSize: "0.8rem", color: "var(--text2)" }}>合计：<span style={{ color: "var(--green)", fontWeight: 600 }}>¥1,140万</span></span>
-              <a href="#" style={{ fontSize: "0.8rem", color: "var(--feishu)", textDecoration: "none" }}>
+              <a href={feishuTableUrl("payment")} target="_blank" rel="noopener noreferrer" style={{ fontSize: "0.8rem", color: "var(--feishu)", textDecoration: "none" }}>
                 查看全部回款计划 →
               </a>
             </div>
@@ -502,8 +503,8 @@ export default function DashboardPage() {
             <div style={{ fontSize: "0.85rem", fontWeight: 600, marginBottom: 4 }}>飞书仪表盘集成</div>
             <div style={{ fontSize: "0.8rem", color: "var(--text2)" }}>以上为本地预览版本，实际数据来自飞书多维表格。点击链接查看完整版。</div>
           </div>
-          <a href="https://feishu.cn" target="_blank" rel="noopener noreferrer" className="btn-primary" style={{ textDecoration: "none", fontSize: "0.8rem" }}>
-            打开飞书仪表盘
+          <a href={feishuTableUrl("project")} target="_blank" rel="noopener noreferrer" className="btn-primary" style={{ textDecoration: "none", fontSize: "0.8rem" }}>
+            打开飞书项目台账
           </a>
         </div>
       </main>

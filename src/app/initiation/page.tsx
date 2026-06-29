@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { feishuTableUrl } from "@/features/feishu/links";
 
 // ============================================================================
 // Types & Interfaces
@@ -233,6 +234,8 @@ function AIGenerateButton({ onClick, label = "AI生成" }: { onClick: () => void
 
 export default function InitiationPage() {
   const [activeTab, setActiveTab] = useState<"registration" | "business" | "charter" | "stakeholder" | "requirements">("registration");
+  const [feishuSaving, setFeishuSaving] = useState(false);
+  const [feishuSaveResult, setFeishuSaveResult] = useState<{ status: "success" | "error"; message: string; recordId?: string } | null>(null);
 
   // Project Registration State
   const [projectInfo, setProjectInfo] = useState<ProjectInfo>({
@@ -291,6 +294,42 @@ export default function InitiationPage() {
 
   // AI Loading States
   const [aiLoading, setAiLoading] = useState<string | null>(null);
+
+  const handleSaveProjectToFeishu = async () => {
+    setFeishuSaveResult(null);
+    if (!projectInfo.name.trim() || !projectInfo.sponsor.trim() || !projectInfo.businessJustification.trim()) {
+      setFeishuSaveResult({
+        status: "error",
+        message: "请先填写项目名称、项目发起人和业务立项理由。",
+      });
+      return;
+    }
+
+    setFeishuSaving(true);
+    try {
+      const response = await fetch("/api/integrations/feishu/projects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(projectInfo),
+      });
+      const data = await response.json().catch(() => ({})) as { record_id?: string; code?: string };
+      if (!response.ok) {
+        throw new Error(data.code ?? `HTTP_${response.status}`);
+      }
+      setFeishuSaveResult({
+        status: "success",
+        message: "已保存到飞书项目台账。",
+        recordId: data.record_id,
+      });
+    } catch (error) {
+      setFeishuSaveResult({
+        status: "error",
+        message: `保存失败：${error instanceof Error ? error.message : "未知错误"}。请检查飞书应用权限和服务端环境变量。`,
+      });
+    } finally {
+      setFeishuSaving(false);
+    }
+  };
 
   // ============================================================================
   // AI Generation Handlers
@@ -411,7 +450,7 @@ export default function InitiationPage() {
         <a href="/" style={{ color: "var(--text2)", textDecoration: "none", fontSize: "0.85rem" }}>← 返回首页</a>
         <span style={{ color: "var(--border)" }}>|</span>
         <span style={{ fontWeight: 700 }}>🚀 项目启动阶段</span>
-        <span className="tag tag-purple" style={{ fontSize: "0.7rem" }}>PMBOK 第一阶段</span>
+        <span className="tag tag-purple" style={{ fontSize: "0.7rem" }}>立项与授权</span>
       </header>
 
       <main style={{ flex: 1, padding: "24px 32px" }}>
@@ -546,10 +585,37 @@ export default function InitiationPage() {
                   <div style={{ fontWeight: 600, fontSize: "0.85rem", marginBottom: 4 }}>💡 快速操作</div>
                   <div style={{ fontSize: "0.8rem", color: "var(--text2)" }}>保存立项信息后可继续填写商业论证和项目任务书</div>
                 </div>
-                <button className="btn-primary" style={{ background: "var(--feishu)", borderColor: "var(--feishu)" }}>
-                  保存至飞书
+                <button
+                  className="btn-primary"
+                  onClick={handleSaveProjectToFeishu}
+                  disabled={feishuSaving}
+                  style={{ background: "var(--feishu)", borderColor: "var(--feishu)", opacity: feishuSaving ? 0.7 : 1 }}
+                >
+                  {feishuSaving ? "保存中..." : "保存至飞书"}
                 </button>
               </div>
+              {feishuSaveResult && (
+                <div style={{
+                  marginTop: 12,
+                  padding: "12px 14px",
+                  borderRadius: 8,
+                  border: `1px solid ${feishuSaveResult.status === "success" ? "rgba(16,185,129,0.35)" : "rgba(239,68,68,0.35)"}`,
+                  background: feishuSaveResult.status === "success" ? "rgba(16,185,129,0.08)" : "rgba(239,68,68,0.08)",
+                  color: feishuSaveResult.status === "success" ? "var(--green)" : "var(--red)",
+                  fontSize: "0.82rem",
+                  lineHeight: 1.6,
+                }}>
+                  {feishuSaveResult.message}
+                  {feishuSaveResult.recordId && (
+                    <>
+                      <span style={{ color: "var(--text2)" }}> 记录ID：{feishuSaveResult.recordId}</span>
+                      <a href={feishuTableUrl("project")} target="_blank" rel="noopener noreferrer" style={{ marginLeft: 12, color: "var(--feishu)", textDecoration: "none" }}>
+                        打开项目台账 →
+                      </a>
+                    </>
+                  )}
+                </div>
+              )}
             </SectionCard>
           </div>
         )}

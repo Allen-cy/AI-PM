@@ -257,7 +257,7 @@ export default function MonitoringPage() {
           background: "rgba(139, 92, 246, 0.15)",
           color: "var(--purple)",
         }}>
-          PMBOK 阶段 4
+          监控阶段
         </span>
       </header>
 

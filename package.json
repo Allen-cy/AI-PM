@@ -1,10 +1,10 @@
 {
   "name": "ai-pm-system",
-  "version": "5.0.4",
+  "version": "5.0.5",
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "next build --webpack",
     "corpus:build": "node scripts/build-rag-corpus.mjs",
     "start": "next start",
     "lint": "eslint",

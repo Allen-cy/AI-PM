@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import Link from 'next/link';
 import {
   initialProjects,
   initialOKRs,
@@ -25,9 +26,14 @@ export default function PMOPage() {
     <div style={{ padding: '24px', maxWidth: '1400px', margin: '0 auto' }}>
       {/* Header */}
       <div style={{ marginBottom: '32px' }}>
-        <h1 style={{ fontSize: '1.8rem', fontWeight: 800, marginBottom: '8px' }}>
-          PMO治理中心
-        </h1>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', marginBottom: '8px' }}>
+          <h1 style={{ fontSize: '1.8rem', fontWeight: 800 }}>
+            PMO治理中心
+          </h1>
+          <Link href="/" className="btn-secondary" style={{ textDecoration: 'none', fontSize: '0.85rem' }}>
+            ← 返回首页
+          </Link>
+        </div>
         <p style={{ color: 'var(--text2)', fontSize: '0.9rem' }}>
           项目组合健康度监控 · OKR追踪 · PRINCE2合规 · 治理指标
         </p>

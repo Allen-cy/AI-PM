@@ -56,17 +56,20 @@ export default function KnowledgePage() {
         }),
       });
 
-      if (!response.ok) throw new Error('RAG request failed');
+      if (!response.ok) {
+        const problem = await response.json().catch(() => ({})) as { code?: string; request_id?: string };
+        throw new Error(`${problem.code ?? `HTTP_${response.status}`}${problem.request_id ? ` / ${problem.request_id}` : ''}`);
+      }
 
       const data = await response.json() as RagQueryResult;
       setCurrentSessionId(data.trace_id);
 
       const assistantMessage = toAssistantMessage(data);
       setMessages(prev => [...prev, assistantMessage]);
-    } catch {
+    } catch (error) {
       const errorMessage: QAMessage = {
         role: 'assistant',
-        content: '抱歉，AI知识库暂时无法回答您的问题。请稍后再试。',
+        content: `知识库请求失败：${error instanceof Error ? error.message : '未知错误'}。请稍后重试；如果持续出现，请把这条错误信息发给管理员定位。`,
       };
       setMessages(prev => [...prev, errorMessage]);
     } finally {

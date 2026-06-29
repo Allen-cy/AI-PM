@@ -150,7 +150,7 @@ export default function ClosingPage() {
         <span style={{ fontSize: "1.2rem" }}>🎯</span>
         <span style={{ fontWeight: 800, fontSize: "1.1rem" }}>项目收尾阶段</span>
         <span className="tag" style={{ background: "rgba(16,185,129,0.15)", color: "var(--green)" }}>
-          PMBOK Phase 5
+          项目收尾阶段
         </span>
       </header>
 
@@ -1376,7 +1376,7 @@ export default function ClosingPage() {
           color: "var(--text2)",
         }}
       >
-        <span>AI项目管理助手 · 项目收尾阶段 · PMBOK Phase 5</span>
+        <span>AI项目管理助手 · 项目收尾阶段 · 验收、移交与归档</span>
         <span style={{ color: "var(--border)" }}>|</span>
         <span>{projectData.projectName}</span>
       </footer>

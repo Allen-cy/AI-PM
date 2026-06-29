@@ -47,6 +47,20 @@ export interface FeishuEventClaim {
   recordId: string;
 }
 
+export interface FeishuProjectCreateInput {
+  name: string;
+  type: '信息化' | '课程开发' | '工程基建' | '运营服务';
+  level: 'S' | 'A' | 'B' | 'C';
+  applyDate: string;
+  expectedStart?: string;
+  sponsor: string;
+  businessJustification: string;
+}
+
+export interface FeishuRecordCreateResult {
+  recordId: string;
+}
+
 export interface FeishuHealth {
   status: 'ok' | 'degraded';
   identity: 'bot';
@@ -68,6 +82,34 @@ export class FeishuApiError extends Error {
 async function sha256(value: string): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
   return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function toFeishuDateTime(value: string | number | Date): string {
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return `${value} 00:00:00`;
+  }
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    throw new FeishuApiError('Invalid datetime value for Feishu Base.', 'FEISHU_INVALID_DATETIME');
+  }
+  const parts = new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).formatToParts(date);
+  const pick = (type: Intl.DateTimeFormatPartTypes) => parts.find(part => part.type === type)?.value ?? '00';
+  return `${pick('year')}-${pick('month')}-${pick('day')} ${pick('hour')}:${pick('minute')}:${pick('second')}`;
+}
+
+function removeEmptyFields(fields: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(fields).filter(([, value]) => value !== undefined && value !== null && value !== ''),
+  );
 }
 
 export class FeishuBaseClient {
@@ -132,6 +174,57 @@ export class FeishuBaseClient {
       return payload.data.tables.map(table => ({ table_id: table.id, name: table.name }));
     }
     return payload.data?.items ?? [];
+  }
+
+  async createRecord(tableKey: FeishuTableKey, fields: Record<string, unknown>): Promise<FeishuRecordCreateResult> {
+    const tableId = this.config.tables[tableKey];
+    if (!tableId) {
+      throw new FeishuApiError(`Feishu table ${tableKey} is not configured.`, 'FEISHU_TABLE_NOT_CONFIGURED');
+    }
+
+    const token = await this.getTenantToken();
+    const response = await this.fetcher(
+      `https://open.feishu.cn/open-apis/bitable/v1/apps/${encodeURIComponent(this.config.baseToken)}/tables/${encodeURIComponent(tableId)}/records`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ fields: removeEmptyFields(fields) }),
+      },
+    );
+    if (!response.ok) {
+      throw new FeishuApiError('Feishu Base record create request failed.', 'FEISHU_RECORD_CREATE_HTTP_ERROR');
+    }
+
+    const created = await response.json() as RecordCreateResponse;
+    const recordId = created.data?.record?.record_id;
+    if (created.code !== 0 || !recordId) {
+      throw new FeishuApiError('Feishu Base record create was rejected.', `FEISHU_RECORD_CREATE_${created.code}`);
+    }
+    return { recordId };
+  }
+
+  async createProject(input: FeishuProjectCreateInput): Promise<FeishuRecordCreateResult> {
+    const now = new Date();
+    return this.createRecord('project', {
+      project_id: `AI-PM-${now.getTime()}`,
+      '项目名称': input.name,
+      '项目类型': input.type,
+      '项目等级': input.level,
+      '项目状态': '待立项',
+      '当前阶段': '立项',
+      '申请日期': toFeishuDateTime(input.applyDate),
+      '计划开始': input.expectedStart ? toFeishuDateTime(input.expectedStart) : undefined,
+      '项目发起人': input.sponsor,
+      '业务立项理由': input.businessJustification,
+      '密级': 'internal',
+      source_system: 'ai-pm',
+      sync_status: 'synced',
+      last_synced_at: toFeishuDateTime(now),
+      data_version: 1,
+    });
   }
 
   async claimEvent(input: FeishuEventClaimInput): Promise<FeishuEventClaim> {

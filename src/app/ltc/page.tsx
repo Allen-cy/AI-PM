@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import type { FeishuTableKey } from "@/features/feishu/config";
+import { FEISHU_BASE_HOME_URL, feishuTableUrl } from "@/features/feishu/links";
 
 // 12 LTC stages with full metadata
 const STAGES = [
@@ -186,6 +188,15 @@ function getStageBorder(status: string) {
     case "blocked": return "rgba(239,68,68,0.5)";
     default: return "var(--border)";
   }
+}
+
+function getStageFeishuTableKey(stageId: string): FeishuTableKey {
+  if (stageId === "S05" || stageId === "S06") return "contract";
+  if (stageId === "S11") return "payment";
+  if (stageId === "S03") return "cost";
+  if (stageId === "S08" || stageId === "S09" || stageId === "S10") return "milestone";
+  if (stageId === "S12") return "task";
+  return "project";
 }
 
 // AI bottleneck analysis
@@ -492,7 +503,9 @@ export default function LTCPage() {
                   {/* Feishu link */}
                   <div style={{ marginTop: 20, display: "flex", alignItems: "center", gap: 12 }}>
                     <a
-                      href="#"
+                      href={feishuTableUrl(getStageFeishuTableKey(stage.id))}
+                      target="_blank"
+                      rel="noopener noreferrer"
                       style={{
                         display: "inline-flex",
                         alignItems: "center",
@@ -804,7 +817,9 @@ export default function LTCPage() {
             </div>
           </div>
           <a
-            href="#"
+            href={FEISHU_BASE_HOME_URL}
+            target="_blank"
+            rel="noopener noreferrer"
             style={{
               padding: "10px 24px",
               background: "var(--feishu)",
