@@ -5,6 +5,21 @@ import { DEFAULT_DASHBOARD_DATA } from "@/features/dashboard/normalizer";
 import type { DashboardData } from "@/features/dashboard/types";
 import { feishuTableUrl } from "@/features/feishu/links";
 
+const DASHBOARD_CACHE_KEY = "ai-pmo-dashboard-data-v2";
+const LEGACY_DASHBOARD_CACHE_KEY = "ai-pmo-dashboard-data";
+
+function isDashboardData(data: unknown): data is DashboardData {
+  if (!data || typeof data !== "object") return false;
+  const candidate = data as Partial<DashboardData>;
+  return Boolean(
+    candidate.source &&
+    candidate.kpi &&
+    Array.isArray(candidate.records) &&
+    Array.isArray(candidate.statusDistribution) &&
+    Array.isArray(candidate.monthlyTrend)
+  );
+}
+
 function formatCurrency(num: number): string {
   return `¥${num.toLocaleString()}万`;
 }
@@ -229,21 +244,26 @@ export default function DashboardPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    const cached = localStorage.getItem("ai-pmo-dashboard-data");
+    localStorage.removeItem(LEGACY_DASHBOARD_CACHE_KEY);
+    const cached = localStorage.getItem(DASHBOARD_CACHE_KEY);
     if (cached) {
       try {
-        setDashboardData(JSON.parse(cached) as DashboardData);
-        return;
+        const parsed = JSON.parse(cached);
+        if (isDashboardData(parsed)) {
+          setDashboardData(parsed);
+          return;
+        }
       } catch {
-        localStorage.removeItem("ai-pmo-dashboard-data");
+        // Fall through and clear the invalid cache below.
       }
+      localStorage.removeItem(DASHBOARD_CACHE_KEY);
     }
-    void loadFromFeishu(false);
   }, []);
 
   const persistData = (data: DashboardData) => {
     setDashboardData(data);
-    localStorage.setItem("ai-pmo-dashboard-data", JSON.stringify(data));
+    localStorage.removeItem(LEGACY_DASHBOARD_CACHE_KEY);
+    localStorage.setItem(DASHBOARD_CACHE_KEY, JSON.stringify(data));
   };
 
   const loadFromFeishu = async (manual = true) => {
@@ -285,7 +305,8 @@ export default function DashboardPage() {
   };
 
   const resetData = () => {
-    localStorage.removeItem("ai-pmo-dashboard-data");
+    localStorage.removeItem(LEGACY_DASHBOARD_CACHE_KEY);
+    localStorage.removeItem(DASHBOARD_CACHE_KEY);
     setDashboardData(DEFAULT_DASHBOARD_DATA);
     setMessage("已切回作业帮项目样例数据源。");
   };
