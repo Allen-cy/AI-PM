@@ -35,7 +35,7 @@ test('loads app identity and table mapping without exposing the secret', () => {
   assert.doesNotMatch(JSON.stringify(config.publicSummary), /action-api-key/);
 });
 
-test('authenticates as the app and verifies the Base v3 data.tables response', async () => {
+test('authenticates as the app and verifies Bitable v1 table responses', async () => {
   const calls: Array<{ url: string; init?: RequestInit }> = [];
   const fakeFetch: typeof fetch = async (input, init) => {
     const url = String(input);
@@ -46,9 +46,9 @@ test('authenticates as the app and verifies the Base v3 data.tables response', a
     return Response.json({
       code: 0,
       data: {
-        tables: [
-          { id: 'tbl-project', name: '项目台账' },
-          { id: 'tbl-ledger', name: '同步账本' },
+        items: [
+          { table_id: 'tbl-project', name: '项目台账' },
+          { table_id: 'tbl-ledger', name: '同步账本' },
         ],
       },
     });
@@ -69,6 +69,7 @@ test('authenticates as the app and verifies the Base v3 data.tables response', a
   assert.equal(health.table_count, 2);
   assert.deepEqual(health.missing_required_tables, []);
   assert.equal(calls.length, 2);
+  assert.match(calls[1].url, /\/open-apis\/bitable\/v1\/apps\/base-token\/tables\?page_size=100$/);
   assert.equal(new Headers(calls[1].init?.headers).get('authorization'), 'Bearer tenant-token');
 });
 
@@ -120,6 +121,10 @@ test('claims a new event in the Feishu sync ledger before processing', async () 
   });
 
   assert.deepEqual(result, { claimed: true, recordId: 'rec-event-1' });
+  assert.equal(
+    calls.some(call => call.url.includes('/open-apis/bitable/v1/apps/base-token/tables/tbl-ledger/records/search')),
+    true,
+  );
   const create = calls.find(call => call.url.endsWith('/records'));
   assert.ok(create);
   const body = JSON.parse(String(create.init?.body));
