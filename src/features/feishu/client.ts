@@ -84,26 +84,16 @@ async function sha256(value: string): Promise<string> {
   return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('');
 }
 
-function toFeishuDateTime(value: string | number | Date): string {
+function toFeishuTimestamp(value: string | number | Date): number {
   if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    return `${value} 00:00:00`;
+    const [year, month, day] = value.split('-').map(Number);
+    return Date.UTC(year, month - 1, day, -8, 0, 0);
   }
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) {
     throw new FeishuApiError('Invalid datetime value for Feishu Base.', 'FEISHU_INVALID_DATETIME');
   }
-  const parts = new Intl.DateTimeFormat('zh-CN', {
-    timeZone: 'Asia/Shanghai',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-  }).formatToParts(date);
-  const pick = (type: Intl.DateTimeFormatPartTypes) => parts.find(part => part.type === type)?.value ?? '00';
-  return `${pick('year')}-${pick('month')}-${pick('day')} ${pick('hour')}:${pick('minute')}:${pick('second')}`;
+  return date.getTime();
 }
 
 function removeEmptyFields(fields: Record<string, unknown>): Record<string, unknown> {
@@ -215,14 +205,14 @@ export class FeishuBaseClient {
       '项目等级': input.level,
       '项目状态': '待立项',
       '当前阶段': '立项',
-      '申请日期': toFeishuDateTime(input.applyDate),
-      '计划开始': input.expectedStart ? toFeishuDateTime(input.expectedStart) : undefined,
+      '申请日期': toFeishuTimestamp(input.applyDate),
+      '计划开始': input.expectedStart ? toFeishuTimestamp(input.expectedStart) : undefined,
       '项目发起人': input.sponsor,
       '业务立项理由': input.businessJustification,
       '密级': 'internal',
       source_system: 'ai-pm',
       sync_status: 'synced',
-      last_synced_at: toFeishuDateTime(now),
+      last_synced_at: toFeishuTimestamp(now),
       data_version: 1,
     });
   }

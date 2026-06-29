@@ -129,12 +129,13 @@ test('creates a project ledger record with initiation fields', async () => {
   assert.equal(body.fields['项目等级'], 'A');
   assert.equal(body.fields['项目状态'], '待立项');
   assert.equal(body.fields['当前阶段'], '立项');
-  assert.equal(body.fields['申请日期'], '2026-06-29 00:00:00');
-  assert.equal(body.fields['计划开始'], '2026-07-01 00:00:00');
+  assert.equal(body.fields['申请日期'], 1782662400000);
+  assert.equal(body.fields['计划开始'], 1782835200000);
   assert.equal(body.fields['项目发起人'], 'PMO办公室');
   assert.equal(body.fields['业务立项理由'], '验证立项页保存至飞书。');
   assert.equal(body.fields.source_system, 'ai-pm');
   assert.equal(body.fields.sync_status, 'synced');
+  assert.equal(typeof body.fields.last_synced_at, 'number');
   assert.match(body.fields.project_id, /^AI-PM-\d+$/);
 });
 
