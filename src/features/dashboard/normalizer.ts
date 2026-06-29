@@ -8,6 +8,7 @@ import type {
   RiskProject,
   UpcomingPayment,
 } from './types.ts';
+import sampleProjects from './sample-projects.ts';
 
 type RawRow = Record<string, unknown>;
 
@@ -307,6 +308,10 @@ export const DEFAULT_TEMPLATE_ROWS: RawRow[] = [
 ];
 
 export const DEFAULT_DASHBOARD_DATA = buildDashboardData(
-  normalizeProjectRows(DEFAULT_TEMPLATE_ROWS),
-  { type: 'sample', name: '内置模板补充数据', note: '用于无外部数据时保持看板完整展示。' },
+  sampleProjects.records as unknown as DashboardProjectRecord[],
+  {
+    type: 'sample',
+    name: '作业帮项目样例数据源',
+    note: '来源：知识库（大厂最佳实践沉淀）/作业帮/项目台账&一表通/项目/样例数据源.xlsx；缺失的看板字段已按规则补充测试值。',
+  },
 );

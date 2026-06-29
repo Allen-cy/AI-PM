@@ -287,7 +287,7 @@ export default function DashboardPage() {
   const resetData = () => {
     localStorage.removeItem("ai-pmo-dashboard-data");
     setDashboardData(DEFAULT_DASHBOARD_DATA);
-    setMessage("已切回内置模板补充数据。");
+    setMessage("已切回作业帮项目样例数据源。");
   };
 
   const kpi = dashboardData.kpi;
@@ -306,7 +306,7 @@ export default function DashboardPage() {
         <a href="/" style={{ color: "var(--text2)", textDecoration: "none", fontSize: "0.85rem" }}>← 返回首页</a>
         <span style={{ color: "var(--border)" }}>|</span>
         <span style={{ fontWeight: 700 }}>📊 项目组合看板</span>
-        <span className="tag tag-blue" style={{ fontSize: "0.7rem" }}>{dashboardData.source.type === "feishu" ? "飞书实时数据" : dashboardData.source.type === "file" ? "文件导入数据" : "模板补充数据"}</span>
+        <span className="tag tag-blue" style={{ fontSize: "0.7rem" }}>{dashboardData.source.type === "feishu" ? "飞书实时数据" : dashboardData.source.type === "file" ? "文件导入数据" : "样例数据源"}</span>
       </header>
 
       <main style={{ flex: 1, padding: "24px 32px", maxWidth: 1400, margin: "0 auto", width: "100%" }}>
