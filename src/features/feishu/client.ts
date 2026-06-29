@@ -114,7 +114,7 @@ export class FeishuBaseClient {
   private async listTables(): Promise<Array<{ table_id: string; name: string }>> {
     const token = await this.getTenantToken();
     const url = new URL(
-      `https://open.feishu.cn/open-apis/base/v3/bases/${encodeURIComponent(this.config.baseToken)}/tables`,
+      `https://open.feishu.cn/open-apis/bitable/v1/apps/${encodeURIComponent(this.config.baseToken)}/tables`,
     );
     url.searchParams.set('page_size', '100');
     const response = await this.fetcher(url, {
@@ -141,7 +141,7 @@ export class FeishuBaseClient {
     }
 
     const token = await this.getTenantToken();
-    const recordsUrl = `https://open.feishu.cn/open-apis/base/v3/bases/${encodeURIComponent(this.config.baseToken)}/tables/${encodeURIComponent(tableId)}/records`;
+    const recordsUrl = `https://open.feishu.cn/open-apis/bitable/v1/apps/${encodeURIComponent(this.config.baseToken)}/tables/${encodeURIComponent(tableId)}/records`;
     const idempotencyKey = `feishu:${input.eventId}`;
     const headers = {
       Authorization: `Bearer ${token}`,
@@ -240,7 +240,7 @@ export class FeishuBaseClient {
       throw new FeishuApiError('Feishu sync ledger table is not configured.', 'FEISHU_SYNC_LEDGER_NOT_CONFIGURED');
     }
     const token = await this.getTenantToken();
-    const url = `https://open.feishu.cn/open-apis/base/v3/bases/${encodeURIComponent(this.config.baseToken)}/tables/${encodeURIComponent(tableId)}/records/${encodeURIComponent(recordId)}`;
+    const url = `https://open.feishu.cn/open-apis/bitable/v1/apps/${encodeURIComponent(this.config.baseToken)}/tables/${encodeURIComponent(tableId)}/records/${encodeURIComponent(recordId)}`;
     const response = await this.fetcher(url, {
       method: 'PUT',
       headers: {
