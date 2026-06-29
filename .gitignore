@@ -25,6 +25,7 @@
 *.pem
 /conversation_history.md
 /.omc/state/
+/.tmp/
 
 # debug
 npm-debug.log*

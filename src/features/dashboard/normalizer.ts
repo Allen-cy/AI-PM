@@ -97,7 +97,7 @@ export function normalizeProjectRows(rows: RawRow[]): DashboardProjectRecord[] {
       const collectionRate = contract > 0 ? collection / contract : number(row, ['回款率'], 0);
       const progressDev = number(row, ['进度偏差', '交付延期'], text(row, ['交付延期']) === '是' ? -12 : Math.round((progress - 0.8) * 30));
       const costHealth = number(row, ['成本健康度'], Math.max(45, Math.min(95, 100 - Math.max(0, receivable / Math.max(contract || 1, 1)) * 25 - Math.max(0, -progressDev))));
-      const status = normalizeStatus(text(row, ['项目状态', '当前状态', '状态']), progress);
+      const status = normalizeStatus(text(row, ['当前状态', '项目状态', '状态']), progress);
       const level = normalizeLevel(text(row, ['项目等级', '项目分级']), index);
       const dueDate = dateText(row, ['到期日期', '截止时间', '计划完成', '计划交付时间']);
       const project: DashboardProjectRecord = {
