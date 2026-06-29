@@ -67,9 +67,9 @@ npm run build
 - 飞书端已建立8张业务表；公开项目记录API会等用户登录和授权模型完成后再开放。
 - 全仓历史 ESLint 基线仍有旧问题；V4新增/改动文件执行独立零错误门禁。
 
-## AI-PMO System V5.0.3
+## AI-PMO System V5.0.4
 
-V5.0.3 将审定知识扩展为27篇，并建立长期 Bot 身份下的飞书事件与动作闭环；同时将PMO Base健康检查与同步账本统一到飞书 Bitable v1 协议，确保8张业务表、账本查重和状态回写使用同一套真实接口模型。
+V5.0.4 将审定知识扩展为27篇，并建立长期 Bot 身份下的飞书事件与动作闭环；同时将PMO Base健康检查与同步账本统一到飞书 Bitable v1 协议，确保8张业务表、账本查重和状态回写使用同一套真实接口模型。本版补齐生产 `FEISHU_VERIFICATION_TOKEN`，用于验证飞书明文事件回调 URL challenge。
 
 ### 已实现
 
@@ -93,7 +93,7 @@ FEISHU_DOCUMENT_PARENT_TOKEN
 FEISHU_DOCUMENT_GRANT_OPEN_ID
 ```
 
-飞书事件订阅地址为 `/api/integrations/feishu/events`。当前只接受明文回调；加密载荷会明确拒绝。动作接口只接受服务器到服务器调用，不应把 `AI_PM_INTEGRATION_API_KEY` 暴露给浏览器。
+飞书事件订阅地址为 `https://pmai.chunyu2026.qzz.io/api/integrations/feishu/events`。当前只接受明文回调；加密载荷会明确拒绝。动作接口只接受服务器到服务器调用，不应把 `AI_PM_INTEGRATION_API_KEY` 暴露给浏览器。
 
 ### 当前边界
 
