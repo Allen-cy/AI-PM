@@ -35,6 +35,19 @@ interface RecordCreateResponse {
   };
 }
 
+interface RecordListResponse {
+  code: number;
+  msg?: string;
+  data?: {
+    items?: Array<{
+      record_id: string;
+      fields?: Record<string, unknown>;
+    }>;
+    page_token?: string;
+    has_more?: boolean;
+  };
+}
+
 export interface FeishuEventClaimInput {
   eventId: string;
   eventType: string;
@@ -59,6 +72,11 @@ export interface FeishuProjectCreateInput {
 
 export interface FeishuRecordCreateResult {
   recordId: string;
+}
+
+export interface FeishuRecordItem {
+  recordId: string;
+  fields: Record<string, unknown>;
 }
 
 export interface FeishuHealth {
@@ -194,6 +212,41 @@ export class FeishuBaseClient {
       throw new FeishuApiError('Feishu Base record create was rejected.', `FEISHU_RECORD_CREATE_${created.code}`);
     }
     return { recordId };
+  }
+
+  async listRecords(tableKey: FeishuTableKey, limit = 500): Promise<FeishuRecordItem[]> {
+    const tableId = this.config.tables[tableKey];
+    if (!tableId) {
+      throw new FeishuApiError(`Feishu table ${tableKey} is not configured.`, 'FEISHU_TABLE_NOT_CONFIGURED');
+    }
+
+    const token = await this.getTenantToken();
+    const output: FeishuRecordItem[] = [];
+    let pageToken: string | undefined;
+    do {
+      const url = new URL(
+        `https://open.feishu.cn/open-apis/bitable/v1/apps/${encodeURIComponent(this.config.baseToken)}/tables/${encodeURIComponent(tableId)}/records`,
+      );
+      url.searchParams.set('page_size', String(Math.min(100, Math.max(1, limit - output.length))));
+      if (pageToken) url.searchParams.set('page_token', pageToken);
+      const response = await this.fetcher(url, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) {
+        throw new FeishuApiError('Feishu Base record list request failed.', 'FEISHU_RECORD_LIST_HTTP_ERROR');
+      }
+      const payload = await response.json() as RecordListResponse;
+      if (payload.code !== 0) {
+        throw new FeishuApiError('Feishu Base record list was rejected.', `FEISHU_RECORD_LIST_${payload.code}`);
+      }
+      output.push(...(payload.data?.items ?? []).map(item => ({
+        recordId: item.record_id,
+        fields: item.fields ?? {},
+      })));
+      pageToken = payload.data?.has_more ? payload.data.page_token : undefined;
+    } while (pageToken && output.length < limit);
+
+    return output.slice(0, limit);
   }
 
   async createProject(input: FeishuProjectCreateInput): Promise<FeishuRecordCreateResult> {

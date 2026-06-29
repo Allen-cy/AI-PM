@@ -1,77 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { DEFAULT_DASHBOARD_DATA } from "@/features/dashboard/normalizer";
+import type { DashboardData } from "@/features/dashboard/types";
 import { feishuTableUrl } from "@/features/feishu/links";
-
-const MOCK_DATA = {
-  kpi: {
-    totalProjects: 47,
-    totalContract: 5280,
-    totalCollection: 3120,
-    collectionRate: 59.1,
-    receivable: 1850,
-  },
-  statusDistribution: [
-    { name: "执行中", value: 22, color: "#3b82f6" },
-    { name: "验收中", value: 12, color: "#10b981" },
-    { name: "待启动", value: 8, color: "#f59e0b" },
-    { name: "已延期", value: 5, color: "#ef4444" },
-  ],
-  monthlyTrend: [
-    { month: "1月", contract: 420, collection: 280 },
-    { month: "2月", contract: 380, collection: 260 },
-    { month: "3月", contract: 520, collection: 340 },
-    { month: "4月", contract: 480, collection: 390 },
-    { month: "5月", contract: 600, collection: 420 },
-    { month: "6月", contract: 540, collection: 480 },
-  ],
-  regionDistribution: [
-    { region: "华东", count: 15, amount: 1800 },
-    { region: "华北", count: 12, amount: 1400 },
-    { region: "华南", count: 10, amount: 1200 },
-    { region: "西南", count: 6, amount: 580 },
-    { region: "华中", count: 4, amount: 300 },
-  ],
-  paymentGroups: [
-    { range: "<30天", count: 8, amount: 420 },
-    { range: "30-60天", count: 12, amount: 680 },
-    { range: "60-90天", count: 15, amount: 920 },
-    { range: ">90天", count: 7, amount: 380 },
-  ],
-  projectLevels: [
-    { name: "A级(战略)", value: 5, color: "#8b5cf6" },
-    { name: "B级(重点)", value: 12, color: "#3b82f6" },
-    { name: "C级(普通)", value: 20, color: "#10b981" },
-    { name: "D级(观察)", value: 10, color: "#f59e0b" },
-  ],
-  healthMatrix: [
-    { name: "项目A", progressDev: 5, costHealth: 85, status: "green" },
-    { name: "项目B", progressDev: -8, costHealth: 72, status: "green" },
-    { name: "项目C", progressDev: 12, costHealth: 65, status: "yellow" },
-    { name: "项目D", progressDev: -15, costHealth: 58, status: "red" },
-    { name: "项目E", progressDev: 3, costHealth: 90, status: "green" },
-    { name: "项目F", progressDev: -5, costHealth: 68, status: "yellow" },
-    { name: "项目G", progressDev: 18, costHealth: 55, status: "red" },
-    { name: "项目H", progressDev: 8, costHealth: 78, status: "green" },
-    { name: "项目I", progressDev: -12, costHealth: 62, status: "yellow" },
-    { name: "项目J", progressDev: 20, costHealth: 48, status: "red" },
-    { name: "项目K", progressDev: 2, costHealth: 88, status: "green" },
-    { name: "项目L", progressDev: -3, costHealth: 75, status: "green" },
-  ],
-  riskProjects: [
-    { id: "P-2024-015", name: "某市智慧教育平台", riskType: "进度风险", severity: "高", status: "监控中", trend: "恶化" },
-    { id: "P-2024-022", name: "高校数据中台项目", riskType: "成本风险", severity: "高", status: "处理中", trend: "平稳" },
-    { id: "P-2024-031", name: "职业教育基地建设", riskType: "范围风险", severity: "中", status: "监控中", trend: "恶化" },
-    { id: "P-2024-038", name: "智能化校园改造", riskType: "资源风险", severity: "中", status: "已识别", trend: "平稳" },
-  ],
-  upcomingPayments: [
-    { project: "智慧校园一期", party: "某市教育局", amount: 280, dueDate: "2024/06/15", daysLeft: 5 },
-    { project: "高职虚拟仿真", party: "某职业学院", amount: 160, dueDate: "2024/06/18", daysLeft: 8 },
-    { project: "教育局数据平台", party: "省教育厅", amount: 420, dueDate: "2024/06/20", daysLeft: 10 },
-    { project: "中学智慧课堂", party: "某市第一中学", amount: 85, dueDate: "2024/06/22", daysLeft: 12 },
-    { project: "职教云平台", party: "某职教集团", amount: 195, dueDate: "2024/06/25", daysLeft: 15 },
-  ],
-};
 
 function formatCurrency(num: number): string {
   return `¥${num.toLocaleString()}万`;
@@ -87,7 +19,7 @@ function KPICard({ label, value, subValue, color }: { label: string; value: stri
   );
 }
 
-function PieChart({ data }: { data: typeof MOCK_DATA.statusDistribution }) {
+function PieChart({ data }: { data: DashboardData["statusDistribution"] }) {
   const total = data.reduce((sum, d) => sum + d.value, 0);
   let cumulative = 0;
   const paths = data.map((d) => {
@@ -125,7 +57,7 @@ function PieChart({ data }: { data: typeof MOCK_DATA.statusDistribution }) {
   );
 }
 
-function LineChart({ data }: { data: typeof MOCK_DATA.monthlyTrend }) {
+function LineChart({ data }: { data: DashboardData["monthlyTrend"] }) {
   const maxVal = Math.max(...data.flatMap(d => [d.contract, d.collection]));
   const h = 140, w = 400;
   const scale = (v: number) => (1 - v / maxVal) * h;
@@ -179,7 +111,7 @@ function LineChart({ data }: { data: typeof MOCK_DATA.monthlyTrend }) {
   );
 }
 
-function RegionBarChart({ data }: { data: typeof MOCK_DATA.regionDistribution }) {
+function RegionBarChart({ data }: { data: DashboardData["regionDistribution"] }) {
   const maxCount = Math.max(...data.map(d => d.count));
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -202,7 +134,7 @@ function RegionBarChart({ data }: { data: typeof MOCK_DATA.regionDistribution })
   );
 }
 
-function Histogram({ data }: { data: typeof MOCK_DATA.paymentGroups }) {
+function Histogram({ data }: { data: DashboardData["paymentGroups"] }) {
   const maxAmount = Math.max(...data.map(d => d.amount));
   return (
     <div style={{ display: "flex", alignItems: "flex-end", gap: 16, height: 120, paddingTop: 20 }}>
@@ -223,7 +155,7 @@ function Histogram({ data }: { data: typeof MOCK_DATA.paymentGroups }) {
   );
 }
 
-function DonutChart({ data }: { data: typeof MOCK_DATA.projectLevels }) {
+function DonutChart({ data }: { data: DashboardData["projectLevels"] }) {
   const total = data.reduce((sum, d) => sum + d.value, 0);
   let cumulative = 0;
   const paths = data.map((d) => {
@@ -260,7 +192,7 @@ function DonutChart({ data }: { data: typeof MOCK_DATA.projectLevels }) {
   );
 }
 
-function HealthMatrix({ data }: { data: typeof MOCK_DATA.healthMatrix }) {
+function HealthMatrix({ data }: { data: DashboardData["healthMatrix"] }) {
   const statusColors = { green: "#10b981", yellow: "#f59e0b", red: "#ef4444" };
   return (
     <div style={{ position: "relative", height: 220, background: "var(--surface2)", borderRadius: 8, padding: 16 }}>
@@ -291,6 +223,74 @@ function HealthMatrix({ data }: { data: typeof MOCK_DATA.healthMatrix }) {
 
 export default function DashboardPage() {
   const [riskFilter, setRiskFilter] = useState("全部");
+  const [dashboardData, setDashboardData] = useState<DashboardData>(DEFAULT_DASHBOARD_DATA);
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const cached = localStorage.getItem("ai-pmo-dashboard-data");
+    if (cached) {
+      try {
+        setDashboardData(JSON.parse(cached) as DashboardData);
+        return;
+      } catch {
+        localStorage.removeItem("ai-pmo-dashboard-data");
+      }
+    }
+    void loadFromFeishu(false);
+  }, []);
+
+  const persistData = (data: DashboardData) => {
+    setDashboardData(data);
+    localStorage.setItem("ai-pmo-dashboard-data", JSON.stringify(data));
+  };
+
+  const loadFromFeishu = async (manual = true) => {
+    setLoading(true);
+    setMessage(manual ? "正在从飞书智能表拉取数据..." : null);
+    try {
+      const response = await fetch("/api/dashboard/feishu", { cache: "no-store" });
+      const payload = await response.json() as { data?: DashboardData; code?: string };
+      if (!response.ok || !payload.data) throw new Error(payload.code ?? `HTTP_${response.status}`);
+      persistData(payload.data);
+      setMessage(`已从飞书智能表拉取 ${payload.data.records.length} 条项目数据。`);
+    } catch (error) {
+      if (manual) setMessage(`飞书拉取失败：${error instanceof Error ? error.message : "未知错误"}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const importFile = async (file: File) => {
+    setLoading(true);
+    setMessage("正在解析导入文件...");
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const response = await fetch("/api/dashboard/import", {
+        method: "POST",
+        body: form,
+      });
+      const payload = await response.json() as { data?: DashboardData; code?: string };
+      if (!response.ok || !payload.data) throw new Error(payload.code ?? `HTTP_${response.status}`);
+      persistData(payload.data);
+      setMessage(`已导入 ${payload.data.records.length} 条项目数据。`);
+    } catch (error) {
+      setMessage(`导入失败：${error instanceof Error ? error.message : "未知错误"}`);
+    } finally {
+      setLoading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  const resetData = () => {
+    localStorage.removeItem("ai-pmo-dashboard-data");
+    setDashboardData(DEFAULT_DASHBOARD_DATA);
+    setMessage("已切回内置模板补充数据。");
+  };
+
+  const kpi = dashboardData.kpi;
 
   return (
     <div style={{ minHeight: "100vh", background: "var(--bg)", display: "flex", flexDirection: "column" }}>
@@ -306,17 +306,50 @@ export default function DashboardPage() {
         <a href="/" style={{ color: "var(--text2)", textDecoration: "none", fontSize: "0.85rem" }}>← 返回首页</a>
         <span style={{ color: "var(--border)" }}>|</span>
         <span style={{ fontWeight: 700 }}>📊 项目组合看板</span>
-        <span className="tag tag-blue" style={{ fontSize: "0.7rem" }}>飞书 + ECharts</span>
+        <span className="tag tag-blue" style={{ fontSize: "0.7rem" }}>{dashboardData.source.type === "feishu" ? "飞书实时数据" : dashboardData.source.type === "file" ? "文件导入数据" : "模板补充数据"}</span>
       </header>
 
       <main style={{ flex: 1, padding: "24px 32px", maxWidth: 1400, margin: "0 auto", width: "100%" }}>
+        <div className="card" style={{ marginBottom: 24, display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+          <div style={{ flex: 1, minWidth: 260 }}>
+            <div style={{ fontSize: "0.85rem", fontWeight: 700, marginBottom: 4 }}>数据源：{dashboardData.source.name}</div>
+            <div style={{ fontSize: "0.78rem", color: "var(--text2)", lineHeight: 1.6 }}>
+              已加载 {dashboardData.records.length} 条项目记录 · 生成时间 {new Date(dashboardData.source.generatedAt).toLocaleString("zh-CN")}
+              {dashboardData.source.note ? ` · ${dashboardData.source.note}` : ""}
+            </div>
+            {message && <div style={{ marginTop: 6, fontSize: "0.78rem", color: "var(--accent2)" }}>{message}</div>}
+          </div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".xlsx,.xls,.csv"
+            style={{ display: "none" }}
+            onChange={event => {
+              const file = event.target.files?.[0];
+              if (file) void importFile(file);
+            }}
+          />
+          <button className="btn-secondary" disabled={loading} onClick={() => fileInputRef.current?.click()}>
+            导入Excel/CSV
+          </button>
+          <a className="btn-secondary" href="/api/dashboard/template" style={{ textDecoration: "none" }}>
+            下载导入模板
+          </a>
+          <button className="btn-primary" disabled={loading} onClick={() => void loadFromFeishu(true)}>
+            从飞书智能表拉取
+          </button>
+          <button className="btn-secondary" disabled={loading} onClick={resetData}>
+            重置示例
+          </button>
+        </div>
+
         {/* KPI Cards */}
         <div style={{ display: "flex", gap: 16, marginBottom: 24 }}>
-          <KPICard label="项目总数" value="47" subValue="较上月 +3" color="var(--accent)" />
-          <KPICard label="合同总额" value="¥5,280万" subValue="本年累计" color="var(--text)" />
-          <KPICard label="回款总额" value="¥3,120万" subValue="较上月 +¥180万" color="var(--green)" />
-          <KPICard label="回款率" value="59.1%" subValue="目标 65%" color="var(--amber)" />
-          <KPICard label="应催账款" value="¥1,850万" subValue="逾期 ¥320万" color="var(--red)" />
+          <KPICard label="项目总数" value={String(kpi.totalProjects)} subValue="来自当前数据源" color="var(--accent)" />
+          <KPICard label="合同总额" value={formatCurrency(kpi.totalContract)} subValue="当前数据源合计" color="var(--text)" />
+          <KPICard label="回款总额" value={formatCurrency(kpi.totalCollection)} subValue="当前数据源合计" color="var(--green)" />
+          <KPICard label="回款率" value={`${kpi.collectionRate}%`} subValue="已回款/合同总额" color="var(--amber)" />
+          <KPICard label="应催账款" value={formatCurrency(kpi.receivable)} subValue="应收金额合计" color="var(--red)" />
         </div>
 
         {/* Charts Grid */}
@@ -326,7 +359,7 @@ export default function DashboardPage() {
             <div style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--text2)", marginBottom: 16, textTransform: "uppercase", letterSpacing: "0.05em" }}>
               项目状态分布
             </div>
-            <PieChart data={MOCK_DATA.statusDistribution} />
+            <PieChart data={dashboardData.statusDistribution} />
           </div>
 
           {/* Monthly Trend */}
@@ -334,7 +367,7 @@ export default function DashboardPage() {
             <div style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--text2)", marginBottom: 12, textTransform: "uppercase", letterSpacing: "0.05em" }}>
               月度趋势
             </div>
-            <LineChart data={MOCK_DATA.monthlyTrend} />
+            <LineChart data={dashboardData.monthlyTrend} />
           </div>
         </div>
 
@@ -344,7 +377,7 @@ export default function DashboardPage() {
             <div style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--text2)", marginBottom: 16, textTransform: "uppercase", letterSpacing: "0.05em" }}>
               省域分布
             </div>
-            <RegionBarChart data={MOCK_DATA.regionDistribution} />
+            <RegionBarChart data={dashboardData.regionDistribution} />
           </div>
 
           {/* Payment Groups */}
@@ -352,7 +385,7 @@ export default function DashboardPage() {
             <div style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--text2)", marginBottom: 16, textTransform: "uppercase", letterSpacing: "0.05em" }}>
               回款分组（账龄）
             </div>
-            <Histogram data={MOCK_DATA.paymentGroups} />
+            <Histogram data={dashboardData.paymentGroups} />
             <div style={{ fontSize: "0.7rem", color: "var(--text2)", marginTop: 8, textAlign: "center" }}>单位：万元</div>
           </div>
 
@@ -361,7 +394,7 @@ export default function DashboardPage() {
             <div style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--text2)", marginBottom: 16, textTransform: "uppercase", letterSpacing: "0.05em" }}>
               项目分级分布
             </div>
-            <DonutChart data={MOCK_DATA.projectLevels} />
+            <DonutChart data={dashboardData.projectLevels} />
           </div>
         </div>
 
@@ -371,7 +404,7 @@ export default function DashboardPage() {
             项目健康矩阵
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 300px", gap: 24 }}>
-            <HealthMatrix data={MOCK_DATA.healthMatrix} />
+            <HealthMatrix data={dashboardData.healthMatrix} />
             <div style={{ borderLeft: "1px solid var(--border)", paddingLeft: 24 }}>
               <div style={{ fontSize: "0.75rem", color: "var(--text2)", marginBottom: 12 }}>健康度说明</div>
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -429,7 +462,9 @@ export default function DashboardPage() {
                 </tr>
               </thead>
               <tbody>
-                {MOCK_DATA.riskProjects.map((p, i) => (
+                {dashboardData.riskProjects
+                  .filter(p => riskFilter === "全部" || p.severity === riskFilter.replace("风险", ""))
+                  .map((p, i) => (
                   <tr key={i} style={{ borderBottom: "1px solid var(--border)" }}>
                     <td style={{ padding: "10px 0" }}>
                       <div style={{ fontWeight: 500 }}>{p.name}</div>
@@ -472,7 +507,7 @@ export default function DashboardPage() {
                 </tr>
               </thead>
               <tbody>
-                {MOCK_DATA.upcomingPayments.map((p, i) => (
+                {dashboardData.upcomingPayments.map((p, i) => (
                   <tr key={i} style={{ borderBottom: "1px solid var(--border)" }}>
                     <td style={{ padding: "10px 0", fontWeight: 500 }}>{p.project}</td>
                     <td style={{ padding: "10px 0", color: "var(--text2)" }}>{p.party}</td>
@@ -488,7 +523,7 @@ export default function DashboardPage() {
               </tbody>
             </table>
             <div style={{ marginTop: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span style={{ fontSize: "0.8rem", color: "var(--text2)" }}>合计：<span style={{ color: "var(--green)", fontWeight: 600 }}>¥1,140万</span></span>
+              <span style={{ fontSize: "0.8rem", color: "var(--text2)" }}>合计：<span style={{ color: "var(--green)", fontWeight: 600 }}>{formatCurrency(dashboardData.upcomingPayments.reduce((sum, item) => sum + item.amount, 0))}</span></span>
               <a href={feishuTableUrl("payment")} target="_blank" rel="noopener noreferrer" style={{ fontSize: "0.8rem", color: "var(--feishu)", textDecoration: "none" }}>
                 查看全部回款计划 →
               </a>
@@ -501,7 +536,7 @@ export default function DashboardPage() {
           <div style={{ fontSize: "1.5rem" }}>🔗</div>
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: "0.85rem", fontWeight: 600, marginBottom: 4 }}>飞书仪表盘集成</div>
-            <div style={{ fontSize: "0.8rem", color: "var(--text2)" }}>以上为本地预览版本，实际数据来自飞书多维表格。点击链接查看完整版。</div>
+            <div style={{ fontSize: "0.8rem", color: "var(--text2)" }}>看板由当前数据源动态计算；点击链接可进入飞书多维表格查看或维护原始数据。</div>
           </div>
           <a href={feishuTableUrl("project")} target="_blank" rel="noopener noreferrer" className="btn-primary" style={{ textDecoration: "none", fontSize: "0.8rem" }}>
             打开飞书项目台账
