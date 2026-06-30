@@ -37,6 +37,8 @@ export const feishuSetupHint = "请在用户中心配置个人飞书应用 App I
 
 export const larkCliHint = "如果在本机通过 Codex 或本地脚本直接操作飞书，需要安装 lark-cli，并完成 lark-cli doctor、登录授权和 Base 权限配置；纯网页端访问使用个人飞书应用配置，不强制依赖 lark-cli。";
 
+export const globalFeishuFallbackHint = "当前账号尚未配置个人飞书接入，系统会先使用管理员全局飞书配置；如需切换到个人飞书，请到用户中心填写个人飞书应用与多维表格映射。";
+
 function tableMappingFrom(value: Record<string, unknown> | null | undefined): Partial<Record<FeishuTableKey, string>> {
   const output: Partial<Record<FeishuTableKey, string>> = {};
   for (const key of tableKeys) {
@@ -100,6 +102,16 @@ export async function getEffectiveFeishuConfig(): Promise<EffectiveFeishuConfig>
     const personalConfig = await getUserFeishuConfig(user.id);
     if (personalConfig) {
       return { config: personalConfig, source: "user", user, larkCliHint };
+    }
+    const globalConfig = readFeishuConfig();
+    if (globalConfig) {
+      return {
+        config: globalConfig,
+        source: "global",
+        user,
+        setupHint: globalFeishuFallbackHint,
+        larkCliHint,
+      };
     }
     return {
       config: null,

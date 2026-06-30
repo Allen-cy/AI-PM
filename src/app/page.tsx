@@ -232,8 +232,22 @@ interface CurrentUser {
   role: "admin" | "user";
 }
 
+interface AiModelSummary {
+  providerLabel: string;
+  model: string;
+  source: "user" | "global" | "default";
+  configured: boolean;
+}
+
+const MODEL_SOURCE_LABELS: Record<AiModelSummary["source"], string> = {
+  user: "用户配置",
+  global: "系统配置",
+  default: "默认模型",
+};
+
 export default function Home() {
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
+  const [aiModel, setAiModel] = useState<AiModelSummary | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -241,9 +255,15 @@ export default function Home() {
       try {
         const response = await fetch("/api/auth/me", { cache: "no-store" });
         const data = await response.json();
-        if (!cancelled) setCurrentUser(data.user || null);
+        if (!cancelled) {
+          setCurrentUser(data.user || null);
+          setAiModel(data.runtime?.aiModel || null);
+        }
       } catch {
-        if (!cancelled) setCurrentUser(null);
+        if (!cancelled) {
+          setCurrentUser(null);
+          setAiModel(null);
+        }
       }
     }
     loadCurrentUser();
@@ -259,6 +279,10 @@ export default function Home() {
     return '🌙 晚上好，整理一天收获';
   })();
   const displayName = currentUser?.name || currentUser?.email || currentUser?.phone;
+  const modelLabel = aiModel
+    ? `${aiModel.providerLabel} · ${aiModel.model}${aiModel.configured ? "" : "（待配置）"}`
+    : "读取中";
+  const modelSourceLabel = aiModel ? MODEL_SOURCE_LABELS[aiModel.source] : "运行配置";
 
   return (
     <div style={{ minHeight: "100vh", background: "var(--bg)", display: "flex", flexDirection: "column" }}>
@@ -274,7 +298,7 @@ export default function Home() {
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <span style={{ fontSize: "1.4rem" }}>🏗️</span>
           <span style={{ fontWeight: 800, fontSize: "1.05rem" }}>AI项目管理助手</span>
-          <span className="tag tag-blue">V5.2.3</span>
+          <span className="tag tag-blue">V5.2.4</span>
         </div>
         <div style={{ display: "flex", gap: 16, fontSize: "0.8rem", color: "var(--text2)", alignItems: "center" }}>
           <span>作者：柴春宇</span>
@@ -283,7 +307,9 @@ export default function Home() {
           <span style={{ color: "var(--border)" }}>|</span>
           <span>飞书底座 + Vercel AI增强</span>
           <span style={{ color: "var(--border)" }}>|</span>
-          <span>用户可配置AI模型</span>
+          <span title={`${modelSourceLabel}，仅显示模型名称，不显示密钥`}>
+            当前模型：{modelLabel}
+          </span>
           <span style={{ color: "var(--border)" }}>|</span>
           {currentUser ? (
             <>
@@ -435,10 +461,10 @@ export default function Home() {
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
                 <span style={{ color: "var(--cyan)", fontSize: "1.1rem" }}>🧠</span>
                 <span style={{ fontWeight: 700, fontSize: "0.9rem" }}>模型路由</span>
-                <span className="tag tag-purple" style={{ fontSize: "0.65rem" }}>双备选</span>
+                <span className="tag tag-purple" style={{ fontSize: "0.65rem" }}>{modelSourceLabel}</span>
               </div>
               <p style={{ fontSize: "0.8rem", color: "var(--text2)", lineHeight: 1.6 }}>
-                DeepSeek（推理）+ MiniMax（文本）
+                当前使用：{modelLabel}；可在用户中心切换 DeepSeek / MiniMax / GLM / Anthropic
               </p>
             </div>
           </div>
@@ -454,7 +480,7 @@ export default function Home() {
         fontSize: "0.75rem",
         background: "var(--surface)",
       }}>
-        AI项目管理助手 V2.0 · 基于 PMBOK 7th 与 PRINCE2 2017 · 飞书底座 + Vercel AI增强层混合架构
+        AI项目管理助手 V5.2.4 · 基于 PMBOK 7th 与 PRINCE2 2017 · 飞书底座 + Vercel AI增强层混合架构
       </footer>
     </div>
   );
