@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { calculateCPM, type Task } from "@/lib/cpm";
 
@@ -13,6 +14,15 @@ interface AIMindedTask extends Task {
 }
 
 type CPMResultTask = AIMindedTask;
+
+interface CPMApiResponse {
+  tasks?: AIMindedTask[];
+  criticalPath?: string[];
+  projectDuration?: number;
+  reasoning?: string;
+  aiWarning?: string;
+  error?: string;
+}
 
 function CriticalPathNetwork({
   tasks,
@@ -32,16 +42,24 @@ function CriticalPathNetwork({
   const rightPad = 70;
   const topPad = 44;
   const rowHeight = 82;
-  const maxRows = Math.min(4, Math.max(1, Math.ceil(sortedTasks.length / 2)));
-  const height = topPad + maxRows * rowHeight + 44;
+  const laneEnds: number[] = [];
 
   const positions = new Map<string, { x: number; y: number }>();
-  sortedTasks.forEach((task, index) => {
-    const row = index % maxRows;
+  sortedTasks.forEach(task => {
+    const taskStart = task.es ?? 0;
+    const taskEnd = task.ef ?? taskStart + task.duration;
+    let row = laneEnds.findIndex(end => end <= taskStart);
+    if (row === -1) {
+      row = laneEnds.length;
+      laneEnds.push(taskEnd);
+    } else {
+      laneEnds[row] = taskEnd;
+    }
     const x = leftPad + ((task.es ?? 0) / maxTime) * (width - leftPad - rightPad - nodeWidth);
     const y = topPad + row * rowHeight;
     positions.set(task.id, { x, y });
   });
+  const height = topPad + Math.max(1, laneEnds.length) * rowHeight + 44;
 
   const criticalEdges = new Set<string>();
   criticalPath.forEach((id, index) => {
@@ -86,16 +104,16 @@ function CriticalPathNetwork({
               const from = positions.get(predId);
               const to = positions.get(task.id);
               if (!from || !to) return null;
-              const isCriticalEdge = criticalEdges.has(`${predId}->${task.id}`) || (task.isCritical && tasks.find(t => t.id === predId)?.isCritical);
+              const isCriticalEdge = criticalEdges.has(`${predId}->${task.id}`);
               const startX = from.x + nodeWidth;
               const startY = from.y + nodeHeight / 2;
               const endX = to.x;
               const endY = to.y + nodeHeight / 2;
-              const midX = (startX + endX) / 2;
+              const midX = Math.max(startX + 18, Math.min(endX - 18, (startX + endX) / 2));
               return (
                 <path
                   key={`${predId}-${task.id}`}
-                  d={`M ${startX} ${startY} C ${midX} ${startY}, ${midX} ${endY}, ${endX - 8} ${endY}`}
+                  d={`M ${startX} ${startY} L ${midX} ${startY} L ${midX} ${endY} L ${endX - 8} ${endY}`}
                   fill="none"
                   stroke={isCriticalEdge ? "var(--red)" : "var(--text2)"}
                   strokeWidth={isCriticalEdge ? 2.4 : 1.4}
@@ -151,6 +169,7 @@ export default function CPMPage() {
   const [aiCriticalPath, setAiCriticalPath] = useState<string[]>([]);
   const [aiProjectDuration, setAiProjectDuration] = useState<number>(0);
   const [aiReasoning, setAiReasoning] = useState<string>("");
+  const [aiWarning, setAiWarning] = useState<string>("");
   const [isCalculatingAI, setIsCalculatingAI] = useState(false);
   const [useAI, setUseAI] = useState(false);
 
@@ -173,6 +192,7 @@ export default function CPMPage() {
   const handleCalculate = () => {
     const res = calculateCPM(tasks);
     setResult(res);
+    setAiWarning("");
   };
 
   const handleAICalculate = async () => {
@@ -183,15 +203,18 @@ export default function CPMPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ tasks }),
       });
-      const data = await response.json();
-      if (data.error) {
-        alert("AI计算失败: " + data.error);
-      } else {
-        setAiResult(data.tasks);
-        setAiCriticalPath(data.criticalPath);
-        setAiProjectDuration(data.projectDuration);
-        setAiReasoning(data.reasoning || "");
+      const data = await response.json() as CPMApiResponse;
+      if (!response.ok && !data.tasks) {
+        throw new Error(data.error || `HTTP_${response.status}`);
       }
+      if (!Array.isArray(data.tasks) || !Array.isArray(data.criticalPath) || typeof data.projectDuration !== "number") {
+        throw new Error(data.error || "关键路径接口返回数据不完整");
+      }
+      setAiResult(data.tasks);
+      setAiCriticalPath(data.criticalPath);
+      setAiProjectDuration(data.projectDuration);
+      setAiReasoning(data.reasoning || "");
+      setAiWarning(data.aiWarning || "");
     } catch (error) {
       alert("AI计算失败: " + (error instanceof Error ? error.message : "未知错误"));
     } finally {
@@ -213,7 +236,7 @@ export default function CPMPage() {
         gap: 16,
         background: "var(--surface)",
       }}>
-        <a href="/" style={{ color: "var(--text2)", textDecoration: "none", fontSize: "0.85rem" }}>← 返回首页</a>
+        <Link href="/" style={{ color: "var(--text2)", textDecoration: "none", fontSize: "0.85rem" }}>← 返回首页</Link>
         <span style={{ color: "var(--border)" }}>|</span>
         <span style={{ fontWeight: 700 }}>🔗 关键路径计算</span>
         <span className="tag tag-purple" style={{ fontSize: "0.7rem" }}>本地算法</span>
@@ -341,6 +364,12 @@ export default function CPMPage() {
               </tbody>
             </table>
           </div>
+
+          {useAI && aiWarning && (
+            <div style={{ marginTop: 12, padding: "10px 12px", borderRadius: 8, border: "1px solid rgba(245,158,11,0.35)", background: "rgba(245,158,11,0.1)", color: "var(--amber)", fontSize: "0.78rem", lineHeight: 1.5 }}>
+              {aiWarning}
+            </div>
+          )}
         </div>
 
         {/* Results */}

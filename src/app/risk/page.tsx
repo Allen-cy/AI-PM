@@ -1,139 +1,356 @@
 "use client";
 
-import { useState } from "react";
+import Link from "next/link";
+import { useMemo, useState } from "react";
 import {
+  type LinkedModule,
   type Risk,
-  initialRisks,
+  type RiskCategory,
+  type RiskImpactArea,
+  type RiskStage,
+  type RiskStatus,
+  type RiskStrategy,
+  calculateRiskPriority,
   calculateRiskScore,
-  getRiskLevel,
-  classifyRisks,
-  getRiskColor,
-  generateMatrixGrid,
-  statusLabels,
   categoryLabels,
+  classifyRisks,
+  generateMatrixGrid,
+  getRiskColor,
+  getRiskLevel,
+  impactAreaLabels,
+  initialRisks,
+  responseStrategyGuidance,
+  riskChecklistItems,
+  riskLifecycleSteps,
+  riskManagementRoles,
+  stageGateRiskRequirements,
+  statusLabels,
+  statusOrder,
 } from "@/lib/risk";
 
-const emptyRisk = {
-  description: "",
-  category: "技术" as Risk["category"],
-  probability: 3 as Risk["probability"],
-  impact: 3 as Risk["impact"],
-  responseStrategy: "",
-  owner: "",
-};
+type ActiveTab = "overview" | "list" | "checklist" | "matrix" | "response";
+
+type RiskForm = Omit<Risk, "id" | "piScore" | "priorityScore" | "createdAt">;
+
+interface DashboardRiskRecord {
+  项目编号?: string;
+  项目名称?: string;
+  项目状态?: string;
+  风险类型?: string;
+  风险等级?: "高" | "中" | "低";
+  风险状态?: string;
+  风险趋势?: string;
+  进度偏差?: number;
+  成本健康度?: number;
+  应收金额?: number;
+  到期日期?: string;
+  是否重点项目?: boolean;
+  重点项目原因?: string;
+}
+
+const categories = Object.keys(categoryLabels) as RiskCategory[];
+const impactAreas = Object.keys(impactAreaLabels) as RiskImpactArea[];
+const stages: RiskStage[] = ["立项", "规划", "执行", "监控", "验收", "结项", "全生命周期"];
+const strategies: RiskStrategy[] = ["规避", "缓解", "转移", "接受", "上报"];
+const modules: LinkedModule[] = ["项目组合看板", "立项", "规划", "执行", "监控", "收尾", "合同回款", "质量", "资源"];
+
+function dateByOffset(days: number): string {
+  const date = new Date();
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function defaultForm(): RiskForm {
+  return {
+    projectName: "",
+    description: "",
+    category: "需求",
+    stage: "规划",
+    source: "人工登记",
+    impactArea: "范围",
+    probability: 3,
+    impact: 3,
+    urgency: 3,
+    status: "identified",
+    responseStrategyType: "缓解",
+    responseStrategy: "",
+    preventiveAction: "",
+    contingencyPlan: "",
+    trigger: "",
+    trackingMethod: "周会/监控中心定期复核风险状态、趋势和责任人行动。",
+    owner: "",
+    dueDate: dateByOffset(14),
+    nextReviewDate: dateByOffset(7),
+    closingCriteria: "",
+    linkedModule: "规划",
+    evidence: "",
+  };
+}
+
+function withScores(form: RiskForm, id: string, createdAt: string): Risk {
+  const piScore = calculateRiskScore(form.probability, form.impact);
+  return {
+    ...form,
+    id,
+    piScore,
+    priorityScore: calculateRiskPriority(form.probability, form.impact, form.urgency),
+    createdAt,
+  };
+}
+
+function levelLabel(score: number): string {
+  const level = getRiskLevel(score);
+  if (level === "high") return "高";
+  if (level === "medium") return "中";
+  return "低";
+}
+
+function riskLevelClass(score: number): string {
+  const level = getRiskLevel(score);
+  if (level === "high") return "tag-amber";
+  if (level === "medium") return "tag-blue";
+  return "tag-green";
+}
+
+function inferCategory(type = ""): RiskCategory {
+  if (type.includes("回款") || type.includes("合同")) return "合同";
+  if (type.includes("进度") || type.includes("延期")) return "进度";
+  if (type.includes("成本") || type.includes("财务")) return "财务";
+  if (type.includes("质量") || type.includes("验收")) return "质量";
+  if (type.includes("客户") || type.includes("需求")) return "客户";
+  return "管理";
+}
+
+function stageFromStatus(status = ""): RiskStage {
+  if (status.includes("立项") || status.includes("待启动")) return "立项";
+  if (status.includes("规划")) return "规划";
+  if (status.includes("验收")) return "验收";
+  if (status.includes("结项") || status.includes("收尾") || status.includes("已验收")) return "结项";
+  if (status.includes("监控")) return "监控";
+  return "执行";
+}
+
+function scoreFromSeverity(severity?: "高" | "中" | "低"): Pick<Risk, "probability" | "impact" | "urgency"> {
+  if (severity === "高") return { probability: 4, impact: 5, urgency: 5 };
+  if (severity === "中") return { probability: 3, impact: 4, urgency: 4 };
+  return { probability: 2, impact: 2, urgency: 2 };
+}
+
+function dashboardRecordToRisk(record: DashboardRiskRecord, index: number): Risk {
+  const severityScores = scoreFromSeverity(record.风险等级);
+  const riskType = record.风险类型 || (Number(record.进度偏差 ?? 0) < -5 ? "进度风险" : "综合风险");
+  const impactArea: RiskImpactArea = riskType.includes("回款") || riskType.includes("合同")
+    ? "回款"
+    : riskType.includes("进度")
+      ? "工期"
+      : riskType.includes("质量")
+        ? "质量"
+        : "范围";
+  const form: RiskForm = {
+    projectName: record.项目名称 || "飞书项目台账项目",
+    description: `${riskType}：${record.风险状态 || "由项目组合看板识别"}。${record.重点项目原因 ? `重点项目依据：${record.重点项目原因}。` : ""}`,
+    category: inferCategory(riskType),
+    stage: stageFromStatus(record.项目状态),
+    source: "飞书项目台账 / 项目组合看板",
+    impactArea,
+    probability: severityScores.probability,
+    impact: severityScores.impact,
+    urgency: severityScores.urgency,
+    status: "identified",
+    responseStrategyType: record.风险等级 === "高" ? "上报" : "缓解",
+    responseStrategy: "进入风险登记册后，由责任人确认应对动作，并同步到关联模块跟踪。",
+    preventiveAction: "复核项目状态、进度偏差、成本健康度、应收金额和风险趋势，补齐阶段门证据。",
+    contingencyPlan: "若风险继续恶化，提交PMO治理例会并调整范围、资源或回款计划。",
+    trigger: "项目台账风险等级为高/中，或进度、成本、回款指标突破容差。",
+    trackingMethod: "从项目组合看板和监控中心每周复核风险趋势。",
+    owner: "项目经理",
+    dueDate: record.到期日期 || dateByOffset(14),
+    nextReviewDate: dateByOffset(7),
+    closingCriteria: "风险指标恢复到可接受范围，或治理层批准的应对方案已落地。",
+    linkedModule: impactArea === "回款" ? "合同回款" : impactArea === "质量" ? "质量" : "监控",
+    evidence: `来自飞书项目台账：${record.项目编号 || "无编号"}`,
+  };
+  return withScores(form, `FS-${record.项目编号 || index + 1}`, new Date().toISOString().split("T")[0]);
+}
+
+function StatCard({ label, value, color, sub }: { label: string; value: string | number; color?: string; sub?: string }) {
+  return (
+    <div className="stat-card">
+      <div className="stat-num" style={{ color: color || "var(--accent2)" }}>{value}</div>
+      <div className="stat-label">{label}</div>
+      {sub && <div style={{ marginTop: 6, fontSize: "0.68rem", color: "var(--text2)" }}>{sub}</div>}
+    </div>
+  );
+}
+
+function RiskBadge({ risk }: { risk: Risk }) {
+  return <span className={`tag ${riskLevelClass(risk.piScore)}`}>{levelLabel(risk.piScore)}风险 · {risk.piScore}</span>;
+}
+
+function StatusBadge({ status }: { status: RiskStatus }) {
+  const colorMap: Record<RiskStatus, string> = {
+    identified: "#3b82f6",
+    analyzing: "#8b5cf6",
+    "response-planned": "#06b6d4",
+    tracking: "#f59e0b",
+    resolved: "#22c55e",
+    closed: "#64748b",
+  };
+  return (
+    <span style={{
+      padding: "4px 10px",
+      borderRadius: 999,
+      fontWeight: 700,
+      fontSize: "0.72rem",
+      background: `${colorMap[status]}18`,
+      color: colorMap[status],
+      whiteSpace: "nowrap",
+    }}>
+      {statusLabels[status]}
+    </span>
+  );
+}
 
 export default function RiskPage() {
   const [risks, setRisks] = useState<Risk[]>(initialRisks);
+  const [activeTab, setActiveTab] = useState<ActiveTab>("overview");
+  const [statusFilter, setStatusFilter] = useState<RiskStatus | "all">("all");
+  const [categoryFilter, setCategoryFilter] = useState<RiskCategory | "all">("all");
+  const [stageFilter, setStageFilter] = useState<RiskStage | "all">("all");
   const [showForm, setShowForm] = useState(false);
   const [editingRisk, setEditingRisk] = useState<Risk | null>(null);
-  const [formData, setFormData] = useState(emptyRisk);
-  const [loading, setLoading] = useState(false);
-  const [scanning, setScanning] = useState(false);
-  const [error, setError] = useState("");
+  const [formData, setFormData] = useState<RiskForm>(defaultForm);
   const [projectDesc, setProjectDesc] = useState("");
-  const [statusFilter, setStatusFilter] = useState<Risk["status"] | "all">("all");
-  const [activeTab, setActiveTab] = useState<"list" | "matrix">("list");
+  const [scanProjectName, setScanProjectName] = useState("");
+  const [scanStage, setScanStage] = useState<RiskStage>("规划");
+  const [scanning, setScanning] = useState(false);
+  const [loadingFeishu, setLoadingFeishu] = useState(false);
+  const [reviewNow] = useState(() => Date.now());
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
 
-  // Stats
-  const classified = classifyRisks(risks);
-  const filteredRisks = statusFilter === "all"
-    ? risks
-    : risks.filter(r => r.status === statusFilter);
+  const classified = useMemo(() => classifyRisks(risks), [risks]);
+  const openRisks = risks.filter(risk => !["resolved", "closed"].includes(risk.status));
+  const overdueReviews = openRisks.filter(risk => risk.nextReviewDate && new Date(risk.nextReviewDate).getTime() < reviewNow).length;
+  const responsePlanMissing = openRisks.filter(risk => !risk.responseStrategy.trim() || !risk.owner.trim()).length;
+  const matrixGrid = useMemo(() => generateMatrixGrid(risks), [risks]);
 
-  // P-I Matrix Grid (5x5)
-  const matrixGrid = generateMatrixGrid(risks);
+  const filteredRisks = risks.filter(risk => (
+    (statusFilter === "all" || risk.status === statusFilter)
+    && (categoryFilter === "all" || risk.category === categoryFilter)
+    && (stageFilter === "all" || risk.stage === stageFilter)
+  ));
 
-  // Risk trend mock data
-  const trendData = [
-    { month: "1月", count: 3 },
-    { month: "2月", count: 5 },
-    { month: "3月", count: 4 },
-    { month: "4月", count: 7 },
-    { month: "5月", count: risks.length },
-  ];
-  const maxTrend = Math.max(...trendData.map(d => d.count), 1);
+  const responseRisks = [...openRisks].sort((a, b) => b.priorityScore - a.priorityScore).slice(0, 8);
 
   const handleSave = () => {
     if (!formData.description.trim()) {
       setError("请填写风险描述");
       return;
     }
-    const piScore = calculateRiskScore(formData.probability, formData.impact);
-
-    if (editingRisk) {
-      setRisks(prev => prev.map(r =>
-        r.id === editingRisk.id
-          ? { ...formData, piScore, id: editingRisk.id, createdAt: editingRisk.createdAt, status: editingRisk.status }
-          : r
-      ));
-    } else {
-      const newRisk: Risk = {
-        ...formData,
-        piScore,
-        id: `R${String(risks.length + 1).padStart(3, "0")}`,
-        status: "identified",
-        createdAt: new Date().toISOString().split("T")[0],
-      };
-      setRisks(prev => [...prev, newRisk]);
+    if (!formData.owner.trim()) {
+      setError("请填写责任人，风险没有责任人就无法闭环");
+      return;
     }
+    const saved = withScores(
+      formData,
+      editingRisk?.id || `R${String(risks.length + 1).padStart(3, "0")}`,
+      editingRisk?.createdAt || new Date().toISOString().split("T")[0],
+    );
+    setRisks(prev => editingRisk ? prev.map(risk => risk.id === editingRisk.id ? saved : risk) : [...prev, saved]);
     setShowForm(false);
     setEditingRisk(null);
-    setFormData(emptyRisk);
+    setFormData(defaultForm());
     setError("");
+    setMessage(editingRisk ? "风险已更新。" : "风险已加入登记册。");
   };
 
   const handleEdit = (risk: Risk) => {
     setEditingRisk(risk);
     setFormData({
+      projectName: risk.projectName,
       description: risk.description,
       category: risk.category,
+      stage: risk.stage,
+      source: risk.source,
+      impactArea: risk.impactArea,
       probability: risk.probability,
       impact: risk.impact,
+      urgency: risk.urgency,
+      status: risk.status,
+      responseStrategyType: risk.responseStrategyType,
       responseStrategy: risk.responseStrategy,
+      preventiveAction: risk.preventiveAction,
+      contingencyPlan: risk.contingencyPlan,
+      trigger: risk.trigger,
+      trackingMethod: risk.trackingMethod,
       owner: risk.owner,
+      dueDate: risk.dueDate,
+      nextReviewDate: risk.nextReviewDate,
+      closingCriteria: risk.closingCriteria,
+      linkedModule: risk.linkedModule,
+      evidence: risk.evidence,
     });
     setShowForm(true);
+    setError("");
   };
 
-  const handleDelete = (id: string) => {
-    setRisks(prev => prev.filter(r => r.id !== id));
+  const updateRiskStatus = (id: string, status: RiskStatus) => {
+    setRisks(prev => prev.map(risk => risk.id === id ? { ...risk, status } : risk));
   };
 
   const handleAIScan = async () => {
     if (!projectDesc.trim()) {
-      setError("请填写项目描述");
+      setError("请填写项目事实描述，至少包含阶段、范围、进度、客户/合同或团队情况。");
       return;
     }
     setScanning(true);
     setError("");
-
+    setMessage("");
     try {
       const response = await fetch("/api/risk/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectDescription: projectDesc }),
+        body: JSON.stringify({ projectDescription: projectDesc, projectName: scanProjectName, stage: scanStage }),
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "AI扫描失败");
-
-      setRisks(prev => [...prev, ...data.risks]);
+      const data = await response.json() as { risks?: Risk[]; aiReasoning?: string; error?: string };
+      if (!response.ok || !Array.isArray(data.risks)) throw new Error(data.error || "AI风险扫描失败");
+      setRisks(prev => [...prev, ...data.risks!]);
       setProjectDesc("");
+      setMessage(`已生成 ${data.risks.length} 条候选风险，并写入风险登记册。${data.aiReasoning ? ` ${data.aiReasoning}` : ""}`);
     } catch (e: unknown) {
-      setError(`AI扫描失败：${e instanceof Error ? e.message : String(e)}`);
+      setError(`风险扫描失败：${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setScanning(false);
     }
   };
 
-  const statusColorMap: Record<Risk["status"], string> = {
-    identified: "#3b82f6",
-    tracking: "#f59e0b",
-    resolved: "#22c55e",
+  const handleLoadDashboardRisks = async () => {
+    setLoadingFeishu(true);
+    setError("");
+    setMessage("正在从飞书项目台账读取风险线索...");
+    try {
+      const response = await fetch("/api/dashboard/feishu", { cache: "no-store" });
+      const payload = await response.json() as { data?: { records?: DashboardRiskRecord[] }; code?: string };
+      if (!response.ok || !payload.data?.records) throw new Error(payload.code || `HTTP_${response.status}`);
+      const mapped = payload.data.records
+        .filter(record => record.是否重点项目 || record.风险等级 !== "低" || Number(record.进度偏差 ?? 0) < -5 || Number(record.应收金额 ?? 0) > 0)
+        .slice(0, 12)
+        .map(dashboardRecordToRisk);
+      setRisks(prev => {
+        const existing = new Set(prev.map(risk => risk.id));
+        return [...prev, ...mapped.filter(risk => !existing.has(risk.id))];
+      });
+      setMessage(`已从飞书项目台账导入 ${mapped.length} 条风险线索；重复项目不会覆盖已有登记。`);
+    } catch (e: unknown) {
+      setError(`飞书风险线索读取失败：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setLoadingFeishu(false);
+    }
   };
 
   return (
     <div style={{ minHeight: "100vh", background: "var(--bg)", display: "flex", flexDirection: "column" }}>
-      {/* Header */}
       <header style={{
         borderBottom: "1px solid var(--border)",
         padding: "14px 32px",
@@ -142,54 +359,60 @@ export default function RiskPage() {
         gap: 16,
         background: "var(--surface)",
       }}>
-        <a href="/" style={{ color: "var(--text2)", textDecoration: "none", fontSize: "0.85rem" }}>← 返回首页</a>
+        <Link href="/" style={{ color: "var(--text2)", textDecoration: "none", fontSize: "0.85rem" }}>← 返回首页</Link>
         <span style={{ color: "var(--border)" }}>|</span>
         <span style={{ fontWeight: 700 }}>🔐 风险管理</span>
-        <span className="tag" style={{ fontSize: "0.7rem", background: "rgba(139,92,246,0.15)", color: "var(--purple)" }}>AI</span>
+        <span className="tag tag-purple" style={{ fontSize: "0.7rem" }}>识别-分析-应对-跟踪闭环</span>
       </header>
 
-      <main style={{ flex: 1, padding: "32px", maxWidth: 1400, margin: "0 auto", width: "100%" }}>
-        {/* Stats Bar */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 24 }}>
-          <div className="stat-card">
-            <div className="stat-num">{classified.total}</div>
-            <div className="stat-label">风险总数</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-num" style={{ color: "#ef4444" }}>{classified.high.length}</div>
-            <div className="stat-label">高风险 (P×I≥16)</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-num" style={{ color: "#f59e0b" }}>{classified.medium.length}</div>
-            <div className="stat-label">中风险 (6≤P×I&lt;16)</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-num" style={{ color: "#22c55e" }}>{classified.low.length}</div>
-            <div className="stat-label">低风险 (P×I&lt;6)</div>
-          </div>
+      <main style={{ flex: 1, padding: "32px", maxWidth: 1440, margin: "0 auto", width: "100%" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 16, marginBottom: 24 }}>
+          <StatCard label="风险总数" value={classified.total} sub="登记册总量" />
+          <StatCard label="高风险" value={classified.high.length} color="#ef4444" sub="P×I ≥ 16" />
+          <StatCard label="中风险" value={classified.medium.length} color="#f59e0b" sub="6 ≤ P×I < 16" />
+          <StatCard label="待复核" value={overdueReviews} color="#8b5cf6" sub="复核日期已到期" />
+          <StatCard label="应对缺口" value={responsePlanMissing} color="#ef4444" sub="缺责任人或应对计划" />
         </div>
 
-        {/* Tab Navigation */}
-        <div style={{ display: "flex", gap: 0, marginBottom: 24, borderBottom: "1px solid var(--border)" }}>
+        {(message || error) && (
+          <div style={{
+            marginBottom: 20,
+            padding: "12px 16px",
+            borderRadius: 10,
+            border: `1px solid ${error ? "rgba(239,68,68,0.35)" : "rgba(59,130,246,0.25)"}`,
+            background: error ? "rgba(239,68,68,0.1)" : "rgba(59,130,246,0.08)",
+            color: error ? "var(--red)" : "var(--accent2)",
+            fontSize: "0.82rem",
+            lineHeight: 1.6,
+          }}>
+            {error || message}
+          </div>
+        )}
+
+        <div style={{ display: "flex", gap: 0, marginBottom: 24, borderBottom: "1px solid var(--border)", overflowX: "auto" }}>
           {[
+            { key: "overview", icon: "🧭", label: "总览闭环" },
             { key: "list", icon: "📋", label: "风险登记册" },
+            { key: "checklist", icon: "✅", label: "核查清单" },
             { key: "matrix", icon: "🎯", label: "P-I矩阵" },
+            { key: "response", icon: "🛡️", label: "应对跟踪" },
           ].map(tab => (
             <button
               key={tab.key}
-              onClick={() => setActiveTab(tab.key as typeof activeTab)}
+              onClick={() => setActiveTab(tab.key as ActiveTab)}
               style={{
-                padding: "10px 24px",
+                padding: "10px 22px",
                 background: "none",
                 border: "none",
                 borderBottom: activeTab === tab.key ? "2px solid var(--purple)" : "2px solid transparent",
                 color: activeTab === tab.key ? "var(--purple)" : "var(--text2)",
-                fontWeight: activeTab === tab.key ? 700 : 400,
+                fontWeight: activeTab === tab.key ? 800 : 500,
                 fontSize: "0.85rem",
                 cursor: "pointer",
                 display: "flex",
                 alignItems: "center",
                 gap: 8,
+                whiteSpace: "nowrap",
               }}
             >
               <span>{tab.icon}</span> {tab.label}
@@ -197,229 +420,221 @@ export default function RiskPage() {
           ))}
         </div>
 
-        {activeTab === "list" && (
-          <>
-            {/* AI Scan Section */}
-            <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "24px", marginBottom: 24 }}>
-              <div style={{ fontSize: "0.85rem", fontWeight: 700, color: "var(--text2)", marginBottom: 16, textTransform: "uppercase", letterSpacing: "0.1em" }}>
-                🤖 AI风险扫描
+        {activeTab === "overview" && (
+          <div style={{ display: "grid", gridTemplateColumns: "1.1fr 0.9fr", gap: 20 }}>
+            <div className="card">
+              <div style={{ fontSize: "0.85rem", fontWeight: 800, color: "var(--text2)", marginBottom: 16, textTransform: "uppercase", letterSpacing: "0.08em" }}>风险管理闭环设计</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10 }}>
+                {riskLifecycleSteps.map((step, index) => (
+                  <div key={step.name} style={{ padding: 14, border: "1px solid var(--border)", borderRadius: 12, background: "var(--surface2)", minHeight: 150 }}>
+                    <div style={{ width: 28, height: 28, borderRadius: "50%", display: "grid", placeItems: "center", background: "rgba(139,92,246,0.14)", color: "var(--purple)", fontWeight: 800, marginBottom: 10 }}>{index + 1}</div>
+                    <div style={{ fontWeight: 800, marginBottom: 8 }}>{step.name}</div>
+                    <div style={{ color: "var(--text2)", fontSize: "0.75rem", lineHeight: 1.6 }}>{step.intent}</div>
+                    <div style={{ marginTop: 10, color: "var(--accent2)", fontSize: "0.72rem", lineHeight: 1.5 }}>产出：{step.systemOutput}</div>
+                  </div>
+                ))}
               </div>
-              <div style={{ display: "flex", gap: 12 }}>
-                <textarea
-                  className="input"
-                  rows={2}
-                  placeholder="请输入项目描述（背景、目标、范围、团队情况等），AI将自动识别潜在风险..."
-                  value={projectDesc}
-                  onChange={e => setProjectDesc(e.target.value)}
-                  style={{ flex: 1, resize: "vertical", fontSize: "0.85rem" }}
-                />
-                <button
-                  className="btn-primary"
-                  onClick={handleAIScan}
-                  disabled={scanning}
-                  style={{ opacity: scanning ? 0.6 : 1, whiteSpace: "nowrap", alignSelf: "flex-start" }}
-                >
-                  {scanning ? "⏳ 扫描中..." : "🔍 智能扫描"}
-                </button>
+              <div style={{ marginTop: 18, padding: 14, borderRadius: 10, background: "rgba(51,112,255,0.08)", color: "var(--text2)", fontSize: "0.82rem", lineHeight: 1.7 }}>
+                设计逻辑：风险不是孤立文本框。风险线索来自飞书项目台账、阶段门、计划、质量、合同回款和项目组合看板；AI 只负责辅助识别和补全文案，最终必须进入登记册、指定责任人、绑定模块、定期复核并以关闭条件收口。
               </div>
-              {error && (
-                <div style={{ background: "rgba(239,68,68,0.1)", border: "1px solid var(--red)", borderRadius: 8, padding: "12px 16px", color: "var(--red)", fontSize: "0.85rem", marginTop: 12 }}>
-                  {error}
-                </div>
-              )}
             </div>
 
-            {/* Status Filter */}
-            <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-              {[
-                { key: "all", label: "全部" },
-                { key: "identified", label: "识别中" },
-                { key: "tracking", label: "跟踪中" },
-                { key: "resolved", label: "已解决" },
-              ].map(filter => (
-                <button
-                  key={filter.key}
-                  onClick={() => setStatusFilter(filter.key as typeof statusFilter)}
-                  style={{
-                    padding: "6px 16px",
-                    borderRadius: 20,
-                    border: "1px solid var(--border)",
-                    background: statusFilter === filter.key ? "var(--purple)" : "transparent",
-                    color: statusFilter === filter.key ? "#fff" : "var(--text2)",
-                    fontSize: "0.8rem",
-                    cursor: "pointer",
-                    fontWeight: statusFilter === filter.key ? 600 : 400,
-                  }}
-                >
-                  {filter.label}
-                </button>
-              ))}
-            </div>
-
-            {/* Add Button */}
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-              <div style={{ fontSize: "0.85rem", color: "var(--text2)" }}>
-                共 {filteredRisks.length} 项风险
+            <div className="card">
+              <div style={{ fontSize: "0.85rem", fontWeight: 800, color: "var(--text2)", marginBottom: 16, textTransform: "uppercase", letterSpacing: "0.08em" }}>阶段门风险要求</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {stageGateRiskRequirements.map(item => (
+                  <div key={item.stage} style={{ display: "grid", gridTemplateColumns: "54px 1fr", gap: 10, paddingBottom: 10, borderBottom: "1px solid var(--border)" }}>
+                    <span className="tag tag-blue" style={{ justifySelf: "start" }}>{item.stage}</span>
+                    <span style={{ color: "var(--text2)", fontSize: "0.78rem", lineHeight: 1.6 }}>{item.requirement}</span>
+                  </div>
+                ))}
               </div>
-              <button
-                className="btn-primary"
-                onClick={() => { setEditingRisk(null); setFormData(emptyRisk); setShowForm(true); }}
-              >
-                + 添加风险
-              </button>
-            </div>
-
-            {/* Risk Table */}
-            <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius)", overflow: "hidden" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.85rem" }}>
-                <thead>
-                  <tr style={{ background: "var(--surface2)", borderBottom: "1px solid var(--border)" }}>
-                    {["ID", "风险描述", "类别", "概率(P)", "影响(I)", "P×I", "状态", "应对策略", "操作"].map(h => (
-                      <th key={h} style={{ padding: "12px 16px", textAlign: "left", fontWeight: 600, color: "var(--text2)" }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredRisks.map(risk => {
-                    const colors = getRiskColor(risk.piScore);
-                    const level = getRiskLevel(risk.piScore);
-                    return (
-                      <tr key={risk.id} style={{ borderBottom: "1px solid var(--border)", transition: "background 0.15s" }}
-                        onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = "var(--surface2)"}
-                        onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = "transparent"}
-                      >
-                        <td style={{ padding: "12px 16px", fontWeight: 600, color: "var(--text2)" }}>{risk.id}</td>
-                        <td style={{ padding: "12px 16px", maxWidth: 240 }}>
-                          <span style={{ fontWeight: 500 }}>{risk.description}</span>
-                        </td>
-                        <td style={{ padding: "12px 16px" }}>
-                          <span className="tag" style={{ fontSize: "0.72rem", background: "rgba(59,130,246,0.1)", color: "#3b82f6" }}>
-                            {categoryLabels[risk.category]}
-                          </span>
-                        </td>
-                        <td style={{ padding: "12px 16px" }}>
-                          <span style={{
-                            display: "inline-block", width: 28, height: 28, lineHeight: "28px", textAlign: "center",
-                            borderRadius: "50%", fontWeight: 700, fontSize: "0.78rem",
-                            background: risk.probability >= 4 ? "rgba(239,68,68,0.15)" : risk.probability >= 2 ? "rgba(245,158,11,0.15)" : "rgba(34,197,94,0.15)",
-                            color: risk.probability >= 4 ? "#ef4444" : risk.probability >= 2 ? "#f59e0b" : "#22c55e",
-                          }}>{risk.probability}</span>
-                        </td>
-                        <td style={{ padding: "12px 16px" }}>
-                          <span style={{
-                            display: "inline-block", width: 28, height: 28, lineHeight: "28px", textAlign: "center",
-                            borderRadius: "50%", fontWeight: 700, fontSize: "0.78rem",
-                            background: risk.impact >= 4 ? "rgba(239,68,68,0.15)" : risk.impact >= 2 ? "rgba(245,158,11,0.15)" : "rgba(34,197,94,0.15)",
-                            color: risk.impact >= 4 ? "#ef4444" : risk.impact >= 2 ? "#f59e0b" : "#22c55e",
-                          }}>{risk.impact}</span>
-                        </td>
-                        <td style={{ padding: "12px 16px" }}>
-                          <span style={{
-                            ...colors,
-                            padding: "4px 10px",
-                            borderRadius: 12,
-                            fontWeight: 600,
-                            fontSize: "0.75rem",
-                            border: `1px solid ${colors.border}`,
-                          }}>
-                            {risk.piScore} ({level === "high" ? "高" : level === "medium" ? "中" : "低"})
-                          </span>
-                        </td>
-                        <td style={{ padding: "12px 16px" }}>
-                          <span style={{
-                            padding: "4px 10px",
-                            borderRadius: 12,
-                            fontWeight: 600,
-                            fontSize: "0.75rem",
-                            background: `${statusColorMap[risk.status]}15`,
-                            color: statusColorMap[risk.status],
-                          }}>
-                            {statusLabels[risk.status]}
-                          </span>
-                        </td>
-                        <td style={{ padding: "12px 16px", maxWidth: 200, color: "var(--text2)", fontSize: "0.8rem" }}>{risk.responseStrategy}</td>
-                        <td style={{ padding: "12px 16px" }}>
-                          <div style={{ display: "flex", gap: 8 }}>
-                            <button onClick={() => handleEdit(risk)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: "0.8rem", color: "var(--accent2)" }}>编辑</button>
-                            <button onClick={() => handleDelete(risk.id)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: "0.8rem", color: "var(--red)" }}>删除</button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-              {filteredRisks.length === 0 && (
-                <div style={{ padding: "48px", textAlign: "center", color: "var(--text2)" }}>
-                  <div style={{ fontSize: "2rem", marginBottom: 12 }}>📋</div>
-                  <p>暂无风险记录</p>
-                </div>
-              )}
-            </div>
-
-            {/* Risk Trend Chart */}
-            <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "24px", marginTop: 24 }}>
-              <div style={{ fontSize: "0.85rem", fontWeight: 700, color: "var(--text2)", marginBottom: 20, textTransform: "uppercase", letterSpacing: "0.1em" }}>
-                📈 风险趋势
-              </div>
-              <div style={{ display: "flex", alignItems: "flex-end", gap: 16, height: 120 }}>
-                {trendData.map((d, i) => (
-                  <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
-                    <div style={{
-                      width: "100%",
-                      height: `${(d.count / maxTrend) * 100}%`,
-                      background: i === trendData.length - 1 ? "var(--purple)" : "var(--accent)",
-                      borderRadius: "4px 4px 0 0",
-                      minHeight: 4,
-                    }} />
-                    <div style={{ fontSize: "0.75rem", color: "var(--text2)" }}>{d.month}</div>
-                    <div style={{ fontSize: "0.8rem", fontWeight: 600 }}>{d.count}</div>
+              <div style={{ marginTop: 18 }}>
+                <div style={{ fontSize: "0.8rem", fontWeight: 800, marginBottom: 10 }}>角色职责</div>
+                {riskManagementRoles.map(item => (
+                  <div key={item.role} style={{ marginBottom: 8, fontSize: "0.76rem", color: "var(--text2)", lineHeight: 1.5 }}>
+                    <strong style={{ color: "var(--text)" }}>{item.role}：</strong>{item.responsibility}
                   </div>
                 ))}
               </div>
             </div>
+          </div>
+        )}
+
+        {activeTab === "list" && (
+          <>
+            <div className="card" style={{ marginBottom: 20 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start", marginBottom: 16 }}>
+                <div>
+                  <div style={{ fontSize: "0.85rem", fontWeight: 800, color: "var(--text2)", textTransform: "uppercase", letterSpacing: "0.08em" }}>风险识别入口</div>
+                  <div style={{ marginTop: 6, color: "var(--text2)", fontSize: "0.78rem", lineHeight: 1.6 }}>
+                    AI扫描用于生成候选风险；飞书导入用于把项目台账中的实时风险线索纳入登记册。
+                  </div>
+                </div>
+                <button className="btn-secondary" disabled={loadingFeishu} onClick={() => void handleLoadDashboardRisks()}>
+                  {loadingFeishu ? "读取飞书中..." : "从飞书项目台账导入风险线索"}
+                </button>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "180px 150px 1fr auto", gap: 12, alignItems: "start" }}>
+                <input className="input" placeholder="项目名称（可选）" value={scanProjectName} onChange={e => setScanProjectName(e.target.value)} />
+                <select className="input" value={scanStage} onChange={e => setScanStage(e.target.value as RiskStage)}>
+                  {stages.map(stage => <option key={stage} value={stage}>{stage}</option>)}
+                </select>
+                <textarea
+                  className="input"
+                  rows={3}
+                  placeholder="输入项目事实：阶段、目标/范围、计划偏差、客户/合同、团队资源、质量、供应商、回款等。AI会基于风险核查表和风险识别清单生成候选风险。"
+                  value={projectDesc}
+                  onChange={e => setProjectDesc(e.target.value)}
+                  style={{ resize: "vertical", fontSize: "0.85rem" }}
+                />
+                <button className="btn-primary" onClick={handleAIScan} disabled={scanning} style={{ whiteSpace: "nowrap" }}>
+                  {scanning ? "扫描中..." : "AI风险扫描"}
+                </button>
+              </div>
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, marginBottom: 16 }}>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <select className="input" value={statusFilter} onChange={e => setStatusFilter(e.target.value as RiskStatus | "all")} style={{ width: 150 }}>
+                  <option value="all">全部状态</option>
+                  {statusOrder.map(status => <option key={status} value={status}>{statusLabels[status]}</option>)}
+                </select>
+                <select className="input" value={categoryFilter} onChange={e => setCategoryFilter(e.target.value as RiskCategory | "all")} style={{ width: 180 }}>
+                  <option value="all">全部类别</option>
+                  {categories.map(category => <option key={category} value={category}>{categoryLabels[category]}</option>)}
+                </select>
+                <select className="input" value={stageFilter} onChange={e => setStageFilter(e.target.value as RiskStage | "all")} style={{ width: 150 }}>
+                  <option value="all">全部阶段</option>
+                  {stages.map(stage => <option key={stage} value={stage}>{stage}</option>)}
+                </select>
+              </div>
+              <button className="btn-primary" onClick={() => { setEditingRisk(null); setFormData(defaultForm()); setShowForm(true); }}>
+                + 添加风险
+              </button>
+            </div>
+
+            <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.82rem" }}>
+                <thead>
+                  <tr style={{ background: "var(--surface2)", borderBottom: "1px solid var(--border)" }}>
+                    {["项目/阶段", "风险描述", "类别/来源", "评分", "责任/复核", "模块/状态", "操作"].map(h => (
+                      <th key={h} style={{ padding: "12px 14px", textAlign: "left", fontWeight: 800, color: "var(--text2)" }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredRisks.map(risk => (
+                    <tr key={risk.id} style={{ borderBottom: "1px solid var(--border)" }}>
+                      <td style={{ padding: "12px 14px", minWidth: 150 }}>
+                        <div style={{ fontWeight: 800 }}>{risk.projectName || "未指定项目"}</div>
+                        <div style={{ marginTop: 4, color: "var(--text2)", fontSize: "0.72rem" }}>{risk.id} · {risk.stage}</div>
+                      </td>
+                      <td style={{ padding: "12px 14px", maxWidth: 320 }}>
+                        <div style={{ fontWeight: 600, lineHeight: 1.5 }}>{risk.description}</div>
+                        <div style={{ marginTop: 6, color: "var(--text2)", fontSize: "0.72rem" }}>触发器：{risk.trigger}</div>
+                      </td>
+                      <td style={{ padding: "12px 14px" }}>
+                        <div className="tag tag-blue" style={{ marginBottom: 6 }}>{categoryLabels[risk.category]}</div>
+                        <div style={{ color: "var(--text2)", fontSize: "0.72rem", lineHeight: 1.5 }}>{risk.source}</div>
+                      </td>
+                      <td style={{ padding: "12px 14px", minWidth: 120 }}>
+                        <RiskBadge risk={risk} />
+                        <div style={{ marginTop: 8, color: "var(--text2)", fontSize: "0.72rem" }}>P{risk.probability} × I{risk.impact} · U{risk.urgency}</div>
+                        <div style={{ marginTop: 3, color: "var(--text2)", fontSize: "0.72rem" }}>优先级 {risk.priorityScore}</div>
+                      </td>
+                      <td style={{ padding: "12px 14px", minWidth: 140 }}>
+                        <div style={{ fontWeight: 700 }}>{risk.owner || "未指定"}</div>
+                        <div style={{ marginTop: 4, color: "var(--text2)", fontSize: "0.72rem" }}>下次复核：{risk.nextReviewDate}</div>
+                        <div style={{ marginTop: 2, color: "var(--text2)", fontSize: "0.72rem" }}>到期：{risk.dueDate}</div>
+                      </td>
+                      <td style={{ padding: "12px 14px", minWidth: 130 }}>
+                        <div className="tag" style={{ background: "rgba(139,92,246,0.13)", color: "var(--purple)", marginBottom: 8 }}>{risk.linkedModule}</div>
+                        <StatusBadge status={risk.status} />
+                      </td>
+                      <td style={{ padding: "12px 14px" }}>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                          <button onClick={() => handleEdit(risk)} style={{ background: "none", border: "none", color: "var(--accent2)", cursor: "pointer", textAlign: "left" }}>编辑</button>
+                          <button onClick={() => updateRiskStatus(risk.id, "tracking")} style={{ background: "none", border: "none", color: "var(--amber)", cursor: "pointer", textAlign: "left" }}>转跟踪</button>
+                          <button onClick={() => updateRiskStatus(risk.id, "closed")} style={{ background: "none", border: "none", color: "var(--green)", cursor: "pointer", textAlign: "left" }}>关闭</button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {filteredRisks.length === 0 && (
+                <div style={{ padding: 48, textAlign: "center", color: "var(--text2)" }}>暂无符合条件的风险。</div>
+              )}
+            </div>
           </>
         )}
 
-        {activeTab === "matrix" && (
-          <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "28px" }}>
-            <div style={{ fontSize: "0.85rem", fontWeight: 700, color: "var(--text2)", marginBottom: 24, textTransform: "uppercase", letterSpacing: "0.1em" }}>
-              🎯 概率-影响矩阵 (5×5 P-I Matrix)
+        {activeTab === "checklist" && (
+          <div className="card">
+            <div style={{ fontSize: "0.85rem", fontWeight: 800, color: "var(--text2)", marginBottom: 14, textTransform: "uppercase", letterSpacing: "0.08em" }}>风险核查清单</div>
+            <div style={{ color: "var(--text2)", fontSize: "0.8rem", lineHeight: 1.7, marginBottom: 18 }}>
+              核查项来自项目风险核查表、风险种类和识别清单：用于阶段门、计划评审、周会和监控中心，不是一次性扫描。
             </div>
-
-            {/* Legend */}
-            <div style={{ display: "flex", gap: 24, marginBottom: 24, fontSize: "0.8rem", color: "var(--text2)" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ width: 12, height: 12, borderRadius: 2, background: "#ef4444" }} />
-                <span>高风险 (16-25)</span>
-              </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ width: 12, height: 12, borderRadius: 2, background: "#f59e0b" }} />
-                <span>中风险 (6-15)</span>
-              </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ width: 12, height: 12, borderRadius: 2, background: "#22c55e" }} />
-                <span>低风险 (1-5)</span>
-              </div>
-            </div>
-
-            {/* 5x5 Matrix Grid */}
-            <div style={{ display: "grid", gridTemplateColumns: "auto repeat(5, 1fr)", gridTemplateRows: "auto repeat(5, 1fr)", gap: 4, maxWidth: 700 }}>
-              {/* Header Row */}
-              <div />
-              {[5, 4, 3, 2, 1].map(p => (
-                <div key={p} style={{ textAlign: "center", fontWeight: 700, fontSize: "0.75rem", color: "var(--text2)", padding: "8px 4px" }}>
-                  P={p}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14 }}>
+              {riskChecklistItems.map(item => (
+                <div key={item.id} style={{ padding: 14, border: "1px solid var(--border)", borderRadius: 12, background: "var(--surface2)" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 10 }}>
+                    <span className="tag tag-blue">{categoryLabels[item.category]}</span>
+                    <span style={{ color: "var(--text2)", fontSize: "0.72rem" }}>{item.stage} · {item.linkedModule}</span>
+                  </div>
+                  <div style={{ fontWeight: 700, lineHeight: 1.5, marginBottom: 8 }}>{item.question}</div>
+                  <div style={{ color: "var(--text2)", fontSize: "0.76rem", lineHeight: 1.6 }}>风险信号：{item.riskSignal}</div>
+                  <button
+                    className="btn-secondary"
+                    style={{ marginTop: 12, fontSize: "0.75rem", padding: "6px 10px" }}
+                    onClick={() => {
+                      const form = defaultForm();
+                      setFormData({
+                        ...form,
+                        description: `${item.riskSignal}：${item.question}`,
+                        category: item.category,
+                        stage: item.stage,
+                        source: "风险核查清单",
+                        linkedModule: item.linkedModule,
+                        trigger: item.question,
+                        responseStrategy: `针对“${item.riskSignal}”制定预防和应急行动。`,
+                      });
+                      setEditingRisk(null);
+                      setShowForm(true);
+                    }}
+                  >
+                    登记为风险
+                  </button>
                 </div>
               ))}
+            </div>
+          </div>
+        )}
 
-              {/* Grid Rows - Impact from 5 to 1 */}
-              {[5, 4, 3, 2, 1].map(i => (
-                <>
-                  <div key={`label-${i}`} style={{ display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: "0.75rem", color: "var(--text2)", padding: "4px" }}>
-                    I={i}
+        {activeTab === "matrix" && (
+          <div className="card">
+            <div style={{ fontSize: "0.85rem", fontWeight: 800, color: "var(--text2)", marginBottom: 18, textTransform: "uppercase", letterSpacing: "0.08em" }}>
+              概率-影响矩阵（P-I Matrix）
+            </div>
+            <div style={{ display: "flex", gap: 24, marginBottom: 24, fontSize: "0.8rem", color: "var(--text2)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}><span style={{ width: 12, height: 12, borderRadius: 2, background: "#ef4444" }} />高风险 (16-25)</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}><span style={{ width: 12, height: 12, borderRadius: 2, background: "#f59e0b" }} />中风险 (6-15)</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}><span style={{ width: 12, height: 12, borderRadius: 2, background: "#22c55e" }} />低风险 (1-5)</div>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "auto repeat(5, 1fr)", gridTemplateRows: "auto repeat(5, 1fr)", gap: 4, maxWidth: 780 }}>
+              <div />
+              {[1, 2, 3, 4, 5].map(i => (
+                <div key={`impact-head-${i}`} style={{ textAlign: "center", fontWeight: 800, fontSize: "0.75rem", color: "var(--text2)", padding: "8px 4px" }}>
+                  I={i}
+                </div>
+              ))}
+              {[5, 4, 3, 2, 1].map(p => (
+                <div key={`row-${p}`} style={{ display: "contents" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: "0.75rem", color: "var(--text2)", padding: 4 }}>
+                    P={p}
                   </div>
-                  {[5, 4, 3, 2, 1].map(p => {
+                  {[1, 2, 3, 4, 5].map(i => {
                     const score = p * i;
                     const colors = getRiskColor(score);
                     const cellRisks = matrixGrid[`${p}-${i}`] || [];
@@ -427,154 +642,185 @@ export default function RiskPage() {
                       <div key={`${p}-${i}`} style={{
                         background: colors.bg,
                         border: `2px solid ${colors.border}`,
-                        borderRadius: 8,
+                        borderRadius: 10,
                         padding: 8,
-                        minHeight: 60,
+                        minHeight: 74,
                         display: "flex",
                         flexDirection: "column",
-                        gap: 4,
-                        cursor: "pointer",
-                        transition: "transform 0.15s",
-                      }}
-                        onMouseEnter={e => (e.currentTarget as HTMLElement).style.transform = "scale(1.02)"}
-                        onMouseLeave={e => (e.currentTarget as HTMLElement).style.transform = "scale(1)"}
-                      >
-                        <div style={{ fontSize: "0.65rem", fontWeight: 700, color: colors.text, textAlign: "center" }}>
-                          {score}
-                        </div>
-                        {cellRisks.slice(0, 2).map(r => (
-                          <div key={r.id} style={{ fontSize: "0.65rem", padding: "2px 4px", background: "var(--surface)", borderRadius: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-                            onClick={() => handleEdit(r)}>
-                            {r.description.slice(0, 10)}
-                          </div>
+                        gap: 5,
+                      }}>
+                        <div style={{ fontSize: "0.68rem", fontWeight: 800, color: colors.text, textAlign: "center" }}>{score}</div>
+                        {cellRisks.slice(0, 2).map(risk => (
+                          <button key={risk.id} style={{ fontSize: "0.65rem", padding: "3px 5px", background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", cursor: "pointer", color: "var(--text)" }} onClick={() => handleEdit(risk)}>
+                            {risk.projectName.slice(0, 8)} · {risk.description.slice(0, 10)}
+                          </button>
                         ))}
-                        {cellRisks.length > 2 && (
-                          <div style={{ fontSize: "0.6rem", color: "var(--text2)" }}>+{cellRisks.length - 2}</div>
-                        )}
+                        {cellRisks.length > 2 && <div style={{ fontSize: "0.62rem", color: "var(--text2)" }}>+{cellRisks.length - 2}</div>}
                       </div>
                     );
                   })}
-                </>
+                </div>
               ))}
             </div>
-
             <div style={{ marginTop: 16, fontSize: "0.78rem", color: "var(--text2)" }}>
-              矩阵说明: P=概率 (1-5), I=影响 (1-5) | 点击风险项可编辑 | 分数 = P × I
+              矩阵说明：P=概率，I=影响。紧迫度 U 不改变矩阵位置，但会进入优先级分数 P×I×U，用于排序应对动作。
+            </div>
+          </div>
+        )}
+
+        {activeTab === "response" && (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 360px", gap: 20 }}>
+            <div className="card">
+              <div style={{ fontSize: "0.85rem", fontWeight: 800, color: "var(--text2)", marginBottom: 16, textTransform: "uppercase", letterSpacing: "0.08em" }}>高优先级风险应对计划</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                {responseRisks.map(risk => (
+                  <div key={risk.id} style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 14, background: "var(--surface2)" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginBottom: 10 }}>
+                      <div>
+                        <div style={{ fontWeight: 800 }}>{risk.projectName} · {risk.description}</div>
+                        <div style={{ marginTop: 5, color: "var(--text2)", fontSize: "0.72rem" }}>{risk.stage} · {categoryLabels[risk.category]} · 关联模块：{risk.linkedModule}</div>
+                      </div>
+                      <RiskBadge risk={risk} />
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10, fontSize: "0.76rem", color: "var(--text2)", lineHeight: 1.55 }}>
+                      <div><strong style={{ color: "var(--text)" }}>应对策略：</strong>{risk.responseStrategyType} - {risk.responseStrategy}</div>
+                      <div><strong style={{ color: "var(--text)" }}>预防措施：</strong>{risk.preventiveAction}</div>
+                      <div><strong style={{ color: "var(--text)" }}>应急计划：</strong>{risk.contingencyPlan}</div>
+                      <div><strong style={{ color: "var(--text)" }}>跟踪方法：</strong>{risk.trackingMethod}</div>
+                      <div><strong style={{ color: "var(--text)" }}>触发器：</strong>{risk.trigger}</div>
+                      <div><strong style={{ color: "var(--text)" }}>关闭条件：</strong>{risk.closingCriteria}</div>
+                    </div>
+                  </div>
+                ))}
+                {responseRisks.length === 0 && <div style={{ color: "var(--text2)" }}>暂无需要应对的开放风险。</div>}
+              </div>
+            </div>
+
+            <div className="card">
+              <div style={{ fontSize: "0.85rem", fontWeight: 800, color: "var(--text2)", marginBottom: 14, textTransform: "uppercase", letterSpacing: "0.08em" }}>策略说明</div>
+              {strategies.map(strategy => (
+                <div key={strategy} style={{ marginBottom: 12, paddingBottom: 12, borderBottom: "1px solid var(--border)" }}>
+                  <div style={{ fontWeight: 800 }}>{strategy}</div>
+                  <div style={{ marginTop: 4, color: "var(--text2)", fontSize: "0.76rem", lineHeight: 1.6 }}>{responseStrategyGuidance[strategy]}</div>
+                </div>
+              ))}
             </div>
           </div>
         )}
       </main>
 
-      {/* Form Modal */}
       {showForm && (
-        <div style={{
-          position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center",
-          zIndex: 1000, padding: 20,
-        }}
-          onClick={e => { if (e.target === e.currentTarget) setShowForm(false); }}>
-          <div style={{
-            background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "28px",
-            width: "100%", maxWidth: 560, maxHeight: "90vh", overflowY: "auto",
-          }}>
-            <div style={{ fontSize: "1rem", fontWeight: 700, marginBottom: 24 }}>
-              {editingRisk ? "编辑风险" : "添加风险"}
-            </div>
-
-            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 20 }} onClick={e => { if (e.target === e.currentTarget) setShowForm(false); }}>
+          <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: 28, width: "100%", maxWidth: 860, maxHeight: "90vh", overflowY: "auto" }}>
+            <div style={{ fontSize: "1rem", fontWeight: 800, marginBottom: 22 }}>{editingRisk ? "编辑风险" : "添加风险"}</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
               <div>
+                <label className="label">项目名称</label>
+                <input className="input" value={formData.projectName} onChange={e => setFormData(prev => ({ ...prev, projectName: e.target.value }))} />
+              </div>
+              <div>
+                <label className="label">责任人 *</label>
+                <input className="input" value={formData.owner} onChange={e => setFormData(prev => ({ ...prev, owner: e.target.value }))} />
+              </div>
+              <div style={{ gridColumn: "1 / -1" }}>
                 <label className="label">风险描述 *</label>
-                <textarea className="input" rows={2} placeholder="描述风险内容..." value={formData.description}
-                  onChange={e => setFormData(prev => ({ ...prev, description: e.target.value }))} style={{ resize: "vertical" }} />
+                <textarea className="input" rows={2} value={formData.description} onChange={e => setFormData(prev => ({ ...prev, description: e.target.value }))} style={{ resize: "vertical" }} />
               </div>
-
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-                <div>
-                  <label className="label">类别</label>
-                  <select className="input" value={formData.category}
-                    onChange={e => setFormData(prev => ({ ...prev, category: e.target.value as Risk["category"] }))}>
-                    {(["技术", "人员", "外部", "管理", "质量"] as const).map(c => (
-                      <option key={c} value={c}>{categoryLabels[c]}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="label">责任人</label>
-                  <input className="input" placeholder="负责人姓名" value={formData.owner}
-                    onChange={e => setFormData(prev => ({ ...prev, owner: e.target.value }))} />
-                </div>
-              </div>
-
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-                <div>
-                  <label className="label">概率 (P) 1-5</label>
-                  <select className="input" value={formData.probability}
-                    onChange={e => setFormData(prev => ({ ...prev, probability: parseInt(e.target.value) as Risk["probability"] }))}>
-                    <option value={1}>1 - 极低</option>
-                    <option value={2}>2 - 低</option>
-                    <option value={3}>3 - 中等</option>
-                    <option value={4}>4 - 高</option>
-                    <option value={5}>5 - 极高</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="label">影响 (I) 1-5</label>
-                  <select className="input" value={formData.impact}
-                    onChange={e => setFormData(prev => ({ ...prev, impact: parseInt(e.target.value) as Risk["impact"] }))}>
-                    <option value={1}>1 - 轻微</option>
-                    <option value={2}>2 - 较小</option>
-                    <option value={3}>3 - 中等</option>
-                    <option value={4}>4 - 严重</option>
-                    <option value={5}>5 - 极严重</option>
-                  </select>
-                </div>
-              </div>
-
-              {/* P×I Score Preview */}
-              <div style={{ padding: "12px 16px", background: "var(--surface2)", borderRadius: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span style={{ color: "var(--text2)", fontSize: "0.85rem" }}>风险评分 P×I</span>
-                <span style={{ fontWeight: 700, fontSize: "1.2rem", color: getRiskColor(calculateRiskScore(formData.probability, formData.impact)).text }}>
-                  {calculateRiskScore(formData.probability, formData.impact)}
-                </span>
-              </div>
-
-              {editingRisk && (
-                <div>
-                  <label className="label">状态</label>
-                  <select className="input" value={editingRisk.status}
-                    onChange={e => {
-                      const newStatus = e.target.value as Risk["status"];
-                      setRisks(prev => prev.map(r => r.id === editingRisk.id ? { ...r, status: newStatus } : r));
-                      setEditingRisk({ ...editingRisk, status: newStatus });
-                    }}>
-                    <option value="identified">识别中</option>
-                    <option value="tracking">跟踪中</option>
-                    <option value="resolved">已解决</option>
-                  </select>
-                </div>
-              )}
-
               <div>
-                <label className="label">应对策略</label>
-                <textarea className="input" rows={3} placeholder="风险应对措施..." value={formData.responseStrategy}
-                  onChange={e => setFormData(prev => ({ ...prev, responseStrategy: e.target.value }))} style={{ resize: "vertical" }} />
+                <label className="label">风险类别</label>
+                <select className="input" value={formData.category} onChange={e => setFormData(prev => ({ ...prev, category: e.target.value as RiskCategory }))}>
+                  {categories.map(category => <option key={category} value={category}>{categoryLabels[category]}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="label">项目阶段</label>
+                <select className="input" value={formData.stage} onChange={e => setFormData(prev => ({ ...prev, stage: e.target.value as RiskStage }))}>
+                  {stages.map(stage => <option key={stage} value={stage}>{stage}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="label">影响领域</label>
+                <select className="input" value={formData.impactArea} onChange={e => setFormData(prev => ({ ...prev, impactArea: e.target.value as RiskImpactArea }))}>
+                  {impactAreas.map(area => <option key={area} value={area}>{impactAreaLabels[area]}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="label">关联模块</label>
+                <select className="input" value={formData.linkedModule} onChange={e => setFormData(prev => ({ ...prev, linkedModule: e.target.value as LinkedModule }))}>
+                  {modules.map(module => <option key={module} value={module}>{module}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="label">概率 P</label>
+                <select className="input" value={formData.probability} onChange={e => setFormData(prev => ({ ...prev, probability: Number(e.target.value) as Risk["probability"] }))}>
+                  {[1, 2, 3, 4, 5].map(value => <option key={value} value={value}>{value}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="label">影响 I</label>
+                <select className="input" value={formData.impact} onChange={e => setFormData(prev => ({ ...prev, impact: Number(e.target.value) as Risk["impact"] }))}>
+                  {[1, 2, 3, 4, 5].map(value => <option key={value} value={value}>{value}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="label">紧迫度 U</label>
+                <select className="input" value={formData.urgency} onChange={e => setFormData(prev => ({ ...prev, urgency: Number(e.target.value) as Risk["urgency"] }))}>
+                  {[1, 2, 3, 4, 5].map(value => <option key={value} value={value}>{value}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="label">状态</label>
+                <select className="input" value={formData.status} onChange={e => setFormData(prev => ({ ...prev, status: e.target.value as RiskStatus }))}>
+                  {statusOrder.map(status => <option key={status} value={status}>{statusLabels[status]}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="label">应对策略类型</label>
+                <select className="input" value={formData.responseStrategyType} onChange={e => setFormData(prev => ({ ...prev, responseStrategyType: e.target.value as RiskStrategy }))}>
+                  {strategies.map(strategy => <option key={strategy} value={strategy}>{strategy}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="label">来源</label>
+                <input className="input" value={formData.source} onChange={e => setFormData(prev => ({ ...prev, source: e.target.value }))} />
+              </div>
+              <div>
+                <label className="label">到期日</label>
+                <input className="input" type="date" value={formData.dueDate} onChange={e => setFormData(prev => ({ ...prev, dueDate: e.target.value }))} />
+              </div>
+              <div>
+                <label className="label">下次复核</label>
+                <input className="input" type="date" value={formData.nextReviewDate} onChange={e => setFormData(prev => ({ ...prev, nextReviewDate: e.target.value }))} />
+              </div>
+              {[
+                ["trigger", "触发器"],
+                ["responseStrategy", "应对策略"],
+                ["preventiveAction", "预防措施"],
+                ["contingencyPlan", "应急计划"],
+                ["trackingMethod", "跟踪方法"],
+                ["closingCriteria", "关闭条件"],
+                ["evidence", "证据/备注"],
+              ].map(([field, label]) => (
+                <div key={field} style={{ gridColumn: "1 / -1" }}>
+                  <label className="label">{label}</label>
+                  <textarea
+                    className="input"
+                    rows={2}
+                    value={String(formData[field as keyof RiskForm] ?? "")}
+                    onChange={e => setFormData(prev => ({ ...prev, [field]: e.target.value }))}
+                    style={{ resize: "vertical" }}
+                  />
+                </div>
+              ))}
+              <div style={{ gridColumn: "1 / -1", padding: "12px 16px", borderRadius: 10, background: "var(--surface2)", display: "flex", justifyContent: "space-between", color: "var(--text2)" }}>
+                <span>当前评分：P×I = {calculateRiskScore(formData.probability, formData.impact)}；优先级 = P×I×U = {calculateRiskPriority(formData.probability, formData.impact, formData.urgency)}</span>
+                <span style={{ color: getRiskColor(calculateRiskScore(formData.probability, formData.impact)).text, fontWeight: 800 }}>{levelLabel(calculateRiskScore(formData.probability, formData.impact))}风险</span>
               </div>
             </div>
-
-            {error && (
-              <div style={{ background: "rgba(239,68,68,0.1)", border: "1px solid var(--red)", borderRadius: 8, padding: "12px 16px", color: "var(--red)", fontSize: "0.85rem", marginTop: 16 }}>
-                {error}
-              </div>
-            )}
-
+            {error && <div style={{ marginTop: 16, color: "var(--red)", fontSize: "0.82rem" }}>{error}</div>}
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 12, marginTop: 24 }}>
-              <button className="btn-secondary" onClick={() => { setShowForm(false); setEditingRisk(null); setError(""); }}>
-                取消
-              </button>
-              <button className="btn-primary" onClick={handleSave}>
-                {editingRisk ? "保存修改" : "添加风险"}
-              </button>
+              <button className="btn-secondary" onClick={() => { setShowForm(false); setEditingRisk(null); setError(""); }}>取消</button>
+              <button className="btn-primary" onClick={handleSave}>{editingRisk ? "保存修改" : "添加风险"}</button>
             </div>
           </div>
         </div>

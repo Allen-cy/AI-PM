@@ -39,6 +39,23 @@ export interface HealthMatrixProject {
   status: 'green' | 'yellow' | 'red';
 }
 
+export interface KeyProjectProgress {
+  id: string;
+  name: string;
+  level: string;
+  status: string;
+  marker: string;
+  reason: string;
+  executionProgress: number;
+  monitoringProgress: number;
+  closingProgress: number;
+  riskLevel: '高' | '中' | '低';
+  riskType: string;
+  receivable: number;
+  dueDate?: string;
+  dependencyNote: string;
+}
+
 export interface RiskProject {
   id: string;
   name: string;
@@ -80,6 +97,12 @@ export interface DashboardProjectRecord {
   风险状态: string;
   风险趋势: '恶化' | '平稳' | '改善';
   到期日期?: string;
+  重点项目标记?: string;
+  是否重点项目?: boolean;
+  重点项目原因?: string;
+  执行阶段进度?: number;
+  监控阶段进度?: number;
+  收尾阶段进度?: number;
 }
 
 export interface DashboardData {
@@ -96,6 +119,7 @@ export interface DashboardData {
   paymentGroups: PaymentGroup[];
   projectLevels: NamedValue[];
   healthMatrix: HealthMatrixProject[];
+  keyProjects: KeyProjectProgress[];
   riskProjects: RiskProject[];
   upcomingPayments: UpcomingPayment[];
   records: DashboardProjectRecord[];

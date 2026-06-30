@@ -2,6 +2,7 @@ import type {
   DashboardData,
   DashboardProjectRecord,
   DashboardSourceType,
+  KeyProjectProgress,
   NamedValue,
   PaymentGroup,
   RegionDistribution,
@@ -46,6 +47,17 @@ function number(row: RawRow, names: string[], fallback = 0): number {
     if (Number.isFinite(parsed)) return parsed;
   }
   return fallback;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function progressPercent(row: RawRow, names: string[], fallback: number): number {
+  const raw = value(row, names);
+  if (raw === undefined || raw === null || raw === '') return fallback;
+  const parsed = number(row, names, fallback);
+  return clamp(Math.round(parsed > 1 ? parsed : parsed * 100), 0, 100);
 }
 
 function parseDateLike(raw: unknown): Date | undefined {
@@ -116,6 +128,67 @@ function trendFromRecord(record: Pick<DashboardProjectRecord, '进度偏差' | '
   return '平稳';
 }
 
+function keyProjectInfo(record: Pick<DashboardProjectRecord, '项目等级' | '合同金额' | '风险等级' | '进度偏差' | '应收金额'>, row: RawRow): {
+  marker: string;
+  isKey: boolean;
+  reason: string;
+} {
+  const rawMarker = text(row, ['重点项目标记', '重点项目', '是否重点项目', '是否重点', '重点项目等级']);
+  const normalized = rawMarker.replace(/\s/g, '').toLowerCase();
+  const explicitTrue = ['是', '重点', 'true', 'yes', 'y', '1', 's', 'a', '战略', '核心'].some(item => normalized.includes(item));
+  const explicitFalse = ['否', 'false', 'no', 'n', '0', '非重点'].some(item => normalized.includes(item));
+  if (rawMarker && (explicitTrue || explicitFalse)) {
+    return {
+      marker: rawMarker,
+      isKey: explicitTrue && !explicitFalse,
+      reason: explicitTrue && !explicitFalse ? `飞书字段标记：${rawMarker}` : '飞书字段标记为非重点项目',
+    };
+  }
+
+  const reasons: string[] = [];
+  if (['S', 'A'].includes(record.项目等级)) reasons.push(`${record.项目等级}级项目`);
+  if (record.合同金额 >= 300) reasons.push('合同金额较高');
+  if (record.风险等级 === '高') reasons.push('高风险项目');
+  if (record.进度偏差 <= -15) reasons.push('进度严重偏差');
+  if (record.应收金额 >= 100) reasons.push('应收金额较高');
+  return {
+    marker: reasons.length > 0 ? '自动识别' : '否',
+    isKey: reasons.length > 0,
+    reason: reasons.length > 0 ? reasons.join('、') : '未触发重点项目规则',
+  };
+}
+
+function deriveStageProgress(record: DashboardProjectRecord, row: RawRow): {
+  executionProgress: number;
+  monitoringProgress: number;
+  closingProgress: number;
+  dependencyNote: string;
+} {
+  const currentProgress = clamp(Math.round(record.当前进度 * 100), 0, 100);
+  const riskPenalty = record.风险等级 === '高' ? 18 : record.风险等级 === '中' ? 8 : 0;
+  const costAdjustment = record.成本健康度 >= 85 ? 6 : record.成本健康度 < 65 ? -10 : 0;
+  const executionProgress = progressPercent(row, ['执行阶段进度', '执行进度', '交付执行进度'], currentProgress);
+  const monitoringFallback = executionProgress < 20
+    ? 0
+    : clamp(Math.round(executionProgress + costAdjustment - riskPenalty), 0, 100);
+  const monitoringProgress = progressPercent(row, ['监控阶段进度', '监控进度', '监控闭环进度'], monitoringFallback);
+  const statusText = record.项目状态;
+  const closingSeed = statusText.includes('验收') || statusText.includes('收尾') || statusText.includes('结项')
+    ? Math.max(40, Math.round((executionProgress + monitoringProgress) / 2))
+    : executionProgress >= 80 && monitoringProgress >= 70
+      ? Math.round((executionProgress - 80) * 3 + (monitoringProgress - 70))
+      : 0;
+  const closingProgress = progressPercent(row, ['收尾阶段进度', '收尾进度', '验收收尾进度'], clamp(closingSeed, 0, 100));
+  const dependencyNote = executionProgress < 50
+    ? '监控和收尾依赖执行阶段形成稳定交付数据'
+    : monitoringProgress < 70
+      ? '收尾依赖监控阶段完成风险、质量和偏差闭环'
+      : record.应收金额 > 0
+        ? '收尾依赖验收、归档与回款/应收闭环'
+        : '执行、监控、收尾链路基本连贯';
+  return { executionProgress, monitoringProgress, closingProgress, dependencyNote };
+}
+
 export function normalizeProjectRows(rows: RawRow[]): DashboardProjectRecord[] {
   return rows
     .filter(row => text(row, ['项目名称', '项目', '商机项目名称', '合同名称']))
@@ -158,6 +231,14 @@ export function normalizeProjectRows(rows: RawRow[]): DashboardProjectRecord[] {
       };
       project.风险等级 = ['高', '中', '低'].includes(project.风险等级) ? project.风险等级 : severityFromRecord(project);
       project.风险趋势 = ['恶化', '平稳', '改善'].includes(project.风险趋势) ? project.风险趋势 : trendFromRecord(project);
+      const keyInfo = keyProjectInfo(project, row);
+      const stageProgress = deriveStageProgress(project, row);
+      project.重点项目标记 = keyInfo.marker;
+      project.是否重点项目 = keyInfo.isKey;
+      project.重点项目原因 = keyInfo.reason;
+      project.执行阶段进度 = stageProgress.executionProgress;
+      project.监控阶段进度 = stageProgress.monitoringProgress;
+      project.收尾阶段进度 = stageProgress.closingProgress;
       return project;
     });
 }
@@ -272,6 +353,35 @@ export function buildDashboardData(
       daysLeft: daysLeft(item.到期日期),
     }));
 
+  const keyProjects: KeyProjectProgress[] = safeRecords
+    .filter(item => item.是否重点项目)
+    .sort((a, b) => {
+      const riskScore = { 高: 3, 中: 2, 低: 1 };
+      const levelScore = { S: 4, A: 3, B: 2, C: 1, D: 0 } as Record<string, number>;
+      return (
+        (levelScore[b.项目等级] ?? 0) - (levelScore[a.项目等级] ?? 0)
+        || riskScore[b.风险等级] - riskScore[a.风险等级]
+        || b.合同金额 - a.合同金额
+      );
+    })
+    .slice(0, 8)
+    .map(item => ({
+      id: item.项目编号,
+      name: item.项目名称,
+      level: item.项目等级,
+      status: item.项目状态,
+      marker: item.重点项目标记 ?? '自动识别',
+      reason: item.重点项目原因 ?? '重点项目',
+      executionProgress: item.执行阶段进度 ?? clamp(Math.round(item.当前进度 * 100), 0, 100),
+      monitoringProgress: item.监控阶段进度 ?? 0,
+      closingProgress: item.收尾阶段进度 ?? 0,
+      riskLevel: item.风险等级,
+      riskType: item.风险类型,
+      receivable: item.应收金额,
+      dueDate: item.到期日期,
+      dependencyNote: deriveStageProgress(item, item as unknown as RawRow).dependencyNote,
+    }));
+
   return {
     source: {
       ...source,
@@ -298,6 +408,7 @@ export function buildDashboardData(
       costHealth: item.成本健康度,
       status: item.成本健康度 < 60 || item.进度偏差 < -15 ? 'red' : item.成本健康度 < 75 || item.进度偏差 < -5 ? 'yellow' : 'green',
     })),
+    keyProjects,
     riskProjects,
     upcomingPayments,
     records: safeRecords,

@@ -89,6 +89,37 @@ function projectLevel(level) {
   return ['S', 'A', 'B', 'C'].includes(level) ? level : 'C';
 }
 
+function isKeyProject(record) {
+  return ['S', 'A'].includes(projectLevel(record.项目等级))
+    || Number(record.合同金额 ?? 0) >= 300
+    || record.风险等级 === '高'
+    || Number(record.进度偏差 ?? 0) <= -15
+    || Number(record.应收金额 ?? 0) >= 100;
+}
+
+function keyProjectReason(record) {
+  const reasons = [];
+  if (['S', 'A'].includes(projectLevel(record.项目等级))) reasons.push(`${projectLevel(record.项目等级)}级项目`);
+  if (Number(record.合同金额 ?? 0) >= 300) reasons.push('合同金额较高');
+  if (record.风险等级 === '高') reasons.push('高风险项目');
+  if (Number(record.进度偏差 ?? 0) <= -15) reasons.push('进度严重偏差');
+  if (Number(record.应收金额 ?? 0) >= 100) reasons.push('应收金额较高');
+  return reasons.join('、') || '常规项目';
+}
+
+function stageProgress(record) {
+  const execution = Math.max(0, Math.min(100, Math.round(Number(record.当前进度 ?? 0) * 100)));
+  const riskPenalty = record.风险等级 === '高' ? 18 : record.风险等级 === '中' ? 8 : 0;
+  const costAdjustment = Number(record.成本健康度 ?? 0) >= 85 ? 6 : Number(record.成本健康度 ?? 0) < 65 ? -10 : 0;
+  const monitoring = execution < 20 ? 0 : Math.max(0, Math.min(100, execution + costAdjustment - riskPenalty));
+  const closing = record.项目状态 === '已验收'
+    ? Math.max(70, Math.round((execution + monitoring) / 2))
+    : execution >= 80 && monitoring >= 70
+      ? Math.max(0, Math.min(100, Math.round((execution - 80) * 3 + (monitoring - 70))))
+      : 0;
+  return { execution, monitoring, closing };
+}
+
 function contractStatus(status) {
   return status === '已验收' ? '已完成' : '履约中';
 }
@@ -226,6 +257,11 @@ const createdFields = {
     { type: 'text', name: '销售负责人', description: '样例项目缺失时自动补充的销售负责人。' },
     { type: 'text', name: '备注', description: '测试数据说明。' },
     { type: 'text', name: '样例项目类型', description: '保留样例源表中的原始项目类型。' },
+    { type: 'select', name: '重点项目标记', description: '标记该项目是否为重点项目，用于组合看板重点项目进度链。', multiple: false, options: [{ name: '是' }, { name: '否' }] },
+    { type: 'text', name: '重点项目原因', description: '记录重点项目识别原因或人工标记依据。' },
+    { type: 'number', name: '执行阶段进度', description: '重点项目执行阶段进度，0-100。', style: { type: 'progress', percentage: true, color: 'Blue' } },
+    { type: 'number', name: '监控阶段进度', description: '重点项目监控阶段闭环进度，0-100。', style: { type: 'progress', percentage: true, color: 'Purple' } },
+    { type: 'number', name: '收尾阶段进度', description: '重点项目收尾阶段闭环进度，0-100。', style: { type: 'progress', percentage: true, color: 'Green' } },
   ]),
   contract: ensureFields(TABLES.contract, [
     ...commonTextFields,
@@ -291,6 +327,11 @@ const projectFields = [
   '销售负责人',
   '备注',
   '样例项目类型',
+  '重点项目标记',
+  '重点项目原因',
+  '执行阶段进度',
+  '监控阶段进度',
+  '收尾阶段进度',
 ];
 
 const projectsToCreate = [];
@@ -301,6 +342,7 @@ for (const [index, record] of sampleRecords.entries()) {
   const paymentTerms = record.应收金额 > 0
     ? '按合同约定分阶段付款，尾款在验收后30日内支付。'
     : '合同款已按节点回收，验收后完成归档。';
+  const progress = stageProgress(record);
   projectsToCreate.push([
     record.项目名称,
     record.项目编号,
@@ -342,6 +384,11 @@ for (const [index, record] of sampleRecords.entries()) {
     `销售负责人-${(index % 6) + 1}`,
     '样例数据源缺失字段已按测试规则补充。',
     record.项目类型,
+    isKeyProject(record) ? '是' : '否',
+    keyProjectReason(record),
+    numberValue(progress.execution / 100),
+    numberValue(progress.monitoring / 100),
+    numberValue(progress.closing / 100),
   ]);
   projectSourceOrder.push(record.项目编号);
 }

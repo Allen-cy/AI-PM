@@ -47,6 +47,11 @@ export async function loadDashboardFromFeishu(config: FeishuConfig): Promise<Das
       风险等级: project['风险等级'] ?? (Number(risk['风险值'] ?? 0) >= 12 ? '高' : Number(risk['风险值'] ?? 0) >= 6 ? '中' : undefined),
       风险状态: project['风险状态'] ?? risk['状态'],
       风险趋势: project['风险趋势'] ?? risk['风险趋势'],
+      重点项目标记: project['重点项目标记'] ?? project['重点项目'] ?? project['是否重点项目'],
+      重点项目原因: project['重点项目原因'],
+      执行阶段进度: project['执行阶段进度'] ?? project['执行进度'],
+      监控阶段进度: project['监控阶段进度'] ?? project['监控进度'],
+      收尾阶段进度: project['收尾阶段进度'] ?? project['收尾进度'],
     };
   });
 

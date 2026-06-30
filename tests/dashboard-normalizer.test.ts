@@ -110,3 +110,49 @@ test('groups receivables by due-date aging and excludes fully collected projects
     { range: '未设到期日', count: 1, amount: 60 },
   ]);
 });
+
+test('derives key project progress chain from marker and project risk data', () => {
+  const records = normalizeProjectRows([
+    {
+      项目编号: 'KEY-001',
+      项目名称: '重点项目样例',
+      项目等级: 'A',
+      项目状态: '执行中',
+      当前进度: 0.72,
+      合同金额: 350,
+      已回款金额: 120,
+      应收金额: 230,
+      成本健康度: 80,
+      进度偏差: -8,
+      风险等级: '中',
+      重点项目标记: '是',
+      重点项目原因: '客户战略项目',
+      执行阶段进度: 76,
+      监控阶段进度: 68,
+      收尾阶段进度: 10,
+    },
+    {
+      项目编号: 'NORMAL-001',
+      项目名称: '普通项目样例',
+      项目等级: 'C',
+      项目状态: '执行中',
+      当前进度: 0.4,
+      合同金额: 80,
+      已回款金额: 60,
+      应收金额: 20,
+      成本健康度: 90,
+      进度偏差: 0,
+      风险等级: '低',
+      重点项目标记: '否',
+    },
+  ]);
+
+  const dashboard = buildDashboardData(records, { type: 'file', name: '重点项目测试' });
+
+  assert.equal(dashboard.keyProjects.length, 1);
+  assert.equal(dashboard.keyProjects[0].id, 'KEY-001');
+  assert.equal(dashboard.keyProjects[0].executionProgress, 76);
+  assert.equal(dashboard.keyProjects[0].monitoringProgress, 68);
+  assert.equal(dashboard.keyProjects[0].closingProgress, 10);
+  assert.match(dashboard.keyProjects[0].dependencyNote, /收尾依赖|执行、监控、收尾/);
+});
