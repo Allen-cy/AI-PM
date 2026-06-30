@@ -198,20 +198,44 @@ function RegionBarChart({ data }: { data: DashboardData["regionDistribution"] })
 }
 
 function Histogram({ data }: { data: DashboardData["paymentGroups"] }) {
-  const maxAmount = Math.max(...data.map(d => d.amount));
+  const maxAmount = Math.max(1, ...data.map(d => d.amount));
+  const totalAmount = data.reduce((sum, item) => sum + item.amount, 0);
+  if (totalAmount <= 0) {
+    return (
+      <div style={{
+        height: 150,
+        display: "grid",
+        placeItems: "center",
+        background: "var(--surface2)",
+        border: "1px dashed var(--border)",
+        borderRadius: 10,
+        color: "var(--text2)",
+        fontSize: "0.82rem",
+        textAlign: "center",
+        lineHeight: 1.7,
+        padding: 18,
+      }}>
+        当前数据源暂无未回款应收金额。<br />
+        回款分组只统计应收金额大于 0 的项目。
+      </div>
+    );
+  }
+  const colors = ["#3b82f6", "#f59e0b", "#fb923c", "#ef4444", "#991b1b", "#8b5cf6"];
   return (
-    <div style={{ display: "flex", alignItems: "flex-end", gap: 16, height: 120, paddingTop: 20 }}>
+    <div style={{ display: "flex", alignItems: "flex-end", gap: 10, height: 158, paddingTop: 18 }}>
       {data.map((d, i) => (
         <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
           <div style={{
             width: "100%",
             height: `${(d.amount / maxAmount) * 100}%`,
-            background: ["#3b82f6", "#10b981", "#f59e0b", "#ef4444"][i],
+            background: colors[i % colors.length],
             borderRadius: "6px 6px 0 0",
-            minHeight: 20,
+            minHeight: d.amount > 0 ? 18 : 6,
+            opacity: d.amount > 0 ? 0.95 : 0.35,
           }} />
-          <span style={{ fontSize: "0.7rem", color: "var(--text2)" }}>{d.range}</span>
-          <span style={{ fontSize: "0.75rem", fontWeight: 600 }}>{d.amount}</span>
+          <span style={{ fontSize: "0.68rem", color: "var(--text2)", textAlign: "center", lineHeight: 1.2, minHeight: 28 }}>{d.range}</span>
+          <span style={{ fontSize: "0.75rem", fontWeight: 700 }}>{d.amount}</span>
+          <span style={{ fontSize: "0.65rem", color: "var(--text2)" }}>{d.count}项</span>
         </div>
       ))}
     </div>
@@ -466,7 +490,7 @@ export default function DashboardPage() {
               回款分组（账龄）
             </div>
             <Histogram data={dashboardData.paymentGroups} />
-            <div style={{ fontSize: "0.7rem", color: "var(--text2)", marginTop: 8, textAlign: "center" }}>单位：万元</div>
+            <div style={{ fontSize: "0.7rem", color: "var(--text2)", marginTop: 8, textAlign: "center", lineHeight: 1.6 }}>单位：万元 · 仅统计应收金额 &gt; 0 的项目</div>
           </div>
 
           {/* Project Level Donut */}

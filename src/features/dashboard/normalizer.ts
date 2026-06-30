@@ -181,10 +181,29 @@ function monthKey(date?: string): string {
 
 function daysLeft(date?: string): number {
   if (!date) return 30;
-  const target = new Date(date);
-  if (Number.isNaN(target.getTime())) return 30;
+  const target = parseDateLike(date);
+  if (!target) return 30;
   const now = new Date();
   return Math.max(0, Math.ceil((target.getTime() - now.getTime()) / 86_400_000));
+}
+
+function daysUntilDue(date?: string): number | null {
+  if (!date) return null;
+  const target = parseDateLike(date);
+  if (!target) return null;
+  const now = new Date();
+  return Math.ceil((target.getTime() - now.getTime()) / 86_400_000);
+}
+
+function paymentAgingBucket(date?: string): number {
+  const remainingDays = daysUntilDue(date);
+  if (remainingDays === null) return 5;
+  if (remainingDays >= 0) return 0;
+  const overdueDays = Math.abs(remainingDays);
+  if (overdueDays <= 30) return 1;
+  if (overdueDays <= 60) return 2;
+  if (overdueDays <= 90) return 3;
+  return 4;
 }
 
 export function buildDashboardData(
@@ -213,15 +232,19 @@ export function buildDashboardData(
   });
 
   const paymentGroups: PaymentGroup[] = [
-    { range: '<30天', count: 0, amount: 0 },
-    { range: '30-60天', count: 0, amount: 0 },
-    { range: '60-90天', count: 0, amount: 0 },
-    { range: '>90天', count: 0, amount: 0 },
+    { range: '未到期', count: 0, amount: 0 },
+    { range: '逾期1-30天', count: 0, amount: 0 },
+    { range: '逾期31-60天', count: 0, amount: 0 },
+    { range: '逾期61-90天', count: 0, amount: 0 },
+    { range: '逾期90天以上', count: 0, amount: 0 },
+    { range: '未设到期日', count: 0, amount: 0 },
   ];
   safeRecords.forEach(item => {
-    const bucket = item.回款率 <= 0.3 ? 0 : item.回款率 <= 0.6 ? 1 : item.回款率 < 1 ? 2 : 3;
+    const openReceivable = item.应收金额 || Math.max(0, item.合同金额 - item.已回款金额);
+    if (openReceivable <= 0) return;
+    const bucket = paymentAgingBucket(item.到期日期);
     paymentGroups[bucket].count += 1;
-    paymentGroups[bucket].amount += item.应收金额 || Math.max(0, item.合同金额 - item.已回款金额);
+    paymentGroups[bucket].amount += openReceivable;
   });
 
   const riskProjects: RiskProject[] = safeRecords
@@ -267,7 +290,7 @@ export function buildDashboardData(
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([month, item]) => ({ month, contract: Number(item.contract.toFixed(2)), collection: Number(item.collection.toFixed(2)) })),
     regionDistribution: [...regionMap.values()].sort((a, b) => b.count - a.count).slice(0, 8),
-    paymentGroups,
+    paymentGroups: paymentGroups.map(item => ({ ...item, amount: Number(item.amount.toFixed(2)) })),
     projectLevels,
     healthMatrix: safeRecords.slice(0, 20).map(item => ({
       name: item.项目名称,

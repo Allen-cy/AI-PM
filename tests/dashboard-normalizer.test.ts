@@ -81,3 +81,32 @@ test('rebuilds monthly trend from cached normalized records with raw timestamp d
     { month: '2023-01', contract: 123, collection: 23 },
   ]);
 });
+
+function dateByOffset(days: number): string {
+  const date = new Date();
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+test('groups receivables by due-date aging and excludes fully collected projects', () => {
+  const records = normalizeProjectRows([
+    { 项目名称: '未到期应收', 合同金额: 100, 已回款金额: 90, 应收金额: 10, 到期日期: dateByOffset(15) },
+    { 项目名称: '逾期15天', 合同金额: 100, 已回款金额: 80, 应收金额: 20, 到期日期: dateByOffset(-15) },
+    { 项目名称: '逾期45天', 合同金额: 100, 已回款金额: 70, 应收金额: 30, 到期日期: dateByOffset(-45) },
+    { 项目名称: '逾期75天', 合同金额: 100, 已回款金额: 60, 应收金额: 40, 到期日期: dateByOffset(-75) },
+    { 项目名称: '逾期120天', 合同金额: 100, 已回款金额: 50, 应收金额: 50, 到期日期: dateByOffset(-120) },
+    { 项目名称: '未设到期日', 合同金额: 100, 已回款金额: 40, 应收金额: 60 },
+    { 项目名称: '已全额回款', 合同金额: 100, 已回款金额: 100, 应收金额: 0, 到期日期: dateByOffset(-300) },
+  ]);
+
+  const dashboard = buildDashboardData(records, { type: 'feishu', name: '飞书智能表' });
+
+  assert.deepEqual(dashboard.paymentGroups, [
+    { range: '未到期', count: 1, amount: 10 },
+    { range: '逾期1-30天', count: 1, amount: 20 },
+    { range: '逾期31-60天', count: 1, amount: 30 },
+    { range: '逾期61-90天', count: 1, amount: 40 },
+    { range: '逾期90天以上', count: 1, amount: 50 },
+    { range: '未设到期日', count: 1, amount: 60 },
+  ]);
+});
