@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   type LinkedModule,
   type Risk,
@@ -10,6 +10,7 @@ import {
   type RiskStage,
   type RiskStatus,
   type RiskStrategy,
+  type RiskWorkflowEvent,
   calculateRiskPriority,
   calculateRiskScore,
   categoryLabels,
@@ -17,8 +18,10 @@ import {
   generateMatrixGrid,
   getRiskColor,
   getRiskLevel,
+  getWorkflowStepForStatus,
   impactAreaLabels,
   initialRisks,
+  nextRiskStatus,
   responseStrategyGuidance,
   riskChecklistItems,
   riskLifecycleSteps,
@@ -28,9 +31,19 @@ import {
   statusOrder,
 } from "@/lib/risk";
 
-type ActiveTab = "overview" | "list" | "checklist" | "matrix" | "response";
+type ActiveTab = "overview" | "list" | "checklist" | "matrix" | "workflow" | "response";
 
 type RiskForm = Omit<Risk, "id" | "piScore" | "priorityScore" | "createdAt">;
+
+type TransitionForm = {
+  toStatus: RiskStatus;
+  inputSummary: string;
+  outputSummary: string;
+  actionRequired: string;
+  owner: string;
+  deadline: string;
+  evidence: string;
+};
 
 interface DashboardRiskRecord {
   项目编号?: string;
@@ -169,6 +182,12 @@ function dashboardRecordToRisk(record: DashboardRiskRecord, index: number): Risk
     closingCriteria: "风险指标恢复到可接受范围，或治理层批准的应对方案已落地。",
     linkedModule: impactArea === "回款" ? "合同回款" : impactArea === "质量" ? "质量" : "监控",
     evidence: `来自飞书项目台账：${record.项目编号 || "无编号"}`,
+    workflowStep: "identify",
+    currentInput: "飞书项目台账中的风险等级、进度偏差、应收金额、重点项目标记和项目状态。",
+    currentOutput: "项目台账风险线索已转入风险登记册。",
+    lastAction: "由项目经理确认风险等级、补齐应对计划并推进到分析环节。",
+    actionOwner: "项目经理",
+    actionDeadline: record.到期日期 || dateByOffset(7),
   };
   return withScores(form, `FS-${record.项目编号 || index + 1}`, new Date().toISOString().split("T")[0]);
 }
@@ -187,11 +206,20 @@ function RiskBadge({ risk }: { risk: Risk }) {
   return <span className={`tag ${riskLevelClass(risk.piScore)}`}>{levelLabel(risk.piScore)}风险 · {risk.piScore}</span>;
 }
 
+function workflowPercent(status: RiskStatus): number {
+  if (status === "closed") return 100;
+  const active = statusOrder.filter(item => item !== "closed");
+  const index = Math.max(0, active.indexOf(status));
+  return Math.round(((index + 1) / active.length) * 100);
+}
+
 function StatusBadge({ status }: { status: RiskStatus }) {
   const colorMap: Record<RiskStatus, string> = {
     identified: "#3b82f6",
     analyzing: "#8b5cf6",
     "response-planned": "#06b6d4",
+    "response-implementing": "#f97316",
+    monitoring: "#14b8a6",
     tracking: "#f59e0b",
     resolved: "#22c55e",
     closed: "#64748b",
@@ -212,14 +240,30 @@ function StatusBadge({ status }: { status: RiskStatus }) {
 }
 
 export default function RiskPage() {
-  const [risks, setRisks] = useState<Risk[]>(initialRisks);
+  const [risks, setRisks] = useState<Risk[]>([]);
+  const [workflowEvents, setWorkflowEvents] = useState<RiskWorkflowEvent[]>([]);
   const [activeTab, setActiveTab] = useState<ActiveTab>("overview");
   const [statusFilter, setStatusFilter] = useState<RiskStatus | "all">("all");
   const [categoryFilter, setCategoryFilter] = useState<RiskCategory | "all">("all");
   const [stageFilter, setStageFilter] = useState<RiskStage | "all">("all");
+  const [loadingRisks, setLoadingRisks] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [editingRisk, setEditingRisk] = useState<Risk | null>(null);
   const [formData, setFormData] = useState<RiskForm>(defaultForm);
+  const [transitioningRisk, setTransitioningRisk] = useState<Risk | null>(null);
+  const [transitionForm, setTransitionForm] = useState<TransitionForm>(() => {
+    const step = getWorkflowStepForStatus("analyzing");
+    return {
+      toStatus: "analyzing",
+      inputSummary: step.input,
+      outputSummary: step.output,
+      actionRequired: step.requiredAction,
+      owner: "项目经理",
+      deadline: dateByOffset(7),
+      evidence: "",
+    };
+  });
   const [projectDesc, setProjectDesc] = useState("");
   const [scanProjectName, setScanProjectName] = useState("");
   const [scanStage, setScanStage] = useState<RiskStage>("规划");
@@ -228,6 +272,33 @@ export default function RiskPage() {
   const [reviewNow] = useState(() => Date.now());
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadRisks() {
+      setLoadingRisks(true);
+      setError("");
+      try {
+        const response = await fetch("/api/risk", { cache: "no-store" });
+        const data = await response.json() as { risks?: Risk[]; events?: RiskWorkflowEvent[]; warning?: string; error?: string; migrationHint?: string };
+        if (!response.ok) throw new Error([data.error, data.migrationHint].filter(Boolean).join("；") || "风险登记册读取失败");
+        if (cancelled) return;
+        setRisks(Array.isArray(data.risks) ? data.risks : []);
+        setWorkflowEvents(Array.isArray(data.events) ? data.events : []);
+        setMessage(data.warning || "");
+      } catch (e: unknown) {
+        if (cancelled) return;
+        setRisks(initialRisks);
+        setError(`风险登记册读取失败，已展示本地样例：${e instanceof Error ? e.message : String(e)}`);
+      } finally {
+        if (!cancelled) setLoadingRisks(false);
+      }
+    }
+    void loadRisks();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const classified = useMemo(() => classifyRisks(risks), [risks]);
   const openRisks = risks.filter(risk => !["resolved", "closed"].includes(risk.status));
@@ -242,8 +313,18 @@ export default function RiskPage() {
   ));
 
   const responseRisks = [...openRisks].sort((a, b) => b.priorityScore - a.priorityScore).slice(0, 8);
+  const latestEventByRisk = useMemo(() => {
+    const map = new Map<string, RiskWorkflowEvent>();
+    for (const event of workflowEvents) {
+      const keys = [event.riskId, event.riskCode].filter(Boolean) as string[];
+      for (const key of keys) {
+        if (!map.has(key)) map.set(key, event);
+      }
+    }
+    return map;
+  }, [workflowEvents]);
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!formData.description.trim()) {
       setError("请填写风险描述");
       return;
@@ -252,17 +333,40 @@ export default function RiskPage() {
       setError("请填写责任人，风险没有责任人就无法闭环");
       return;
     }
+    if (!formData.dueDate) {
+      setError("请填写deadline，风险管理动作必须有到期日");
+      return;
+    }
     const saved = withScores(
       formData,
       editingRisk?.id || `R${String(risks.length + 1).padStart(3, "0")}`,
       editingRisk?.createdAt || new Date().toISOString().split("T")[0],
     );
-    setRisks(prev => editingRisk ? prev.map(risk => risk.id === editingRisk.id ? saved : risk) : [...prev, saved]);
-    setShowForm(false);
-    setEditingRisk(null);
-    setFormData(defaultForm());
+    setSaving(true);
     setError("");
-    setMessage(editingRisk ? "风险已更新。" : "风险已加入登记册。");
+    try {
+      const response = await fetch("/api/risk", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ risk: saved }),
+      });
+      const data = await response.json() as { risk?: Risk; error?: string; migrationHint?: string };
+      if (!response.ok || !data.risk) throw new Error([data.error, data.migrationHint].filter(Boolean).join("；") || "风险保存失败");
+      setRisks(prev => {
+        const match = (risk: Risk) => risk.id === saved.id || risk.id === data.risk!.id || risk.riskCode === data.risk!.riskCode;
+        return prev.some(match)
+          ? prev.map(risk => match(risk) ? data.risk! : risk)
+          : [data.risk!, ...prev];
+      });
+      setShowForm(false);
+      setEditingRisk(null);
+      setFormData(defaultForm());
+      setMessage(editingRisk ? "风险已更新并持久化。" : "风险已加入登记册并持久化。");
+    } catch (e: unknown) {
+      setError(`风险保存失败：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleEdit = (risk: Risk) => {
@@ -295,8 +399,50 @@ export default function RiskPage() {
     setError("");
   };
 
-  const updateRiskStatus = (id: string, status: RiskStatus) => {
-    setRisks(prev => prev.map(risk => risk.id === id ? { ...risk, status } : risk));
+  const openTransition = (risk: Risk, toStatus: RiskStatus = nextRiskStatus(risk.status)) => {
+    const step = getWorkflowStepForStatus(toStatus);
+    setTransitioningRisk(risk);
+    setTransitionForm({
+      toStatus,
+      inputSummary: risk.currentInput || step.input,
+      outputSummary: risk.currentOutput || step.output,
+      actionRequired: risk.lastAction || step.requiredAction,
+      owner: risk.actionOwner || risk.owner || "项目经理",
+      deadline: risk.actionDeadline || risk.dueDate || dateByOffset(7),
+      evidence: risk.evidence || "",
+    });
+    setError("");
+  };
+
+  const handleTransition = async () => {
+    if (!transitioningRisk) return;
+    if (!transitionForm.owner.trim()) {
+      setError("请填写责任人");
+      return;
+    }
+    if (!transitionForm.deadline) {
+      setError("请填写deadline");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      const response = await fetch("/api/risk", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: transitioningRisk.id, ...transitionForm }),
+      });
+      const data = await response.json() as { risk?: Risk; event?: RiskWorkflowEvent; warning?: string; error?: string; migrationHint?: string };
+      if (!response.ok || !data.risk || !data.event) throw new Error([data.error, data.migrationHint].filter(Boolean).join("；") || "状态流转失败");
+      setRisks(prev => prev.map(risk => risk.id === transitioningRisk.id || risk.riskCode === transitioningRisk.riskCode ? data.risk! : risk));
+      setWorkflowEvents(prev => [data.event!, ...prev.filter(event => event.id !== data.event!.id)]);
+      setTransitioningRisk(null);
+      setMessage(data.warning || `风险已流转到「${statusLabels[data.risk.status]}」，并记录工作流动作。`);
+    } catch (e: unknown) {
+      setError(`状态流转失败：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleAIScan = async () => {
@@ -315,9 +461,16 @@ export default function RiskPage() {
       });
       const data = await response.json() as { risks?: Risk[]; aiReasoning?: string; error?: string };
       if (!response.ok || !Array.isArray(data.risks)) throw new Error(data.error || "AI风险扫描失败");
-      setRisks(prev => [...prev, ...data.risks!]);
+      const saveResponse = await fetch("/api/risk", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ risks: data.risks }),
+      });
+      const savedPayload = await saveResponse.json() as { risks?: Risk[]; error?: string; migrationHint?: string };
+      if (!saveResponse.ok || !Array.isArray(savedPayload.risks)) throw new Error([savedPayload.error, savedPayload.migrationHint].filter(Boolean).join("；") || "AI风险写入登记册失败");
+      setRisks(prev => [...savedPayload.risks!, ...prev]);
       setProjectDesc("");
-      setMessage(`已生成 ${data.risks.length} 条候选风险，并写入风险登记册。${data.aiReasoning ? ` ${data.aiReasoning}` : ""}`);
+      setMessage(`已生成 ${savedPayload.risks.length} 条候选风险，并写入风险登记册。${data.aiReasoning ? ` ${data.aiReasoning}` : ""}`);
     } catch (e: unknown) {
       setError(`风险扫描失败：${e instanceof Error ? e.message : String(e)}`);
     } finally {
@@ -337,11 +490,18 @@ export default function RiskPage() {
         .filter(record => record.是否重点项目 || record.风险等级 !== "低" || Number(record.进度偏差 ?? 0) < -5 || Number(record.应收金额 ?? 0) > 0)
         .slice(0, 12)
         .map(dashboardRecordToRisk);
-      setRisks(prev => {
-        const existing = new Set(prev.map(risk => risk.id));
-        return [...prev, ...mapped.filter(risk => !existing.has(risk.id))];
+      const saveResponse = await fetch("/api/risk", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ risks: mapped }),
       });
-      setMessage(`已从飞书项目台账导入 ${mapped.length} 条风险线索；重复项目不会覆盖已有登记。`);
+      const savedPayload = await saveResponse.json() as { risks?: Risk[]; error?: string; migrationHint?: string };
+      if (!saveResponse.ok || !Array.isArray(savedPayload.risks)) throw new Error([savedPayload.error, savedPayload.migrationHint].filter(Boolean).join("；") || "飞书风险线索写入登记册失败");
+      setRisks(prev => {
+        const existing = new Set(prev.flatMap(risk => [risk.id, risk.riskCode].filter(Boolean) as string[]));
+        return [...savedPayload.risks!.filter(risk => !existing.has(risk.id) && !existing.has(risk.riskCode || "")), ...prev];
+      });
+      setMessage(`已从飞书项目台账导入并持久化 ${savedPayload.risks.length} 条风险线索；重复项目按风险编号合并，不覆盖人工登记内容。`);
     } catch (e: unknown) {
       setError(`飞书风险线索读取失败：${e instanceof Error ? e.message : String(e)}`);
     } finally {
@@ -395,6 +555,7 @@ export default function RiskPage() {
             { key: "list", icon: "📋", label: "风险登记册" },
             { key: "checklist", icon: "✅", label: "核查清单" },
             { key: "matrix", icon: "🎯", label: "P-I矩阵" },
+            { key: "workflow", icon: "🔁", label: "工作流追踪" },
             { key: "response", icon: "🛡️", label: "应对跟踪" },
           ].map(tab => (
             <button
@@ -420,17 +581,31 @@ export default function RiskPage() {
           ))}
         </div>
 
+        {loadingRisks && (
+          <div className="card" style={{ marginBottom: 20, color: "var(--text2)", fontSize: "0.86rem" }}>
+            正在读取风险登记册...
+          </div>
+        )}
+
         {activeTab === "overview" && (
           <div style={{ display: "grid", gridTemplateColumns: "1.1fr 0.9fr", gap: 20 }}>
             <div className="card">
               <div style={{ fontSize: "0.85rem", fontWeight: 800, color: "var(--text2)", marginBottom: 16, textTransform: "uppercase", letterSpacing: "0.08em" }}>风险管理闭环设计</div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 10 }}>
                 {riskLifecycleSteps.map((step, index) => (
-                  <div key={step.name} style={{ padding: 14, border: "1px solid var(--border)", borderRadius: 12, background: "var(--surface2)", minHeight: 150 }}>
+                  <div key={step.name} style={{ padding: 14, border: "1px solid var(--border)", borderRadius: 12, background: "var(--surface2)", minHeight: 218 }}>
                     <div style={{ width: 28, height: 28, borderRadius: "50%", display: "grid", placeItems: "center", background: "rgba(139,92,246,0.14)", color: "var(--purple)", fontWeight: 800, marginBottom: 10 }}>{index + 1}</div>
-                    <div style={{ fontWeight: 800, marginBottom: 8 }}>{step.name}</div>
+                    <div style={{ fontWeight: 800, marginBottom: 8 }}>{step.name} · {statusLabels[step.status]}</div>
                     <div style={{ color: "var(--text2)", fontSize: "0.75rem", lineHeight: 1.6 }}>{step.intent}</div>
-                    <div style={{ marginTop: 10, color: "var(--accent2)", fontSize: "0.72rem", lineHeight: 1.5 }}>产出：{step.systemOutput}</div>
+                    <div style={{ marginTop: 10, color: "var(--text2)", fontSize: "0.72rem", lineHeight: 1.5 }}>
+                      <strong style={{ color: "var(--text)" }}>输入：</strong>{step.input}
+                    </div>
+                    <div style={{ marginTop: 8, color: "var(--accent2)", fontSize: "0.72rem", lineHeight: 1.5 }}>
+                      <strong>输出：</strong>{step.output}
+                    </div>
+                    <div style={{ marginTop: 8, color: "var(--amber)", fontSize: "0.72rem", lineHeight: 1.5 }}>
+                      动作：{step.requiredAction}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -528,7 +703,7 @@ export default function RiskPage() {
                     <tr key={risk.id} style={{ borderBottom: "1px solid var(--border)" }}>
                       <td style={{ padding: "12px 14px", minWidth: 150 }}>
                         <div style={{ fontWeight: 800 }}>{risk.projectName || "未指定项目"}</div>
-                        <div style={{ marginTop: 4, color: "var(--text2)", fontSize: "0.72rem" }}>{risk.id} · {risk.stage}</div>
+                        <div style={{ marginTop: 4, color: "var(--text2)", fontSize: "0.72rem" }}>{risk.riskCode || risk.id.slice(0, 8)} · {risk.stage}</div>
                       </td>
                       <td style={{ padding: "12px 14px", maxWidth: 320 }}>
                         <div style={{ fontWeight: 600, lineHeight: 1.5 }}>{risk.description}</div>
@@ -547,6 +722,9 @@ export default function RiskPage() {
                         <div style={{ fontWeight: 700 }}>{risk.owner || "未指定"}</div>
                         <div style={{ marginTop: 4, color: "var(--text2)", fontSize: "0.72rem" }}>下次复核：{risk.nextReviewDate}</div>
                         <div style={{ marginTop: 2, color: "var(--text2)", fontSize: "0.72rem" }}>到期：{risk.dueDate}</div>
+                        <div style={{ marginTop: 2, color: "var(--amber)", fontSize: "0.72rem", lineHeight: 1.4 }}>
+                          动作：{risk.lastAction || getWorkflowStepForStatus(risk.status).requiredAction}
+                        </div>
                       </td>
                       <td style={{ padding: "12px 14px", minWidth: 130 }}>
                         <div className="tag" style={{ background: "rgba(139,92,246,0.13)", color: "var(--purple)", marginBottom: 8 }}>{risk.linkedModule}</div>
@@ -555,8 +733,14 @@ export default function RiskPage() {
                       <td style={{ padding: "12px 14px" }}>
                         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                           <button onClick={() => handleEdit(risk)} style={{ background: "none", border: "none", color: "var(--accent2)", cursor: "pointer", textAlign: "left" }}>编辑</button>
-                          <button onClick={() => updateRiskStatus(risk.id, "tracking")} style={{ background: "none", border: "none", color: "var(--amber)", cursor: "pointer", textAlign: "left" }}>转跟踪</button>
-                          <button onClick={() => updateRiskStatus(risk.id, "closed")} style={{ background: "none", border: "none", color: "var(--green)", cursor: "pointer", textAlign: "left" }}>关闭</button>
+                          {risk.status !== "closed" && (
+                            <button onClick={() => openTransition(risk)} style={{ background: "none", border: "none", color: "var(--amber)", cursor: "pointer", textAlign: "left" }}>
+                              推进到{statusLabels[nextRiskStatus(risk.status)]}
+                            </button>
+                          )}
+                          {risk.status !== "closed" && (
+                            <button onClick={() => openTransition(risk, "closed")} style={{ background: "none", border: "none", color: "var(--green)", cursor: "pointer", textAlign: "left" }}>关闭</button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -668,6 +852,90 @@ export default function RiskPage() {
           </div>
         )}
 
+        {activeTab === "workflow" && (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 420px", gap: 20 }}>
+            <div className="card">
+              <div style={{ fontSize: "0.85rem", fontWeight: 800, color: "var(--text2)", marginBottom: 16, textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                风险工作流状态
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                {filteredRisks.map(risk => {
+                  const step = getWorkflowStepForStatus(risk.status);
+                  const latestEvent = latestEventByRisk.get(risk.id) || (risk.riskCode ? latestEventByRisk.get(risk.riskCode) : undefined);
+                  return (
+                    <div key={risk.id} style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 14, background: "var(--surface2)" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginBottom: 10 }}>
+                        <div>
+                          <div style={{ fontWeight: 800 }}>{risk.projectName || "未指定项目"} · {risk.description}</div>
+                          <div style={{ marginTop: 5, color: "var(--text2)", fontSize: "0.72rem" }}>
+                            {risk.riskCode || risk.id.slice(0, 8)} · 当前环节：{step.name} · 责任人：{risk.actionOwner || risk.owner || "未指定"} · deadline：{risk.actionDeadline || risk.dueDate || "未设置"}
+                          </div>
+                        </div>
+                        <StatusBadge status={risk.status} />
+                      </div>
+                      <div style={{ height: 8, borderRadius: 999, background: "var(--surface)", overflow: "hidden", border: "1px solid var(--border)", marginBottom: 12 }}>
+                        <div style={{ width: `${workflowPercent(risk.status)}%`, height: "100%", background: risk.status === "closed" ? "var(--green)" : "var(--purple)" }} />
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, fontSize: "0.76rem", color: "var(--text2)", lineHeight: 1.55 }}>
+                        <div><strong style={{ color: "var(--text)" }}>输入：</strong>{risk.currentInput || step.input}</div>
+                        <div><strong style={{ color: "var(--text)" }}>输出：</strong>{risk.currentOutput || step.output}</div>
+                        <div><strong style={{ color: "var(--text)" }}>动作：</strong>{risk.lastAction || step.requiredAction}</div>
+                      </div>
+                      {latestEvent && (
+                        <div style={{ marginTop: 10, padding: 10, borderRadius: 10, background: "var(--surface)", color: "var(--text2)", fontSize: "0.74rem", lineHeight: 1.6 }}>
+                          最近流转：{latestEvent.fromStatus ? `${statusLabels[latestEvent.fromStatus]} → ` : ""}{statusLabels[latestEvent.toStatus]}；
+                          {latestEvent.owner} 负责，{latestEvent.deadline || "未设deadline"} 前完成；
+                          记录时间：{latestEvent.createdAt.slice(0, 16).replace("T", " ")}
+                        </div>
+                      )}
+                      <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
+                        {risk.status !== "closed" && (
+                          <button className="btn-secondary" style={{ fontSize: "0.75rem", padding: "6px 10px" }} onClick={() => openTransition(risk)}>
+                            推进到{statusLabels[nextRiskStatus(risk.status)]}
+                          </button>
+                        )}
+                        {risk.status !== "closed" && (
+                          <button className="btn-secondary" style={{ fontSize: "0.75rem", padding: "6px 10px" }} onClick={() => openTransition(risk, "closed")}>
+                            关闭风险
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+                {filteredRisks.length === 0 && <div style={{ color: "var(--text2)" }}>暂无可追踪风险。</div>}
+              </div>
+            </div>
+
+            <div className="card">
+              <div style={{ fontSize: "0.85rem", fontWeight: 800, color: "var(--text2)", marginBottom: 14, textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                状态变更审计
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {workflowEvents.slice(0, 12).map(event => (
+                  <div key={event.id} style={{ padding: 12, border: "1px solid var(--border)", borderRadius: 10, background: "var(--surface2)" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 8 }}>
+                      <StatusBadge status={event.toStatus} />
+                      <span style={{ color: "var(--text2)", fontSize: "0.7rem" }}>{event.createdAt.slice(0, 16).replace("T", " ")}</span>
+                    </div>
+                    <div style={{ color: "var(--text2)", fontSize: "0.74rem", lineHeight: 1.6 }}>
+                      <div>输入：{event.inputSummary || "未记录"}</div>
+                      <div>输出：{event.outputSummary || "未记录"}</div>
+                      <div>动作：{event.actionRequired || "未记录"}</div>
+                      <div>责任：{event.owner || "未指定"} · deadline：{event.deadline || "未设置"}</div>
+                    </div>
+                  </div>
+                ))}
+                {workflowEvents.length === 0 && (
+                  <div style={{ color: "var(--text2)", fontSize: "0.8rem", lineHeight: 1.6 }}>
+                    还没有状态变更记录。点击“推进流程”后会生成审计记录。
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
         {activeTab === "response" && (
           <div style={{ display: "grid", gridTemplateColumns: "1fr 360px", gap: 20 }}>
             <div className="card">
@@ -689,6 +957,8 @@ export default function RiskPage() {
                       <div><strong style={{ color: "var(--text)" }}>跟踪方法：</strong>{risk.trackingMethod}</div>
                       <div><strong style={{ color: "var(--text)" }}>触发器：</strong>{risk.trigger}</div>
                       <div><strong style={{ color: "var(--text)" }}>关闭条件：</strong>{risk.closingCriteria}</div>
+                      <div><strong style={{ color: "var(--text)" }}>当前动作：</strong>{risk.lastAction || getWorkflowStepForStatus(risk.status).requiredAction}</div>
+                      <div><strong style={{ color: "var(--text)" }}>责任/deadline：</strong>{risk.actionOwner || risk.owner || "未指定"} · {risk.actionDeadline || risk.dueDate || "未设置"}</div>
                     </div>
                   </div>
                 ))}
@@ -820,7 +1090,80 @@ export default function RiskPage() {
             {error && <div style={{ marginTop: 16, color: "var(--red)", fontSize: "0.82rem" }}>{error}</div>}
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 12, marginTop: 24 }}>
               <button className="btn-secondary" onClick={() => { setShowForm(false); setEditingRisk(null); setError(""); }}>取消</button>
-              <button className="btn-primary" onClick={handleSave}>{editingRisk ? "保存修改" : "添加风险"}</button>
+              <button className="btn-primary" onClick={() => void handleSave()} disabled={saving}>{saving ? "保存中..." : editingRisk ? "保存修改" : "添加风险"}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {transitioningRisk && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 20 }} onClick={e => { if (e.target === e.currentTarget) setTransitioningRisk(null); }}>
+          <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: 28, width: "100%", maxWidth: 760, maxHeight: "90vh", overflowY: "auto" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start", marginBottom: 18 }}>
+              <div>
+                <div style={{ fontSize: "1rem", fontWeight: 800 }}>推进风险工作流</div>
+                <div style={{ marginTop: 6, color: "var(--text2)", fontSize: "0.78rem", lineHeight: 1.6 }}>
+                  {transitioningRisk.projectName || "未指定项目"} · {transitioningRisk.description}
+                </div>
+              </div>
+              <StatusBadge status={transitioningRisk.status} />
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+              <div>
+                <label className="label">流转到状态</label>
+                <select
+                  className="input"
+                  value={transitionForm.toStatus}
+                  onChange={e => {
+                    const toStatus = e.target.value as RiskStatus;
+                    const step = getWorkflowStepForStatus(toStatus);
+                    setTransitionForm(prev => ({
+                      ...prev,
+                      toStatus,
+                      inputSummary: prev.inputSummary || step.input,
+                      outputSummary: step.output,
+                      actionRequired: step.requiredAction,
+                    }));
+                  }}
+                >
+                  {statusOrder.map(status => <option key={status} value={status}>{statusLabels[status]}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="label">责任人 *</label>
+                <input className="input" value={transitionForm.owner} onChange={e => setTransitionForm(prev => ({ ...prev, owner: e.target.value }))} />
+              </div>
+              <div>
+                <label className="label">deadline *</label>
+                <input className="input" type="date" value={transitionForm.deadline} onChange={e => setTransitionForm(prev => ({ ...prev, deadline: e.target.value }))} />
+              </div>
+              <div>
+                <label className="label">当前环节</label>
+                <input className="input" value={getWorkflowStepForStatus(transitionForm.toStatus).name} readOnly />
+              </div>
+              <div style={{ gridColumn: "1 / -1" }}>
+                <label className="label">输入</label>
+                <textarea className="input" rows={2} value={transitionForm.inputSummary} onChange={e => setTransitionForm(prev => ({ ...prev, inputSummary: e.target.value }))} />
+              </div>
+              <div style={{ gridColumn: "1 / -1" }}>
+                <label className="label">输出</label>
+                <textarea className="input" rows={2} value={transitionForm.outputSummary} onChange={e => setTransitionForm(prev => ({ ...prev, outputSummary: e.target.value }))} />
+              </div>
+              <div style={{ gridColumn: "1 / -1" }}>
+                <label className="label">管理动作</label>
+                <textarea className="input" rows={2} value={transitionForm.actionRequired} onChange={e => setTransitionForm(prev => ({ ...prev, actionRequired: e.target.value }))} />
+              </div>
+              <div style={{ gridColumn: "1 / -1" }}>
+                <label className="label">证据/备注</label>
+                <textarea className="input" rows={2} value={transitionForm.evidence} onChange={e => setTransitionForm(prev => ({ ...prev, evidence: e.target.value }))} />
+              </div>
+            </div>
+
+            {error && <div style={{ marginTop: 16, color: "var(--red)", fontSize: "0.82rem" }}>{error}</div>}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 12, marginTop: 24 }}>
+              <button className="btn-secondary" onClick={() => { setTransitioningRisk(null); setError(""); }}>取消</button>
+              <button className="btn-primary" onClick={() => void handleTransition()} disabled={saving}>{saving ? "保存中..." : "确认流转"}</button>
             </div>
           </div>
         </div>

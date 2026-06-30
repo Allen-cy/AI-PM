@@ -117,6 +117,12 @@ function buildRisk(item: Partial<AIParsedRisk>, index: number, input: AnalyzeInp
     closingCriteria: item.closingCriteria || "风险触发条件消除，或应对动作完成并经项目经理确认。",
     linkedModule: pickOne(item.linkedModule, modules, moduleByImpact(impactArea)),
     evidence: "由AI风险扫描生成，需要项目经理确认后生效。",
+    workflowStep: "identify",
+    currentInput: input.projectDescription.slice(0, 300),
+    currentOutput: "候选风险已生成，待项目经理确认概率、影响、责任人和deadline。",
+    lastAction: "确认风险线索并进入分析环节。",
+    actionOwner: item.owner || "项目经理",
+    actionDeadline: dueDateByDays(7),
     createdAt: new Date().toISOString().split("T")[0],
   };
 }

@@ -120,18 +120,58 @@ create table if not exists cost_records (
 create table if not exists risks (
   id uuid primary key default uuid_generate_v4(),
   project_id uuid references projects(id) on delete cascade,
+  risk_code text unique,
+  project_name text,
   description text not null,
-  category text check (category in ('技术', '人员', '外部', '管理', '质量')),
+  category text,
+  stage text,
+  source text,
+  impact_area text,
   probability integer check (probability between 1 and 5),
   impact integer check (impact between 1 and 5),
+  urgency integer default 3 check (urgency between 1 and 5),
   pi_score integer generated always as (probability * impact) stored,
-  status text default 'identified' check (status in ('identified', 'tracking', 'resolved')),
+  priority_score integer generated always as (probability * impact * urgency) stored,
+  status text default 'identified',
+  response_strategy_type text,
   response_strategy text,
+  preventive_action text,
+  contingency_plan text,
+  trigger_condition text,
+  tracking_method text,
   owner text,
+  due_date date,
+  next_review_date date,
+  closing_criteria text,
+  linked_module text,
+  evidence text,
+  workflow_step text,
+  current_input text,
+  current_output text,
+  last_action text,
+  action_owner text,
+  action_deadline date,
   triggered_at timestamptz,
   closed_at timestamptz,
   created_at timestamptz default now(),
   updated_at timestamptz default now()
+);
+
+create table if not exists risk_workflow_events (
+  id uuid primary key default uuid_generate_v4(),
+  risk_id uuid references risks(id) on delete cascade,
+  risk_code text,
+  workflow_step text not null,
+  from_status text,
+  to_status text not null,
+  input_summary text,
+  output_summary text,
+  action_required text,
+  owner text,
+  deadline date,
+  evidence text,
+  actor text,
+  created_at timestamptz default now()
 );
 
 -- =====================
@@ -321,6 +361,7 @@ create table if not exists sign_offs (
 
 alter table projects enable row level security;
 alter table risks enable row level security;
+alter table risk_workflow_events enable row level security;
 alter table contracts enable row level security;
 alter table payment_milestones enable row level security;
 alter table stakeholders enable row level security;
@@ -333,6 +374,7 @@ alter table closing_checklists enable row level security;
 -- Public read access (adjust for production)
 create policy "Public read" on projects for select using (true);
 create policy "Public read" on risks for select using (true);
+create policy "Public read" on risk_workflow_events for select using (true);
 create policy "Public read" on contracts for select using (true);
 create policy "Public read" on payment_milestones for select using (true);
 create policy "Public read" on stakeholders for select using (true);
@@ -342,6 +384,8 @@ create policy "Public insert" on projects for insert with check (true);
 create policy "Public update" on projects for update using (true);
 create policy "Public insert" on risks for insert with check (true);
 create policy "Public update" on risks for update using (true);
+create policy "Public insert" on risk_workflow_events for insert with check (true);
+create policy "Public update" on risk_workflow_events for update using (true);
 
 -- =====================
 -- Indexes
@@ -351,6 +395,10 @@ create index if not exists idx_projects_status on projects(status);
 create index if not exists idx_projects_level on projects(project_level);
 create index if not exists idx_risks_project on risks(project_id);
 create index if not exists idx_risks_status on risks(status);
+create index if not exists idx_risks_code on risks(risk_code);
+create index if not exists idx_risks_due_date on risks(due_date);
+create index if not exists idx_risk_workflow_events_risk on risk_workflow_events(risk_id);
+create index if not exists idx_risk_workflow_events_created on risk_workflow_events(created_at);
 create index if not exists idx_tasks_project on tasks(project_id);
 create index if not exists idx_contracts_project on contracts(project_id);
 create index if not exists idx_payment_milestones_contract on payment_milestones(contract_id);

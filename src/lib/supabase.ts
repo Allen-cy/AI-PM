@@ -33,16 +33,40 @@ export interface DatabaseProject {
 
 export interface DatabaseRisk {
   id: string;
-  project_id: string;
+  project_id?: string;
+  risk_code?: string;
+  project_name?: string;
   description: string;
-  category?: '技术' | '人员' | '外部' | '管理' | '质量';
+  category?: string;
+  stage?: string;
+  source?: string;
+  impact_area?: string;
   probability: number;
   impact: number;
+  urgency?: number;
   pi_score: number;
-  status: 'identified' | 'tracking' | 'resolved';
+  priority_score?: number;
+  status: 'identified' | 'analyzing' | 'response-planned' | 'response-implementing' | 'monitoring' | 'tracking' | 'resolved' | 'closed';
+  response_strategy_type?: string;
   response_strategy?: string;
+  preventive_action?: string;
+  contingency_plan?: string;
+  trigger_condition?: string;
+  tracking_method?: string;
   owner?: string;
+  due_date?: string;
+  next_review_date?: string;
+  closing_criteria?: string;
+  linked_module?: string;
+  evidence?: string;
+  workflow_step?: string;
+  current_input?: string;
+  current_output?: string;
+  last_action?: string;
+  action_owner?: string;
+  action_deadline?: string;
   created_at: string;
+  updated_at?: string;
 }
 
 export interface DatabaseContract {

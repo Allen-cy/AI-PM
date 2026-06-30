@@ -21,13 +21,23 @@ export type RiskCategory =
   | "管理";
 
 export type RiskStage = "立项" | "规划" | "执行" | "监控" | "验收" | "结项" | "全生命周期";
-export type RiskStatus = "identified" | "analyzing" | "response-planned" | "tracking" | "resolved" | "closed";
+export type RiskStatus =
+  | "identified"
+  | "analyzing"
+  | "response-planned"
+  | "response-implementing"
+  | "monitoring"
+  | "tracking"
+  | "resolved"
+  | "closed";
 export type RiskStrategy = "规避" | "缓解" | "转移" | "接受" | "上报";
 export type RiskImpactArea = "范围" | "费用" | "工期" | "质量" | "组织" | "技术" | "合同" | "回款" | "客户" | "供应商";
 export type LinkedModule = "项目组合看板" | "立项" | "规划" | "执行" | "监控" | "收尾" | "合同回款" | "质量" | "资源";
+export type RiskWorkflowStep = "identify" | "analyze" | "plan" | "implement" | "supervise" | "track" | "close";
 
 export interface Risk {
   id: string;
+  riskCode?: string;
   projectName: string;
   description: string;
   category: RiskCategory;
@@ -52,6 +62,30 @@ export interface Risk {
   closingCriteria: string;
   linkedModule: LinkedModule;
   evidence?: string;
+  workflowStep?: RiskWorkflowStep;
+  currentInput?: string;
+  currentOutput?: string;
+  lastAction?: string;
+  actionOwner?: string;
+  actionDeadline?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface RiskWorkflowEvent {
+  id: string;
+  riskId: string;
+  riskCode?: string;
+  workflowStep: RiskWorkflowStep;
+  fromStatus?: RiskStatus;
+  toStatus: RiskStatus;
+  inputSummary: string;
+  outputSummary: string;
+  actionRequired: string;
+  owner: string;
+  deadline: string;
+  evidence?: string;
+  actor?: string;
   createdAt: string;
 }
 
@@ -72,8 +106,14 @@ export interface ChecklistItem {
 }
 
 export interface LifecycleStep {
+  step: RiskWorkflowStep;
+  status: RiskStatus;
   name: string;
   intent: string;
+  input: string;
+  output: string;
+  requiredAction: string;
+  exitCriteria: string;
   systemOutput: string;
 }
 
@@ -118,12 +158,34 @@ export const statusLabels: Record<RiskStatus, string> = {
   identified: "已识别",
   analyzing: "分析中",
   "response-planned": "已制定应对",
+  "response-implementing": "应对实施中",
+  monitoring: "监督中",
   tracking: "跟踪中",
   resolved: "已解决",
   closed: "已关闭",
 };
 
-export const statusOrder: RiskStatus[] = ["identified", "analyzing", "response-planned", "tracking", "resolved", "closed"];
+export const statusOrder: RiskStatus[] = [
+  "identified",
+  "analyzing",
+  "response-planned",
+  "response-implementing",
+  "monitoring",
+  "tracking",
+  "resolved",
+  "closed",
+];
+
+export const workflowStatusSequence: RiskStatus[] = [
+  "identified",
+  "analyzing",
+  "response-planned",
+  "response-implementing",
+  "monitoring",
+  "tracking",
+  "resolved",
+  "closed",
+];
 
 export const categoryLabels: Record<RiskCategory, string> = {
   商业: "商业风险",
@@ -168,12 +230,116 @@ export const responseStrategyGuidance: Record<RiskStrategy, string> = {
 };
 
 export const riskLifecycleSteps: LifecycleStep[] = [
-  { name: "识别风险", intent: "从阶段门、计划、项目事实、干系人和核查清单中发现不确定性。", systemOutput: "风险线索、来源、触发器、关联模块" },
-  { name: "分析风险", intent: "评估概率、影响、紧迫度和整体风险水平，形成优先级。", systemOutput: "P-I矩阵、优先级、阶段/风险类型热区" },
-  { name: "规划应对", intent: "明确规避、缓解、转移、接受或上报策略，并设定预防和应急动作。", systemOutput: "应对计划、责任人、到期日、关闭条件" },
-  { name: "实施应对", intent: "把风险应对动作落到执行、监控、质量、合同或资源模块。", systemOutput: "行动项、跟踪方法、依赖模块" },
-  { name: "监督风险", intent: "检查风险条件、策略有效性、新风险和关闭证据。", systemOutput: "复核日期、状态变化、关闭/升级决策" },
+  {
+    step: "identify",
+    status: "identified",
+    name: "识别风险",
+    intent: "从阶段门、计划、项目事实、干系人和核查清单中发现不确定性。",
+    input: "项目事实、阶段门检查项、飞书项目台账、会议纪要、质量/合同/进度异常信号。",
+    output: "风险描述、来源、触发器、影响领域、关联模块。",
+    requiredAction: "登记风险线索，指定初始责任人和下一步分析期限。",
+    exitCriteria: "风险线索已进入登记册，描述清楚且有责任人。",
+    systemOutput: "风险线索、来源、触发器、关联模块",
+  },
+  {
+    step: "analyze",
+    status: "analyzing",
+    name: "分析风险",
+    intent: "评估概率、影响、紧迫度和整体风险水平，形成优先级。",
+    input: "风险描述、触发器、影响领域、历史数据、项目偏差和干系人反馈。",
+    output: "P-I评分、紧迫度、优先级、风险等级和分析结论。",
+    requiredAction: "完成概率/影响/紧迫度评估，确认是否需要上报。",
+    exitCriteria: "风险等级与优先级已确认，分析证据可追溯。",
+    systemOutput: "P-I矩阵、优先级、阶段/风险类型热区",
+  },
+  {
+    step: "plan",
+    status: "response-planned",
+    name: "规划应对",
+    intent: "明确规避、缓解、转移、接受或上报策略，并设定预防和应急动作。",
+    input: "风险等级、优先级、容差、可用资源、合同约束和阶段目标。",
+    output: "应对策略、预防措施、应急计划、责任人、deadline、关闭条件。",
+    requiredAction: "补齐应对计划，明确责任人、到期日和关闭条件。",
+    exitCriteria: "应对动作可执行，责任到人，期限明确。",
+    systemOutput: "应对计划、责任人、到期日、关闭条件",
+  },
+  {
+    step: "implement",
+    status: "response-implementing",
+    name: "实施应对",
+    intent: "把风险应对动作落到执行、监控、质量、合同或资源模块。",
+    input: "已批准的应对计划、责任人、deadline、所需资源和依赖模块。",
+    output: "执行动作、过程证据、依赖模块处理结果和剩余阻塞。",
+    requiredAction: "执行预防/应急动作，并把结果写回登记册。",
+    exitCriteria: "应对动作已开始执行，有明确过程证据。",
+    systemOutput: "行动项、跟踪方法、依赖模块",
+  },
+  {
+    step: "supervise",
+    status: "monitoring",
+    name: "监督风险",
+    intent: "检查风险条件、策略有效性、新风险和关闭证据。",
+    input: "执行证据、最新项目指标、复核日期、触发器状态和风险趋势。",
+    output: "复核结论、趋势判断、状态变化、升级/关闭建议。",
+    requiredAction: "按复核周期检查触发条件和应对效果，必要时调整策略。",
+    exitCriteria: "已形成复核结论，下一步处理路径明确。",
+    systemOutput: "复核日期、状态变化、关闭/升级决策",
+  },
+  {
+    step: "track",
+    status: "tracking",
+    name: "执行跟踪",
+    intent: "持续跟踪责任人动作、deadline、证据和关闭条件，直到风险解决或关闭。",
+    input: "复核结论、责任人反馈、deadline状态、完成证据和关闭条件。",
+    output: "跟踪记录、逾期/升级事项、解决或关闭申请。",
+    requiredAction: "跟踪责任人动作到完成，逾期时升级，满足条件后转解决/关闭。",
+    exitCriteria: "风险已解决或关闭，证据完整，责任动作闭环。",
+    systemOutput: "执行跟踪记录、逾期处理、关闭证据",
+  },
 ];
+
+export function getWorkflowStepForStatus(status: RiskStatus): LifecycleStep {
+  if (status === "resolved" || status === "closed") {
+    return riskLifecycleSteps[riskLifecycleSteps.length - 1];
+  }
+  return riskLifecycleSteps.find(step => step.status === status) ?? riskLifecycleSteps[0];
+}
+
+export function nextRiskStatus(status: RiskStatus): RiskStatus {
+  const index = workflowStatusSequence.indexOf(status);
+  if (index < 0 || index >= workflowStatusSequence.length - 1) return status;
+  return workflowStatusSequence[index + 1];
+}
+
+export function statusToWorkflowStep(status: RiskStatus): RiskWorkflowStep {
+  if (status === "resolved" || status === "closed") return "close";
+  return getWorkflowStepForStatus(status).step;
+}
+
+export function buildWorkflowEvent(
+  risk: Risk,
+  toStatus: RiskStatus,
+  event: Partial<Omit<RiskWorkflowEvent, "id" | "riskId" | "toStatus" | "createdAt">> = {},
+): RiskWorkflowEvent {
+  const step = getWorkflowStepForStatus(toStatus);
+  const now = new Date().toISOString();
+  return {
+    id: `EVT-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+    riskId: risk.id,
+    riskCode: risk.riskCode,
+    workflowStep: event.workflowStep ?? step.step,
+    fromStatus: event.fromStatus ?? risk.status,
+    toStatus,
+    inputSummary: event.inputSummary || risk.currentInput || step.input,
+    outputSummary: event.outputSummary || step.output,
+    actionRequired: event.actionRequired || risk.lastAction || step.requiredAction,
+    owner: event.owner || risk.actionOwner || risk.owner || "项目经理",
+    deadline: event.deadline || risk.actionDeadline || risk.dueDate || risk.nextReviewDate,
+    evidence: event.evidence || risk.evidence,
+    actor: event.actor || "系统",
+    createdAt: now,
+  };
+}
 
 export const riskManagementRoles = [
   { role: "项目经理", responsibility: "建立风险管理计划，维护登记册，组织定期评审和应对闭环。" },
