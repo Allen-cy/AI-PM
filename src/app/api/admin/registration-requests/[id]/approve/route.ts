@@ -23,8 +23,8 @@ export async function POST(
 
   if (requestError) return NextResponse.json({ error: requestError.message }, { status: 500 });
   if (!registrationRequest) return NextResponse.json({ error: '申请不存在' }, { status: 404 });
-  if (!['pending', 'approved'].includes(registrationRequest.status)) {
-    return NextResponse.json({ error: '该申请状态不能审批发码' }, { status: 400 });
+  if (registrationRequest.status !== 'pending') {
+    return NextResponse.json({ error: '该申请已处理，无需重复审批' }, { status: 400 });
   }
 
   const code = generateRegistrationCode();

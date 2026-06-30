@@ -14,6 +14,24 @@ interface RegistrationRequest {
   last_delivery_status: string | null;
 }
 
+const STATUS_META: Record<string, { label: string; color: string; background: string; action: string }> = {
+  pending: { label: "待审核", color: "var(--amber)", background: "rgba(245,158,11,0.14)", action: "同意并发码" },
+  approved: { label: "已同意", color: "var(--green)", background: "rgba(16,185,129,0.14)", action: "已同意" },
+  registered: { label: "已注册", color: "var(--accent2)", background: "rgba(59,130,246,0.14)", action: "已注册" },
+  rejected: { label: "已拒绝", color: "var(--red)", background: "rgba(239,68,68,0.14)", action: "已拒绝" },
+};
+
+function statusMeta(status: string) {
+  return STATUS_META[status] ?? { label: status, color: "var(--text2)", background: "rgba(148,163,184,0.14)", action: "已处理" };
+}
+
+function deliveryLabel(status: string | null) {
+  if (!status) return "-";
+  if (status === "sent") return "已发码";
+  if (status === "SMTP_NOT_CONFIGURED") return "邮件未配置";
+  return status;
+}
+
 export default function RegistrationRequestsPage() {
   const [requests, setRequests] = useState<RegistrationRequest[]>([]);
   const [message, setMessage] = useState<string | null>(null);
@@ -107,23 +125,45 @@ export default function RegistrationRequestsPage() {
               </tr>
             </thead>
             <tbody>
-              {requests.map(item => (
-                <tr key={item.id} style={{ borderBottom: "1px solid var(--border)" }}>
-                  <td style={{ padding: "12px" }}>{item.name}</td>
-                  <td style={{ padding: "12px" }}>{item.email}</td>
-                  <td style={{ padding: "12px" }}>{item.phone}</td>
-                  <td style={{ padding: "12px", color: "var(--text2)" }}>{item.reason || "-"}</td>
-                  <td style={{ padding: "12px" }}>
-                    <span className="tag">{item.status}</span>
-                  </td>
-                  <td style={{ padding: "12px", color: "var(--text2)" }}>{item.last_delivery_status || "-"}</td>
-                  <td style={{ padding: "12px" }}>
-                    <button className="btn-primary" onClick={() => approve(item.id)} disabled={approvingId === item.id || item.status === "registered"}>
-                      {approvingId === item.id ? "处理中..." : "同意并发码"}
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {requests.map(item => {
+                const meta = statusMeta(item.status);
+                const canApprove = item.status === "pending";
+                return (
+                  <tr key={item.id} style={{ borderBottom: "1px solid var(--border)" }}>
+                    <td style={{ padding: "12px" }}>{item.name}</td>
+                    <td style={{ padding: "12px" }}>{item.email}</td>
+                    <td style={{ padding: "12px" }}>{item.phone}</td>
+                    <td style={{ padding: "12px", color: "var(--text2)" }}>{item.reason || "-"}</td>
+                    <td style={{ padding: "12px" }}>
+                      <span style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 6,
+                        padding: "4px 10px",
+                        borderRadius: 999,
+                        background: meta.background,
+                        color: meta.color,
+                        fontWeight: 700,
+                        fontSize: "0.74rem",
+                      }}>
+                        <span style={{ width: 7, height: 7, borderRadius: "50%", background: meta.color, display: "inline-block" }} />
+                        {meta.label}
+                      </span>
+                    </td>
+                    <td style={{ padding: "12px", color: "var(--text2)" }}>{deliveryLabel(item.last_delivery_status)}</td>
+                    <td style={{ padding: "12px" }}>
+                      <button
+                        className={canApprove ? "btn-primary" : "btn-secondary"}
+                        onClick={() => approve(item.id)}
+                        disabled={approvingId === item.id || !canApprove}
+                        style={{ opacity: canApprove ? 1 : 0.65, cursor: canApprove ? "pointer" : "not-allowed" }}
+                      >
+                        {approvingId === item.id ? "处理中..." : meta.action}
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
               {!loading && requests.length === 0 && (
                 <tr>
                   <td colSpan={7} style={{ padding: 24, color: "var(--text2)", textAlign: "center" }}>暂无申请</td>
