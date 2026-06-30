@@ -232,7 +232,7 @@ export default function Home() {
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <span style={{ fontSize: "1.4rem" }}>🏗️</span>
           <span style={{ fontWeight: 800, fontSize: "1.05rem" }}>AI项目管理助手</span>
-          <span className="tag tag-blue">V5.1.1</span>
+          <span className="tag tag-blue">V5.1.2</span>
         </div>
         <div style={{ display: "flex", gap: 16, fontSize: "0.8rem", color: "var(--text2)", alignItems: "center" }}>
           <span>作者：柴春宇</span>
