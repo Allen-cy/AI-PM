@@ -25,6 +25,16 @@ export async function POST(request: Request) {
     .maybeSingle();
   if (existingUser) return NextResponse.json({ error: '该邮箱或手机号已注册' }, { status: 409 });
 
+  const { data: existingRequest } = await supabase
+    .from('user_registration_requests')
+    .select('id,status')
+    .or(`email.eq.${email},phone.eq.${phone}`)
+    .in('status', ['pending', 'approved'])
+    .maybeSingle();
+  if (existingRequest) {
+    return NextResponse.json({ error: '该邮箱或手机号已有待处理申请，请等待审核' }, { status: 409 });
+  }
+
   const { data, error } = await supabase
     .from('user_registration_requests')
     .insert({

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect, useState } from "react";
 
 const PHASE_MODULES = [
   {
@@ -217,7 +218,41 @@ const COLOR_MAP: Record<string, { bg: string; color: string }> = {
   accent: { bg: "rgba(59,130,246,0.15)", color: "var(--accent2)" },
 };
 
+interface CurrentUser {
+  name: string | null;
+  email: string;
+  phone: string;
+  role: "admin" | "user";
+}
+
 export default function Home() {
+  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadCurrentUser() {
+      try {
+        const response = await fetch("/api/auth/me", { cache: "no-store" });
+        const data = await response.json();
+        if (!cancelled) setCurrentUser(data.user || null);
+      } catch {
+        if (!cancelled) setCurrentUser(null);
+      }
+    }
+    loadCurrentUser();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const greeting = (() => {
+    const h = new Date().getHours();
+    if (h < 12) return '☀️ 早上好，开启高效的一天';
+    if (h < 18) return '🌤️ 下午好，保持专注';
+    return '🌙 晚上好，整理一天收获';
+  })();
+  const displayName = currentUser?.name || currentUser?.email || currentUser?.phone;
+
   return (
     <div style={{ minHeight: "100vh", background: "var(--bg)", display: "flex", flexDirection: "column" }}>
       {/* Header */}
@@ -232,7 +267,7 @@ export default function Home() {
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <span style={{ fontSize: "1.4rem" }}>🏗️</span>
           <span style={{ fontWeight: 800, fontSize: "1.05rem" }}>AI项目管理助手</span>
-          <span className="tag tag-blue">V5.1.2</span>
+          <span className="tag tag-blue">V5.1.3</span>
         </div>
         <div style={{ display: "flex", gap: 16, fontSize: "0.8rem", color: "var(--text2)", alignItems: "center" }}>
           <span>作者：柴春宇</span>
@@ -243,8 +278,19 @@ export default function Home() {
           <span style={{ color: "var(--border)" }}>|</span>
           <span>DeepSeek + MiniMax</span>
           <span style={{ color: "var(--border)" }}>|</span>
-          <Link href="/auth/login" style={{ color: "var(--accent2)", textDecoration: "none" }}>登录</Link>
-          <Link href="/auth/apply" style={{ color: "var(--accent2)", textDecoration: "none" }}>申请使用</Link>
+          {currentUser ? (
+            <>
+              <Link href="/account" style={{ color: "var(--accent2)", textDecoration: "none" }}>用户中心</Link>
+              {currentUser.role === "admin" && (
+                <Link href="/admin/registration-requests" style={{ color: "var(--purple)", textDecoration: "none" }}>注册审核</Link>
+              )}
+            </>
+          ) : (
+            <>
+              <Link href="/auth/login" style={{ color: "var(--accent2)", textDecoration: "none" }}>登录</Link>
+              <Link href="/auth/apply" style={{ color: "var(--accent2)", textDecoration: "none" }}>申请使用</Link>
+            </>
+          )}
         </div>
       </header>
 
@@ -255,12 +301,7 @@ export default function Home() {
         borderBottom: "1px solid var(--border)",
       }}>
         <h1 style={{ fontSize: "2rem", fontWeight: 800, marginBottom: 12, letterSpacing: "-0.02em" }}>
-          {(() => {
-            const h = new Date().getHours();
-            if (h < 12) return '☀️ 早上好，开启高效的一天';
-            if (h < 18) return '🌤️ 下午好，保持专注';
-            return '🌙 晚上好，整理一天收获';
-          })()}
+          {displayName ? `${displayName}，${greeting}` : greeting}
           <br />让AI成为项目管理的<span style={{ color: "var(--accent2)" }}>超级助手</span>
         </h1>
         <p style={{ color: "var(--text2)", fontSize: "0.92rem", maxWidth: 520, margin: "0 auto 24px", lineHeight: 1.7 }}>

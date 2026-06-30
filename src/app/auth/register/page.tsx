@@ -38,12 +38,12 @@ export default function RegisterPage() {
           注册码仅可使用一次。密码至少6位，必须同时包含英文字母和数字。
         </p>
         <div style={{ display: "grid", gap: 12, marginTop: 20 }}>
-          <input className="input" placeholder="姓名，可选" value={form.name} onChange={event => update("name", event.target.value)} />
+          <input className="input" placeholder="用户名称（必填）" value={form.name} onChange={event => update("name", event.target.value)} />
           <input className="input" placeholder="邮箱" value={form.email} onChange={event => update("email", event.target.value)} />
           <input className="input" placeholder="手机号码" value={form.phone} onChange={event => update("phone", event.target.value)} />
           <input className="input" type="password" placeholder="密码" value={form.password} onChange={event => update("password", event.target.value)} />
           <input className="input" placeholder="注册码" value={form.code} onChange={event => update("code", event.target.value.toUpperCase())} />
-          <button className="btn-primary" onClick={submit} disabled={loading}>
+          <button className="btn-primary" onClick={submit} disabled={loading || message === "注册成功，可以登录系统。"}>
             {loading ? "注册中..." : "注册"}
           </button>
         </div>

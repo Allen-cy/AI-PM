@@ -15,7 +15,7 @@ export async function POST(request: Request) {
   const code = String(body.code || '').trim();
   const name = String(body.name || '').trim();
 
-  const validationError = validateRegistrationInput({ email, phone, password, code });
+  const validationError = validateRegistrationInput({ name, email, phone, password, code });
   if (validationError) return NextResponse.json({ error: validationError }, { status: 400 });
 
   const supabase = getAuthSupabase();
@@ -46,7 +46,7 @@ export async function POST(request: Request) {
     .insert({
       email,
       phone,
-      name: name || null,
+      name,
       password_hash: hashPassword(password),
       role: 'user',
       status: 'active',

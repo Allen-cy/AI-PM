@@ -7,6 +7,7 @@ export default function ApplyPage() {
   const [form, setForm] = useState({ name: "", email: "", phone: "", reason: "" });
   const [message, setMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
 
   const update = (key: keyof typeof form, value: string) => setForm(prev => ({ ...prev, [key]: value }));
 
@@ -22,6 +23,7 @@ export default function ApplyPage() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "申请提交失败");
       setMessage("申请已提交，待管理员审核后会通过邮件发送注册码。");
+      setSubmitted(true);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "申请提交失败");
     } finally {
@@ -38,12 +40,12 @@ export default function ApplyPage() {
           初期采用申请制。管理员审核通过后，系统会向你的邮箱发送一次性注册码。
         </p>
         <div style={{ display: "grid", gap: 12, marginTop: 20 }}>
-          <input className="input" placeholder="姓名" value={form.name} onChange={event => update("name", event.target.value)} />
-          <input className="input" placeholder="邮箱" value={form.email} onChange={event => update("email", event.target.value)} />
-          <input className="input" placeholder="手机号码" value={form.phone} onChange={event => update("phone", event.target.value)} />
-          <textarea className="input" placeholder="申请原因，可选" rows={4} value={form.reason} onChange={event => update("reason", event.target.value)} />
-          <button className="btn-primary" onClick={submit} disabled={loading}>
-            {loading ? "提交中..." : "提交申请"}
+          <input className="input" placeholder="姓名" value={form.name} onChange={event => update("name", event.target.value)} disabled={submitted} />
+          <input className="input" placeholder="邮箱" value={form.email} onChange={event => update("email", event.target.value)} disabled={submitted} />
+          <input className="input" placeholder="手机号码" value={form.phone} onChange={event => update("phone", event.target.value)} disabled={submitted} />
+          <textarea className="input" placeholder="申请原因，可选" rows={4} value={form.reason} onChange={event => update("reason", event.target.value)} disabled={submitted} />
+          <button className="btn-primary" onClick={submit} disabled={loading || submitted}>
+            {submitted ? "申请已提交，请等待审核" : loading ? "提交中..." : "提交申请"}
           </button>
         </div>
         {message && (
