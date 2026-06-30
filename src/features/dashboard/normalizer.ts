@@ -48,10 +48,9 @@ function number(row: RawRow, names: string[], fallback = 0): number {
   return fallback;
 }
 
-function dateText(row: RawRow, names: string[]): string | undefined {
-  const raw = value(row, names);
+function parseDateLike(raw: unknown): Date | undefined {
   if (!raw) return undefined;
-  if (raw instanceof Date && !Number.isNaN(raw.getTime())) return raw.toISOString().slice(0, 10);
+  if (raw instanceof Date && !Number.isNaN(raw.getTime())) return raw;
   const numericValue = typeof raw === 'number'
     ? raw
     : typeof raw === 'string' && /^\d+$/.test(raw.trim())
@@ -63,7 +62,7 @@ function dateText(row: RawRow, names: string[]): string | undefined {
     const month = Number(rawText.slice(4, 6));
     const day = Number(rawText.slice(6, 8));
     const parsed = new Date(Date.UTC(year, month - 1, day));
-    if (!Number.isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10);
+    if (!Number.isNaN(parsed.getTime())) return parsed;
   }
   if (numericValue !== undefined && Number.isFinite(numericValue)) {
     const timestamp = numericValue > 1_000_000_000_000
@@ -73,15 +72,23 @@ function dateText(row: RawRow, names: string[]): string | undefined {
         : undefined;
     if (timestamp !== undefined) {
       const parsed = new Date(timestamp);
-      if (!Number.isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10);
+      if (!Number.isNaN(parsed.getTime())) return parsed;
     }
     if (numericValue > 20_000 && numericValue < 80_000) {
       const excelEpoch = new Date(Math.round((numericValue - 25569) * 86400 * 1000));
-      if (!Number.isNaN(excelEpoch.getTime())) return excelEpoch.toISOString().slice(0, 10);
+      if (!Number.isNaN(excelEpoch.getTime())) return excelEpoch;
     }
   }
   const parsed = new Date(String(raw));
-  if (!Number.isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10);
+  if (!Number.isNaN(parsed.getTime())) return parsed;
+  return undefined;
+}
+
+function dateText(row: RawRow, names: string[]): string | undefined {
+  const raw = value(row, names);
+  if (!raw) return undefined;
+  const parsed = parseDateLike(raw);
+  if (parsed) return parsed.toISOString().slice(0, 10);
   return String(raw);
 }
 
@@ -167,8 +174,8 @@ function distribution<T extends string>(values: T[], palette = STATUS_COLORS): N
 
 function monthKey(date?: string): string {
   if (!date) return '未定';
-  const parsed = new Date(date);
-  if (Number.isNaN(parsed.getTime())) return '未定';
+  const parsed = parseDateLike(date);
+  if (!parsed) return '未定';
   return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, '0')}`;
 }
 

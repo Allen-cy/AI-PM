@@ -2,12 +2,12 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { DEFAULT_DASHBOARD_DATA } from "@/features/dashboard/normalizer";
+import { buildDashboardData, DEFAULT_DASHBOARD_DATA, normalizeProjectRows } from "@/features/dashboard/normalizer";
 import type { DashboardData } from "@/features/dashboard/types";
 import { feishuTableUrl } from "@/features/feishu/links";
 
-const DASHBOARD_CACHE_KEY = "ai-pmo-dashboard-data-v2";
-const LEGACY_DASHBOARD_CACHE_KEY = "ai-pmo-dashboard-data";
+const DASHBOARD_CACHE_KEY = "ai-pmo-dashboard-data-v3";
+const LEGACY_DASHBOARD_CACHE_KEYS = ["ai-pmo-dashboard-data", "ai-pmo-dashboard-data-v2"];
 
 function isDashboardData(data: unknown): data is DashboardData {
   if (!data || typeof data !== "object") return false;
@@ -23,6 +23,10 @@ function isDashboardData(data: unknown): data is DashboardData {
 
 function formatCurrency(num: number): string {
   return `¥${num.toLocaleString()}万`;
+}
+
+function refreshDerivedDashboardData(data: DashboardData): DashboardData {
+  return buildDashboardData(normalizeProjectRows(data.records as unknown as Record<string, unknown>[]), data.source);
 }
 
 function KPICard({ label, value, subValue, color }: { label: string; value: string; subValue?: string; color: string }) {
@@ -295,25 +299,29 @@ export default function DashboardPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    localStorage.removeItem(LEGACY_DASHBOARD_CACHE_KEY);
-    const cached = localStorage.getItem(DASHBOARD_CACHE_KEY);
-    if (cached) {
+    const cacheKeys = [DASHBOARD_CACHE_KEY, ...LEGACY_DASHBOARD_CACHE_KEYS];
+    for (const key of cacheKeys) {
+      const cached = localStorage.getItem(key);
+      if (!cached) continue;
       try {
         const parsed = JSON.parse(cached);
         if (isDashboardData(parsed)) {
-          queueMicrotask(() => setDashboardData(parsed));
+          const repaired = refreshDerivedDashboardData(parsed);
+          localStorage.setItem(DASHBOARD_CACHE_KEY, JSON.stringify(repaired));
+          LEGACY_DASHBOARD_CACHE_KEYS.forEach(item => localStorage.removeItem(item));
+          queueMicrotask(() => setDashboardData(repaired));
           return;
         }
       } catch {
         // Fall through and clear the invalid cache below.
       }
-      localStorage.removeItem(DASHBOARD_CACHE_KEY);
+      localStorage.removeItem(key);
     }
   }, []);
 
   const persistData = (data: DashboardData) => {
     setDashboardData(data);
-    localStorage.removeItem(LEGACY_DASHBOARD_CACHE_KEY);
+    LEGACY_DASHBOARD_CACHE_KEYS.forEach(key => localStorage.removeItem(key));
     localStorage.setItem(DASHBOARD_CACHE_KEY, JSON.stringify(data));
   };
 
@@ -356,7 +364,7 @@ export default function DashboardPage() {
   };
 
   const resetData = () => {
-    localStorage.removeItem(LEGACY_DASHBOARD_CACHE_KEY);
+    LEGACY_DASHBOARD_CACHE_KEYS.forEach(key => localStorage.removeItem(key));
     localStorage.removeItem(DASHBOARD_CACHE_KEY);
     setDashboardData(DEFAULT_DASHBOARD_DATA);
     setMessage("已切回作业帮项目样例数据源。");
