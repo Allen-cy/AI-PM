@@ -12,6 +12,129 @@ interface AIMindedTask extends Task {
   isCritical: boolean;
 }
 
+type CPMResultTask = AIMindedTask;
+
+function CriticalPathNetwork({
+  tasks,
+  criticalPath,
+}: {
+  tasks: CPMResultTask[];
+  criticalPath: string[];
+}) {
+  if (tasks.length === 0) return null;
+
+  const sortedTasks = [...tasks].sort((a, b) => (a.es - b.es) || a.id.localeCompare(b.id));
+  const maxTime = Math.max(1, ...sortedTasks.map(task => task.ef ?? task.duration));
+  const width = 920;
+  const nodeWidth = 126;
+  const nodeHeight = 50;
+  const leftPad = 52;
+  const rightPad = 70;
+  const topPad = 44;
+  const rowHeight = 82;
+  const maxRows = Math.min(4, Math.max(1, Math.ceil(sortedTasks.length / 2)));
+  const height = topPad + maxRows * rowHeight + 44;
+
+  const positions = new Map<string, { x: number; y: number }>();
+  sortedTasks.forEach((task, index) => {
+    const row = index % maxRows;
+    const x = leftPad + ((task.es ?? 0) / maxTime) * (width - leftPad - rightPad - nodeWidth);
+    const y = topPad + row * rowHeight;
+    positions.set(task.id, { x, y });
+  });
+
+  const criticalEdges = new Set<string>();
+  criticalPath.forEach((id, index) => {
+    const next = criticalPath[index + 1];
+    if (next) criticalEdges.add(`${id}->${next}`);
+  });
+
+  return (
+    <div style={{
+      background: "var(--surface)",
+      border: "1px solid var(--border)",
+      borderRadius: "var(--radius)",
+      padding: "24px",
+      marginBottom: 24,
+    }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, marginBottom: 14 }}>
+        <div>
+          <div style={{ fontSize: "0.85rem", fontWeight: 700, color: "var(--text2)", textTransform: "uppercase", letterSpacing: "0.1em" }}>
+            🕸️ 关键路径网络图
+          </div>
+          <div style={{ marginTop: 6, color: "var(--text2)", fontSize: "0.78rem" }}>
+            横向按最早开始时间排布；红色节点和红色连线表示关键路径。
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 14, fontSize: "0.75rem", color: "var(--text2)", flexShrink: 0 }}>
+          <span><span style={{ color: "var(--red)" }}>●</span> 关键活动</span>
+          <span><span style={{ color: "var(--accent)" }}>●</span> 非关键活动</span>
+        </div>
+      </div>
+      <div style={{ overflowX: "auto", paddingBottom: 8 }}>
+        <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} role="img" aria-label="关键路径网络图">
+          <defs>
+            <marker id="arrow-critical" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L9,3 z" fill="var(--red)" />
+            </marker>
+            <marker id="arrow-normal" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L9,3 z" fill="var(--text2)" />
+            </marker>
+          </defs>
+          {sortedTasks.flatMap(task =>
+            task.predecessors.map(predId => {
+              const from = positions.get(predId);
+              const to = positions.get(task.id);
+              if (!from || !to) return null;
+              const isCriticalEdge = criticalEdges.has(`${predId}->${task.id}`) || (task.isCritical && tasks.find(t => t.id === predId)?.isCritical);
+              const startX = from.x + nodeWidth;
+              const startY = from.y + nodeHeight / 2;
+              const endX = to.x;
+              const endY = to.y + nodeHeight / 2;
+              const midX = (startX + endX) / 2;
+              return (
+                <path
+                  key={`${predId}-${task.id}`}
+                  d={`M ${startX} ${startY} C ${midX} ${startY}, ${midX} ${endY}, ${endX - 8} ${endY}`}
+                  fill="none"
+                  stroke={isCriticalEdge ? "var(--red)" : "var(--text2)"}
+                  strokeWidth={isCriticalEdge ? 2.4 : 1.4}
+                  strokeOpacity={isCriticalEdge ? 0.95 : 0.55}
+                  markerEnd={isCriticalEdge ? "url(#arrow-critical)" : "url(#arrow-normal)"}
+                />
+              );
+            })
+          )}
+          {sortedTasks.map(task => {
+            const pos = positions.get(task.id)!;
+            return (
+              <g key={task.id} transform={`translate(${pos.x}, ${pos.y})`}>
+                <rect
+                  width={nodeWidth}
+                  height={nodeHeight}
+                  rx="10"
+                  fill={task.isCritical ? "rgba(239,68,68,0.12)" : "rgba(59,130,246,0.1)"}
+                  stroke={task.isCritical ? "var(--red)" : "var(--accent)"}
+                  strokeWidth={task.isCritical ? 2 : 1.4}
+                />
+                <text x="12" y="19" fill={task.isCritical ? "var(--red)" : "var(--accent2)"} fontSize="13" fontWeight="800">
+                  {task.id}
+                </text>
+                <text x="42" y="19" fill="var(--text)" fontSize="12" fontWeight="600">
+                  {task.name.length > 8 ? `${task.name.slice(0, 8)}…` : task.name}
+                </text>
+                <text x="12" y="38" fill="var(--text2)" fontSize="11">
+                  ES {task.es} / EF {task.ef} · {task.duration}天
+                </text>
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+    </div>
+  );
+}
+
 export default function CPMPage() {
   const [tasks, setTasks] = useState<Task[]>([
     { id: "A", name: "项目启动与规划", duration: 5, predecessors: [] },
@@ -75,6 +198,9 @@ export default function CPMPage() {
       setIsCalculatingAI(false);
     }
   };
+
+  const displayedTasks = (useAI ? aiResult : result?.tasks) as CPMResultTask[] | undefined;
+  const displayedCriticalPath = (useAI ? aiCriticalPath : result?.criticalPath) ?? [];
 
   return (
     <div style={{ minHeight: "100vh", background: "var(--bg)", display: "flex", flexDirection: "column" }}>
@@ -274,6 +400,10 @@ export default function CPMPage() {
                 })}
               </div>
             </div>
+
+            {displayedTasks && (
+              <CriticalPathNetwork tasks={displayedTasks} criticalPath={displayedCriticalPath} />
+            )}
 
             {/* AI Reasoning */}
             {useAI && aiReasoning && (

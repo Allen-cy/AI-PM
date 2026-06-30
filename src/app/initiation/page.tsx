@@ -635,6 +635,19 @@ export default function InitiationPage() {
                 label={aiLoading === "business" ? "生成中..." : "AI生成商业论证"}
               />
             </div>
+            <div style={{
+              marginBottom: 20,
+              padding: "12px 14px",
+              borderRadius: 10,
+              background: "rgba(245,158,11,0.08)",
+              border: "1px solid rgba(245,158,11,0.25)",
+              color: "var(--text2)",
+              fontSize: "0.82rem",
+              lineHeight: 1.7,
+            }}>
+              <span style={{ color: "var(--amber)", fontWeight: 700 }}>生成依据：</span>
+              当前立项信息（项目名称、类型、等级、发起人、业务立项理由）+ PMO知识库中的商业论证结构（成本收益、风险、阶段门、持续商业论证）+ 系统内置项目管理模板。当前不会自动读取外部市场数据、真实财务系统或飞书合同回款明细，生成结果是立项草案，正式提交前需要人工复核。
+            </div>
 
             <SectionCard title="市场机会分析" icon="📊">
               <LabelTextarea

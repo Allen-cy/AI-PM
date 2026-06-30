@@ -72,8 +72,13 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error('[planning/assist] Error:', error);
     return NextResponse.json(
-      { error: 'Failed to generate planning assistance' },
-      { status: 500 }
+      {
+        ...generateFallbackResponse('信息化', 'integration'),
+        knowledgeArea: 'integration',
+        projectType: '信息化',
+        timestamp: new Date().toISOString(),
+        fallback: true,
+      }
     );
   }
 }

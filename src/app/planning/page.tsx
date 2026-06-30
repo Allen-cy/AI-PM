@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
+import Link from 'next/link';
 import {
   PMBOK_KNOWLEDGE_AREAS,
   PLAN_TEMPLATES,
@@ -10,12 +11,23 @@ import {
 
 type TabType = 'areas' | 'baselines' | 'integration';
 
+interface CreatedPlan {
+  id: string;
+  areaName: string;
+  templateName: string;
+  outputs: string[];
+  createdAt: string;
+}
+
 export default function PlanningPage() {
   const [activeTab, setActiveTab] = useState<TabType>('areas');
   const [selectedArea, setSelectedArea] = useState<KnowledgeArea | null>(null);
   const [selectedTemplate, setSelectedTemplate] = useState<string>('信息化项目');
   const [showAIAssistant, setShowAIAssistant] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [createdPlans, setCreatedPlans] = useState<CreatedPlan[]>([]);
+  const [baselines, setBaselines] = useState<Record<string, { status: string; updatedAt: string }>>({});
   const [aiResult, setAiResult] = useState<{
     suggestions: string[];
     checklist: string[];
@@ -36,7 +48,7 @@ export default function PlanningPage() {
     setShowAIAssistant(true);
 
     try {
-      const response = await fetch('/api/planning/assist', {
+      const response = await fetch('/api/planning', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -55,9 +67,41 @@ export default function PlanningPage() {
       setAiResult(data);
     } catch (error) {
       console.error('AI Assistant error:', error);
+      setAiResult({
+        suggestions: [
+          `${selectedArea.name}计划应先明确输入、方法和输出，再形成可审批的管理计划。`,
+          '建议先复用当前项目类型模板，再根据项目等级裁剪控制强度。',
+          '对需要跨部门协同的事项，应在计划中写清责任人、触发条件和升级路径。',
+        ],
+        checklist: selectedArea.outputs.map(output => `已定义${output}`),
+        warnings: ['AI服务不可用时使用本地模板兜底；正式计划仍需项目经理和PMO复核。'],
+      });
     } finally {
       setAiLoading(false);
     }
+  };
+
+  const handleCreatePlan = () => {
+    if (!selectedArea) return;
+    const areaTemplate = template?.areas[selectedArea.id];
+    const plan: CreatedPlan = {
+      id: `PLAN-${Date.now()}`,
+      areaName: selectedArea.name,
+      templateName: template.name,
+      outputs: areaTemplate?.outputs ?? selectedArea.outputs,
+      createdAt: new Date().toLocaleString('zh-CN'),
+    };
+    setCreatedPlans(prev => [plan, ...prev]);
+    setMessage(`已创建${selectedArea.name}计划草案，输出项：${plan.outputs.join('、')}。`);
+  };
+
+  const handleSetBaseline = (baselineType: string) => {
+    const label = baselineType === 'scope' ? '范围基准' : baselineType === 'schedule' ? '进度基准' : '成本基准';
+    setBaselines(prev => ({
+      ...prev,
+      [baselineType]: { status: '已设置', updatedAt: new Date().toLocaleString('zh-CN') },
+    }));
+    setMessage(`已设置${label}草案。后续可接入飞书或Supabase保存正式基准版本。`);
   };
 
   const getStatusColor = (status: string) => {
@@ -92,33 +136,43 @@ export default function PlanningPage() {
             <h1 style={{ fontSize: '1.8rem', fontWeight: 800 }}>规划中心</h1>
             <span className="tag tag-purple">PMBOK 10知识领域</span>
           </div>
-          <button
-            className="btn-primary"
-            onClick={handleAIAssist}
-            disabled={!selectedArea || aiLoading}
-            style={{
-              background: 'var(--purple)',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-            }}
-          >
-            {aiLoading ? (
-              <>
-                <span style={{ display: 'inline-block', animation: 'pulse 1s infinite' }}>⏳</span>
-                AI分析中...
-              </>
-            ) : (
-              <>
-                <span>🤖</span>
-                AI规划助手
-              </>
-            )}
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <Link href="/" className="btn-secondary" style={{ textDecoration: 'none', fontSize: '0.85rem' }}>
+              ← 返回首页
+            </Link>
+            <button
+              className="btn-primary"
+              onClick={handleAIAssist}
+              disabled={!selectedArea || aiLoading}
+              style={{
+                background: 'var(--purple)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+              }}
+            >
+              {aiLoading ? (
+                <>
+                  <span style={{ display: 'inline-block', animation: 'pulse 1s infinite' }}>⏳</span>
+                  AI分析中...
+                </>
+              ) : (
+                <>
+                  <span>🤖</span>
+                  AI规划助手
+                </>
+              )}
+            </button>
+          </div>
         </div>
         <p style={{ color: 'var(--text2)', fontSize: '0.9rem' }}>
           基于PMBOK知识体系的项目规划中心 · 支持信息化/课程开发/工程基建/运营服务四类项目
         </p>
+        {message && (
+          <div style={{ marginTop: 12, padding: '10px 14px', borderRadius: 8, background: 'rgba(139,92,246,0.1)', border: '1px solid rgba(139,92,246,0.25)', color: 'var(--purple)', fontSize: '0.85rem' }}>
+            {message}
+          </div>
+        )}
       </div>
 
       {/* Tab Navigation */}
@@ -306,6 +360,7 @@ export default function PlanningPage() {
                 {/* Create Plan Button */}
                 <button
                   className="btn-primary"
+                  onClick={handleCreatePlan}
                   style={{
                     width: '100%',
                     background: 'var(--purple)',
@@ -314,6 +369,17 @@ export default function PlanningPage() {
                 >
                   创建{selectedArea.name}计划
                 </button>
+
+                {createdPlans.length > 0 && (
+                  <div style={{ marginTop: 20, padding: 12, background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.2)', borderRadius: 8 }}>
+                    <div style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--green)', marginBottom: 8 }}>最近创建的计划草案</div>
+                    {createdPlans.slice(0, 3).map(plan => (
+                      <div key={plan.id} style={{ fontSize: '0.8rem', color: 'var(--text2)', marginBottom: 6 }}>
+                        {plan.areaName} · {plan.templateName} · {plan.createdAt}
+                      </div>
+                    ))}
+                  </div>
+                )}
 
                 {/* Integration Dependencies */}
                 <div style={{ marginTop: '20px', padding: '12px', background: 'var(--surface2)', borderRadius: '8px' }}>
@@ -385,15 +451,21 @@ export default function PlanningPage() {
               <div style={{ marginBottom: '16px' }}>
                 <div className="label">基准状态</div>
                 <span
-                  className="tag tag-amber"
+                  className={baselines[baselineType] ? 'tag tag-green' : 'tag tag-amber'}
                   style={{ fontSize: '0.8rem' }}
                 >
-                  待设置
+                  {baselines[baselineType]?.status ?? '待设置'}
                 </span>
+                {baselines[baselineType] && (
+                  <div style={{ marginTop: 6, fontSize: '0.75rem', color: 'var(--text2)' }}>
+                    更新时间：{baselines[baselineType].updatedAt}
+                  </div>
+                )}
               </div>
 
               <button
                 className="btn-secondary"
+                onClick={() => handleSetBaseline(baselineType)}
                 style={{
                   width: '100%',
                   borderColor: 'var(--purple)',

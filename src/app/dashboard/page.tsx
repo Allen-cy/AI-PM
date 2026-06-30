@@ -73,15 +73,19 @@ function PieChart({ data }: { data: DashboardData["statusDistribution"] }) {
 }
 
 function LineChart({ data }: { data: DashboardData["monthlyTrend"] }) {
-  const maxVal = Math.max(...data.flatMap(d => [d.contract, d.collection]));
+  const visibleData = data.length > 0 ? data : [{ month: "暂无", contract: 0, collection: 0 }];
+  const maxVal = Math.max(1, ...visibleData.flatMap(d => [d.contract, d.collection]));
   const h = 140, w = 400;
   const scale = (v: number) => (1 - v / maxVal) * h;
+  const xPos = (i: number, length: number) => length <= 1 ? w / 2 : (i / (length - 1)) * w;
 
   const linePath = (values: number[]) =>
-    values.map((v, i) => `${i === 0 ? "M" : "L"} ${(i / (values.length - 1)) * w} ${scale(v)}`).join(" ");
+    values.map((v, i) => `${i === 0 ? "M" : "L"} ${xPos(i, values.length)} ${scale(v)}`).join(" ");
 
   const areaPath = (values: number[]) =>
-    `${linePath(values)} L ${w} ${h} L 0 ${h} Z`;
+    values.length <= 1
+      ? `${linePath(values)} L ${xPos(0, values.length)} ${h} Z`
+      : `${linePath(values)} L ${w} ${h} L 0 ${h} Z`;
 
   return (
     <div style={{ position: "relative" }}>
@@ -96,19 +100,19 @@ function LineChart({ data }: { data: DashboardData["monthlyTrend"] }) {
             <stop offset="100%" stopColor="#10b981" stopOpacity="0" />
           </linearGradient>
         </defs>
-        <path d={areaPath(data.map(d => d.contract))} fill="url(#contractGrad)" />
-        <path d={areaPath(data.map(d => d.collection))} fill="url(#collectionGrad)" />
-        <path d={linePath(data.map(d => d.contract))} fill="none" stroke="#3b82f6" strokeWidth="2.5" />
-        <path d={linePath(data.map(d => d.collection))} fill="none" stroke="#10b981" strokeWidth="2.5" />
-        {data.map((d, i) => (
+        <path d={areaPath(visibleData.map(d => d.contract))} fill="url(#contractGrad)" />
+        <path d={areaPath(visibleData.map(d => d.collection))} fill="url(#collectionGrad)" />
+        <path d={linePath(visibleData.map(d => d.contract))} fill="none" stroke="#3b82f6" strokeWidth="2.5" />
+        <path d={linePath(visibleData.map(d => d.collection))} fill="none" stroke="#10b981" strokeWidth="2.5" />
+        {visibleData.map((d, i) => (
           <g key={i}>
-            <circle cx={(i / (data.length - 1)) * w} cy={scale(d.contract)} r="4" fill="#3b82f6" />
-            <circle cx={(i / (data.length - 1)) * w} cy={scale(d.collection)} r="4" fill="#10b981" />
+            <circle cx={xPos(i, visibleData.length)} cy={scale(d.contract)} r="4" fill="#3b82f6" />
+            <circle cx={xPos(i, visibleData.length)} cy={scale(d.collection)} r="4" fill="#10b981" />
           </g>
         ))}
       </svg>
       <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8 }}>
-        {data.map((d, i) => (
+        {visibleData.map((d, i) => (
           <span key={i} style={{ fontSize: "0.7rem", color: "var(--text2)" }}>{d.month}</span>
         ))}
       </div>
@@ -209,24 +213,25 @@ function DonutChart({ data }: { data: DashboardData["projectLevels"] }) {
 
 function HealthMatrix({ data }: { data: DashboardData["healthMatrix"] }) {
   const statusColors = { green: "#10b981", yellow: "#f59e0b", red: "#ef4444" };
+  const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
   return (
-    <div style={{ position: "relative", height: 220, background: "var(--surface2)", borderRadius: 8, padding: 16 }}>
-      <div style={{ position: "absolute", left: 0, right: 0, top: "30%", height: 1, borderTop: "1px dashed var(--border)", opacity: 0.5 }} />
-      <div style={{ position: "absolute", left: 0, right: 0, top: "70%", height: 1, borderTop: "1px dashed var(--border)", opacity: 0.5 }} />
-      <div style={{ position: "absolute", top: 0, bottom: 0, left: "50%", width: 1, borderLeft: "1px dashed var(--border)", opacity: 0.5 }} />
-      <div style={{ position: "absolute", top: 0, bottom: 0, left: "25%", width: 1, borderLeft: "1px dashed var(--border)", opacity: 0.5 }} />
-      <div style={{ position: "absolute", top: 0, bottom: 0, left: "75%", width: 1, borderLeft: "1px dashed var(--border)", opacity: 0.5 }} />
-      <div style={{ fontSize: "0.65rem", color: "var(--text2)", position: "absolute", left: -4, top: "50%", transform: "rotate(-90deg) translateX(-50%)", whiteSpace: "nowrap" }}>成本健康度 →</div>
-      <div style={{ fontSize: "0.65rem", color: "var(--text2)", position: "absolute", bottom: 0, left: "50%", transform: "translateX(-50%)" }}>← 进度偏差(%)</div>
-      <span style={{ fontSize: "0.6rem", color: "var(--green)", position: "absolute", right: 8, top: 8 }}>绿区(健康)</span>
-      <span style={{ fontSize: "0.6rem", color: "var(--amber)", position: "absolute", left: 8, bottom: 8 }}>红区(危险)</span>
-      <svg width="100%" height="100%" style={{ position: "absolute", top: 0, left: 0 }}>
+    <div style={{ position: "relative", height: 260, background: "var(--surface2)", borderRadius: 8, padding: "18px 28px 34px 42px" }}>
+      <div style={{ position: "absolute", left: 42, right: 28, top: "32%", height: 1, borderTop: "1px dashed var(--border)", opacity: 0.5 }} />
+      <div style={{ position: "absolute", left: 42, right: 28, top: "66%", height: 1, borderTop: "1px dashed var(--border)", opacity: 0.5 }} />
+      <div style={{ position: "absolute", top: 18, bottom: 34, left: "50%", width: 1, borderLeft: "1px dashed var(--border)", opacity: 0.5 }} />
+      <div style={{ position: "absolute", top: 18, bottom: 34, left: "28%", width: 1, borderLeft: "1px dashed var(--border)", opacity: 0.5 }} />
+      <div style={{ position: "absolute", top: 18, bottom: 34, left: "74%", width: 1, borderLeft: "1px dashed var(--border)", opacity: 0.5 }} />
+      <div style={{ fontSize: "0.68rem", color: "var(--text2)", position: "absolute", left: 6, top: "50%", transform: "rotate(-90deg) translateX(-50%)", transformOrigin: "left center", whiteSpace: "nowrap" }}>成本健康度</div>
+      <div style={{ fontSize: "0.68rem", color: "var(--text2)", position: "absolute", bottom: 10, left: "50%", transform: "translateX(-50%)", whiteSpace: "nowrap" }}>进度偏差（左落后 / 右领先）</div>
+      <span style={{ fontSize: "0.68rem", color: "var(--green)", position: "absolute", right: 34, top: 10 }}>绿区：健康</span>
+      <span style={{ fontSize: "0.68rem", color: "var(--amber)", position: "absolute", left: 48, bottom: 12 }}>红/黄区：需关注</span>
+      <svg width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none" style={{ position: "absolute", top: 18, left: 42, right: 28, bottom: 34, width: "calc(100% - 70px)", height: "calc(100% - 52px)" }}>
         {data.map((p, i) => {
-          const x = ((p.progressDev + 25) / 50) * 100;
-          const y = 100 - ((p.costHealth - 40) / 60) * 100;
+          const x = clamp(((p.progressDev + 25) / 50) * 100, 3, 97);
+          const y = clamp(100 - ((p.costHealth - 40) / 60) * 100, 3, 97);
           return (
             <g key={i}>
-              <circle cx={`${x}%`} cy={`${y}%`} r="8" fill={statusColors[p.status as keyof typeof statusColors]} opacity="0.7" />
+              <circle cx={x} cy={y} r="2.2" fill={statusColors[p.status as keyof typeof statusColors]} opacity="0.75" vectorEffect="non-scaling-stroke" />
               <title>{p.name}: 进度{p.progressDev}%, 成本{p.costHealth}%</title>
             </g>
           );

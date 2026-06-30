@@ -360,3 +360,70 @@ create index if not exists idx_okrs_project on okrs(project_id);
 
 -- Full text search index for knowledge base
 create index if not exists idx_knowledge_documents_fts on knowledge_documents using gin(to_tsvector('simple', title || ' ' || coalesce(content, '')));
+
+-- =====================
+-- Application Auth Tables
+-- =====================
+
+create table if not exists app_users (
+  id uuid primary key default uuid_generate_v4(),
+  email text not null unique,
+  phone text not null unique,
+  name text,
+  password_hash text not null,
+  role text not null default 'user' check (role in ('admin', 'user')),
+  status text not null default 'active' check (status in ('active', 'disabled')),
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+create table if not exists user_registration_requests (
+  id uuid primary key default uuid_generate_v4(),
+  email text not null,
+  phone text not null,
+  name text not null,
+  reason text,
+  status text not null default 'pending' check (status in ('pending', 'approved', 'rejected', 'registered')),
+  reviewed_by uuid references app_users(id),
+  reviewed_at timestamptz,
+  registered_at timestamptz,
+  last_delivery_status text,
+  created_at timestamptz default now()
+);
+
+create table if not exists user_registration_codes (
+  id uuid primary key default uuid_generate_v4(),
+  request_id uuid references user_registration_requests(id) on delete cascade,
+  email text not null,
+  phone text not null,
+  code_hash text not null,
+  expires_at timestamptz not null,
+  used_at timestamptz,
+  used_by uuid references app_users(id),
+  created_by uuid references app_users(id),
+  created_at timestamptz default now()
+);
+
+create table if not exists app_sessions (
+  id uuid primary key default uuid_generate_v4(),
+  user_id uuid not null references app_users(id) on delete cascade,
+  token_hash text not null unique,
+  expires_at timestamptz not null,
+  revoked_at timestamptz,
+  created_at timestamptz default now()
+);
+
+alter table app_users enable row level security;
+alter table user_registration_requests enable row level security;
+alter table user_registration_codes enable row level security;
+alter table app_sessions enable row level security;
+
+-- Auth tables are intentionally service-role only.
+-- Do not add public policies for these tables.
+
+create index if not exists idx_app_users_email on app_users(email);
+create index if not exists idx_app_users_phone on app_users(phone);
+create index if not exists idx_registration_requests_status on user_registration_requests(status);
+create index if not exists idx_registration_codes_lookup on user_registration_codes(email, phone, code_hash);
+create index if not exists idx_app_sessions_token on app_sessions(token_hash);
+create index if not exists idx_app_sessions_user on app_sessions(user_id);

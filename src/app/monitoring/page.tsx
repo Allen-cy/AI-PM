@@ -262,6 +262,19 @@ export default function MonitoringPage() {
       </header>
 
       <main style={{ flex: 1, padding: "24px 32px", maxWidth: 1400, margin: "0 auto", width: "100%" }}>
+        <div style={{
+          marginBottom: 18,
+          padding: "12px 14px",
+          borderRadius: 10,
+          background: "rgba(59,130,246,0.08)",
+          border: "1px solid rgba(59,130,246,0.22)",
+          color: "var(--text2)",
+          fontSize: "0.82rem",
+          lineHeight: 1.7,
+        }}>
+          <span style={{ color: "var(--accent2)", fontWeight: 700 }}>数据源说明：</span>
+          当前监控中心使用页面内置演示数据，并通过监控分析接口生成 AI 建议；尚未接入飞书项目台账或 Supabase 实时项目数据。后续可按项目ID接入任务、交付物、成本、风险、变更和验收数据。
+        </div>
 
         {/* Tab Navigation */}
         <div style={{

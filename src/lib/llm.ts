@@ -5,7 +5,7 @@ const MINIMAX_BASE = "https://api.minimax.chat/v1";
 
 const MODELS = {
   deepseek: "deepseek-chat",
-  minimax: "gpt-4o-mini",
+  minimax: process.env.MINIMAX_MODEL || "MiniMax-M3",
 } as const;
 
 type ModelType = keyof typeof MODELS;
@@ -24,8 +24,9 @@ const ROUTING_TABLE: Record<string, { primary: ModelType; fallback: ModelType }>
   parse: { primary: "minimax", fallback: "deepseek" },
   quality: { primary: "minimax", fallback: "deepseek" },
   general: { primary: "deepseek", fallback: "minimax" },
-  cpm: { primary: "deepseek", fallback: "minimax" },
+  cpm: { primary: "minimax", fallback: "deepseek" },
   execution: { primary: "minimax", fallback: "deepseek" },
+  planning: { primary: "minimax", fallback: "deepseek" },
 };
 
 async function callDeepSeek(
@@ -72,7 +73,7 @@ async function callMiniMax(
       Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: "MiniMax-M2.7",
+      model: MODELS.minimax,
       messages,
       temperature: temperature ?? 0.7,
       max_tokens: 2048,
@@ -87,7 +88,7 @@ async function callMiniMax(
   const data = await response.json();
   return {
     content: data.choices?.[0]?.message?.content ?? "",
-    model: "MiniMax-M2.7",
+    model: MODELS.minimax,
     usage: data.usage,
   };
 }
@@ -107,7 +108,7 @@ async function llmComplete(
   const deepseekKey = process.env.DEEPSEEK_API_KEY || "";
   const minimaxKey = process.env.MINIMAX_API_KEY || "";
 
-  console.log(`[llmComplete] scene=${scene}, primary=${primary}, deepseekKey=${deepseekKey ? 'SET' : 'MISSING'}, minimaxKey=${minimaxKey ? 'SET' : 'MISSING'}`);
+  console.log(`[llmComplete] scene=${scene}, primary=${primary}`);
 
   // Try primary
   try {

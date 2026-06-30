@@ -23,9 +23,9 @@ export default function PMOPage() {
   );
 
   return (
-    <div style={{ padding: '24px', maxWidth: '1400px', margin: '0 auto' }}>
+    <div style={{ padding: '24px', maxWidth: '1500px', margin: '0 auto' }}>
       {/* Header */}
-      <div style={{ marginBottom: '32px' }}>
+      <div style={{ marginBottom: '24px' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', marginBottom: '8px' }}>
           <h1 style={{ fontSize: '1.8rem', fontWeight: 800 }}>
             PMO治理中心
@@ -39,15 +39,37 @@ export default function PMOPage() {
         </p>
       </div>
 
+      <div className="card" style={{
+        marginBottom: '20px',
+        padding: '20px 24px',
+        display: 'grid',
+        gridTemplateColumns: 'minmax(0, 1fr) auto',
+        gap: '20px',
+        alignItems: 'center',
+        background: 'linear-gradient(135deg, rgba(245,158,11,0.12), rgba(59,130,246,0.08))',
+      }}>
+        <div>
+          <div style={{ fontWeight: 800, fontSize: '1.05rem', marginBottom: 8 }}>治理重点</div>
+          <div style={{ color: 'var(--text2)', fontSize: '0.86rem', lineHeight: 1.7 }}>
+            先看项目分层、健康异常、待升级事项和阶段门证据；治理动作以“需要谁决策、依据是什么、何时闭环”为主线。
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          <span className="tag tag-amber">{escalationProjects.length} 个待升级</span>
+          <span className="tag tag-blue">{portfolio.totalProjects} 个活跃项目</span>
+          <span className="tag tag-purple">PRINCE2 阶段门</span>
+        </div>
+      </div>
+
       {/* Quick Actions */}
-      <div style={{ display: 'flex', gap: '12px', marginBottom: '32px' }}>
+      <div style={{ display: 'flex', gap: '12px', marginBottom: '20px', flexWrap: 'wrap' }}>
         <button className="btn-primary">创建项目</button>
         <button className="btn-secondary">生成报告</button>
         <button className="btn-secondary">查看风险</button>
       </div>
 
       {/* Portfolio Overview Stats */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', marginBottom: '32px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '16px', marginBottom: '24px' }}>
         <div className="stat-card">
           <div className="stat-num" style={{ color: 'var(--accent2)' }}>{portfolio.totalProjects}</div>
           <div className="stat-label">活跃项目</div>
@@ -67,7 +89,7 @@ export default function PMOPage() {
       </div>
 
       {/* Main Grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.08fr) minmax(360px, 0.92fr)', gap: '24px', alignItems: 'start' }}>
         {/* Left Column */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
           {/* Project Tier Classification */}
@@ -76,7 +98,7 @@ export default function PMOPage() {
               <span>📊</span>
               项目分层分类
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '12px' }}>
               {(['S', 'A', 'B', 'C'] as const).map(tier => (
                 <div
                   key={tier}
@@ -156,7 +178,7 @@ export default function PMOPage() {
               <span>📏</span>
               治理指标
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '16px' }}>
               {governanceMetrics.map(metric => (
                 <div
                   key={metric.name}
@@ -367,7 +389,7 @@ export default function PMOPage() {
           <span>📋</span>
           全部项目状态
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '12px' }}>
           {initialProjects.map(project => (
             <div
               key={project.id}

@@ -15,8 +15,8 @@ import {
 } from "@/lib/execution";
 
 export default function ExecutionPage() {
-  const [tasks] = useState<Task[]>(DEMO_TASKS);
-  const [deliverables] = useState<Deliverable[]>(DEMO_DELIVERABLES);
+  const [tasks, setTasks] = useState<Task[]>(DEMO_TASKS);
+  const [deliverables, setDeliverables] = useState<Deliverable[]>(DEMO_DELIVERABLES);
   const [changeRequests] = useState<ChangeRequest[]>(DEMO_CHANGE_REQUESTS);
   const [aiSummary, setAiSummary] = useState<{
     summary: string;
@@ -24,6 +24,7 @@ export default function ExecutionPage() {
     recommendations: string[];
   } | null>(null);
   const [loadingAI, setLoadingAI] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
 
   const blockedTasks = getBlockedTasks(tasks);
   const teamWorkload = calculateTeamWorkload(tasks);
@@ -66,6 +67,7 @@ export default function ExecutionPage() {
 
   const requestAiSummary = async () => {
     setLoadingAI(true);
+    setMessage(null);
     try {
       const res = await fetch("/api/execution", {
         method: "POST",
@@ -76,17 +78,55 @@ export default function ExecutionPage() {
           projectId: "PRJ-2026-001",
         }),
       });
+      if (!res.ok) throw new Error("AI summary request failed");
       const data = await res.json();
-      setAiSummary(data);
+      setAiSummary({
+        summary: typeof data.summary === "string" ? data.summary : "当前执行数据已完成分析，但AI返回格式不完整。",
+        risks: Array.isArray(data.risks) ? data.risks : ["AI返回格式异常，请人工复核阻塞任务和交付物状态。"],
+        recommendations: Array.isArray(data.recommendations) ? data.recommendations : ["优先处理阻塞任务，并补齐交付物验收责任人。"],
+      });
     } catch {
       setAiSummary({
-        summary: "AI摘要生成失败，请稍后重试",
-        risks: [],
-        recommendations: [],
+        summary: "AI摘要暂时不可用，已根据当前任务状态生成本地兜底摘要。",
+        risks: blockedTasks.length > 0
+          ? blockedTasks.map(task => `${task.name}存在阻塞：${task.blockedReason ?? "原因待补充"}`)
+          : ["当前未发现阻塞任务，但仍需持续关注交付物验收状态。"],
+        recommendations: [
+          "先处理高优先级阻塞任务，明确责任人和解除时间。",
+          "将待验收交付物补齐质量检查结论。",
+          "每次状态会后同步更新任务进度，避免进度数据滞后。",
+        ],
       });
     } finally {
       setLoadingAI(false);
     }
+  };
+
+  const handleAddTask = () => {
+    const nextNo = tasks.length + 1;
+    const newTask: Task = {
+      id: `T${nextNo}`,
+      name: `新增任务${nextNo}`,
+      assignee: "待分配",
+      status: "pending",
+      priority: "medium",
+      dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
+      progress: 0,
+    };
+    setTasks(prev => [...prev, newTask]);
+    setMessage(`已添加任务 ${newTask.id}，当前为待处理状态。`);
+  };
+
+  const handleAddDeliverable = () => {
+    const nextNo = deliverables.length + 1;
+    const newDeliverable: Deliverable = {
+      id: `D${nextNo}`,
+      name: `新增交付物${nextNo}`,
+      status: "pending",
+      qualityCheck: "待检查",
+    };
+    setDeliverables(prev => [...prev, newDeliverable]);
+    setMessage(`已添加交付物 ${newDeliverable.id}，当前为待验收状态。`);
   };
 
   // Baseline: 10 tasks over 20 days
@@ -130,7 +170,7 @@ export default function ExecutionPage() {
           >
             {loadingAI ? "⏳ 分析中..." : "🤖 AI状态摘要"}
           </button>
-          <button style={{
+          <button onClick={handleAddTask} style={{
             padding: "7px 16px",
             borderRadius: 8,
             border: "1px solid var(--border)",
@@ -142,7 +182,7 @@ export default function ExecutionPage() {
           }}>
             + 添加任务
           </button>
-          <button style={{
+          <button onClick={handleAddDeliverable} style={{
             padding: "7px 16px",
             borderRadius: 8,
             border: "1px solid var(--border)",
@@ -158,6 +198,20 @@ export default function ExecutionPage() {
       </header>
 
       <main style={{ flex: 1, padding: "24px 32px", maxWidth: 1400, margin: "0 auto", width: "100%" }}>
+        {message && (
+          <div style={{
+            marginBottom: 16,
+            padding: "10px 14px",
+            borderRadius: 8,
+            background: "rgba(6,182,212,0.1)",
+            border: "1px solid rgba(6,182,212,0.25)",
+            color: "var(--cyan)",
+            fontSize: "0.84rem",
+          }}>
+            {message}
+          </div>
+        )}
+
         {/* Progress vs Baseline */}
         <div style={{
           background: "var(--surface)",

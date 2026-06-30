@@ -232,7 +232,7 @@ export default function Home() {
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <span style={{ fontSize: "1.4rem" }}>🏗️</span>
           <span style={{ fontWeight: 800, fontSize: "1.05rem" }}>AI项目管理助手</span>
-          <span className="tag tag-blue">V5.0.10</span>
+          <span className="tag tag-blue">V5.1.0</span>
         </div>
         <div style={{ display: "flex", gap: 16, fontSize: "0.8rem", color: "var(--text2)", alignItems: "center" }}>
           <span>作者：柴春宇</span>
@@ -242,6 +242,9 @@ export default function Home() {
           <span>飞书底座 + Vercel AI增强</span>
           <span style={{ color: "var(--border)" }}>|</span>
           <span>DeepSeek + MiniMax</span>
+          <span style={{ color: "var(--border)" }}>|</span>
+          <Link href="/auth/login" style={{ color: "var(--accent2)", textDecoration: "none" }}>登录</Link>
+          <Link href="/auth/apply" style={{ color: "var(--accent2)", textDecoration: "none" }}>申请使用</Link>
         </div>
       </header>
 
