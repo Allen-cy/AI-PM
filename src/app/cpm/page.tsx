@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { calculateCPM, type Task } from "@/lib/cpm";
+import { buildCriticalPathNetworkLayout } from "@/lib/cpm-network";
 
 interface AIMindedTask extends Task {
   es: number;
@@ -34,38 +35,7 @@ function CriticalPathNetwork({
   if (tasks.length === 0) return null;
 
   const sortedTasks = [...tasks].sort((a, b) => (a.es - b.es) || a.id.localeCompare(b.id));
-  const maxTime = Math.max(1, ...sortedTasks.map(task => task.ef ?? task.duration));
-  const width = 920;
-  const nodeWidth = 126;
-  const nodeHeight = 50;
-  const leftPad = 52;
-  const rightPad = 70;
-  const topPad = 44;
-  const rowHeight = 82;
-  const laneEnds: number[] = [];
-
-  const positions = new Map<string, { x: number; y: number }>();
-  sortedTasks.forEach(task => {
-    const taskStart = task.es ?? 0;
-    const taskEnd = task.ef ?? taskStart + task.duration;
-    let row = laneEnds.findIndex(end => end <= taskStart);
-    if (row === -1) {
-      row = laneEnds.length;
-      laneEnds.push(taskEnd);
-    } else {
-      laneEnds[row] = taskEnd;
-    }
-    const x = leftPad + ((task.es ?? 0) / maxTime) * (width - leftPad - rightPad - nodeWidth);
-    const y = topPad + row * rowHeight;
-    positions.set(task.id, { x, y });
-  });
-  const height = topPad + Math.max(1, laneEnds.length) * rowHeight + 44;
-
-  const criticalEdges = new Set<string>();
-  criticalPath.forEach((id, index) => {
-    const next = criticalPath[index + 1];
-    if (next) criticalEdges.add(`${id}->${next}`);
-  });
+  const layout = buildCriticalPathNetworkLayout(sortedTasks, criticalPath);
 
   return (
     <div style={{
@@ -81,7 +51,7 @@ function CriticalPathNetwork({
             🕸️ 关键路径网络图
           </div>
           <div style={{ marginTop: 6, color: "var(--text2)", fontSize: "0.78rem" }}>
-            横向按最早开始时间排布；红色节点和红色连线表示关键路径。
+            按依赖层级从左到右排布；折线在节点间的空白通道内绕行，红色节点和红色连线表示关键路径。
           </div>
         </div>
         <div style={{ display: "flex", gap: 14, fontSize: "0.75rem", color: "var(--text2)", flexShrink: 0 }}>
@@ -90,59 +60,50 @@ function CriticalPathNetwork({
         </div>
       </div>
       <div style={{ overflowX: "auto", paddingBottom: 8 }}>
-        <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} role="img" aria-label="关键路径网络图">
+        <svg width={layout.width} height={layout.height} viewBox={`0 0 ${layout.width} ${layout.height}`} role="img" aria-label="关键路径网络图">
           <defs>
-            <marker id="arrow-critical" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
-              <path d="M0,0 L0,6 L9,3 z" fill="var(--red)" />
+            <marker id="arrow-critical" markerWidth="12" markerHeight="12" refX="10" refY="4" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,8 L10,4 z" fill="var(--red)" />
             </marker>
-            <marker id="arrow-normal" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
-              <path d="M0,0 L0,6 L9,3 z" fill="var(--text2)" />
+            <marker id="arrow-normal" markerWidth="12" markerHeight="12" refX="10" refY="4" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,8 L10,4 z" fill="var(--text2)" />
             </marker>
           </defs>
-          {sortedTasks.flatMap(task =>
-            task.predecessors.map(predId => {
-              const from = positions.get(predId);
-              const to = positions.get(task.id);
-              if (!from || !to) return null;
-              const isCriticalEdge = criticalEdges.has(`${predId}->${task.id}`);
-              const startX = from.x + nodeWidth;
-              const startY = from.y + nodeHeight / 2;
-              const endX = to.x;
-              const endY = to.y + nodeHeight / 2;
-              const midX = Math.max(startX + 18, Math.min(endX - 18, (startX + endX) / 2));
-              return (
-                <path
-                  key={`${predId}-${task.id}`}
-                  d={`M ${startX} ${startY} L ${midX} ${startY} L ${midX} ${endY} L ${endX - 8} ${endY}`}
-                  fill="none"
-                  stroke={isCriticalEdge ? "var(--red)" : "var(--text2)"}
-                  strokeWidth={isCriticalEdge ? 2.4 : 1.4}
-                  strokeOpacity={isCriticalEdge ? 0.95 : 0.55}
-                  markerEnd={isCriticalEdge ? "url(#arrow-critical)" : "url(#arrow-normal)"}
-                />
-              );
-            })
-          )}
+          {layout.edges.map(edge => (
+            <path
+              key={`${edge.fromId}-${edge.toId}`}
+              d={edge.path}
+              fill="none"
+              stroke={edge.isCritical ? "var(--red)" : "var(--text2)"}
+              strokeWidth={edge.isCritical ? 2.6 : 1.4}
+              strokeOpacity={edge.isCritical ? 0.95 : 0.48}
+              markerEnd={edge.isCritical ? "url(#arrow-critical)" : "url(#arrow-normal)"}
+            />
+          ))}
           {sortedTasks.map(task => {
-            const pos = positions.get(task.id)!;
+            const pos = layout.positions.get(task.id)!;
             return (
               <g key={task.id} transform={`translate(${pos.x}, ${pos.y})`}>
+                <title>{`${task.id} ${task.name}，工期 ${task.duration} 天，ES ${task.es}，EF ${task.ef}，LS ${task.ls}，LF ${task.lf}`}</title>
                 <rect
-                  width={nodeWidth}
-                  height={nodeHeight}
+                  width={layout.nodeWidth}
+                  height={layout.nodeHeight}
                   rx="10"
                   fill={task.isCritical ? "rgba(239,68,68,0.12)" : "rgba(59,130,246,0.1)"}
                   stroke={task.isCritical ? "var(--red)" : "var(--accent)"}
                   strokeWidth={task.isCritical ? 2 : 1.4}
                 />
-                <text x="12" y="19" fill={task.isCritical ? "var(--red)" : "var(--accent2)"} fontSize="13" fontWeight="800">
+                <text x="14" y="20" fill={task.isCritical ? "var(--red)" : "var(--accent2)"} fontSize="13" fontWeight="800">
                   {task.id}
                 </text>
-                <text x="42" y="19" fill="var(--text)" fontSize="12" fontWeight="600">
-                  {task.name.length > 8 ? `${task.name.slice(0, 8)}…` : task.name}
+                <text x="44" y="20" fill="var(--text)" fontSize="12" fontWeight="700">
+                  {task.name.length > 12 ? `${task.name.slice(0, 12)}…` : task.name}
                 </text>
-                <text x="12" y="38" fill="var(--text2)" fontSize="11">
+                <text x="14" y="42" fill="var(--text2)" fontSize="11">
                   ES {task.es} / EF {task.ef} · {task.duration}天
+                </text>
+                <text x="14" y="58" fill="var(--text2)" fontSize="10">
+                  LS {task.ls} / LF {task.lf} · 浮动 {task.totalFloat}
                 </text>
               </g>
             );
