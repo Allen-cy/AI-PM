@@ -52,9 +52,33 @@ function dateText(row: RawRow, names: string[]): string | undefined {
   const raw = value(row, names);
   if (!raw) return undefined;
   if (raw instanceof Date && !Number.isNaN(raw.getTime())) return raw.toISOString().slice(0, 10);
-  if (typeof raw === 'number') {
-    const excelEpoch = new Date(Math.round((raw - 25569) * 86400 * 1000));
-    if (!Number.isNaN(excelEpoch.getTime())) return excelEpoch.toISOString().slice(0, 10);
+  const numericValue = typeof raw === 'number'
+    ? raw
+    : typeof raw === 'string' && /^\d+$/.test(raw.trim())
+      ? Number(raw.trim())
+      : undefined;
+  const rawText = String(raw).trim();
+  if (/^\d{8}$/.test(rawText)) {
+    const year = Number(rawText.slice(0, 4));
+    const month = Number(rawText.slice(4, 6));
+    const day = Number(rawText.slice(6, 8));
+    const parsed = new Date(Date.UTC(year, month - 1, day));
+    if (!Number.isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10);
+  }
+  if (numericValue !== undefined && Number.isFinite(numericValue)) {
+    const timestamp = numericValue > 1_000_000_000_000
+      ? numericValue
+      : numericValue > 1_000_000_000
+        ? numericValue * 1000
+        : undefined;
+    if (timestamp !== undefined) {
+      const parsed = new Date(timestamp);
+      if (!Number.isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10);
+    }
+    if (numericValue > 20_000 && numericValue < 80_000) {
+      const excelEpoch = new Date(Math.round((numericValue - 25569) * 86400 * 1000));
+      if (!Number.isNaN(excelEpoch.getTime())) return excelEpoch.toISOString().slice(0, 10);
+    }
   }
   const parsed = new Date(String(raw));
   if (!Number.isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10);
@@ -145,7 +169,7 @@ function monthKey(date?: string): string {
   if (!date) return '未定';
   const parsed = new Date(date);
   if (Number.isNaN(parsed.getTime())) return '未定';
-  return `${parsed.getMonth() + 1}月`;
+  return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, '0')}`;
 }
 
 function daysLeft(date?: string): number {
@@ -233,7 +257,7 @@ export function buildDashboardData(
     statusDistribution,
     monthlyTrend: [...monthMap.entries()]
       .filter(([month]) => month !== '未定')
-      .sort(([a], [b]) => Number(a.replace('月', '')) - Number(b.replace('月', '')))
+      .sort(([a], [b]) => a.localeCompare(b))
       .map(([month, item]) => ({ month, contract: Number(item.contract.toFixed(2)), collection: Number(item.collection.toFixed(2)) })),
     regionDistribution: [...regionMap.values()].sort((a, b) => b.count - a.count).slice(0, 8),
     paymentGroups,

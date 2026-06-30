@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { DEFAULT_DASHBOARD_DATA } from "@/features/dashboard/normalizer";
 import type { DashboardData } from "@/features/dashboard/types";
@@ -36,11 +37,12 @@ function KPICard({ label, value, subValue, color }: { label: string; value: stri
 
 function PieChart({ data }: { data: DashboardData["statusDistribution"] }) {
   const total = data.reduce((sum, d) => sum + d.value, 0);
-  let cumulative = 0;
-  const paths = data.map((d) => {
-    const startAngle = (cumulative / total) * 360;
-    cumulative += d.value;
-    const endAngle = (cumulative / total) * 360;
+  const safeTotal = Math.max(1, total);
+  const paths = data.map((d, index) => {
+    const startValue = data.slice(0, index).reduce((sum, item) => sum + item.value, 0);
+    const endValue = startValue + d.value;
+    const startAngle = (startValue / safeTotal) * 360;
+    const endAngle = (endValue / safeTotal) * 360;
     const start = (startAngle - 90) * (Math.PI / 180);
     const end = (endAngle - 90) * (Math.PI / 180);
     const r = 70;
@@ -73,23 +75,56 @@ function PieChart({ data }: { data: DashboardData["statusDistribution"] }) {
 }
 
 function LineChart({ data }: { data: DashboardData["monthlyTrend"] }) {
-  const visibleData = data.length > 0 ? data : [{ month: "暂无", contract: 0, collection: 0 }];
+  const visibleData = data.filter(item => (
+    item.month &&
+    Number.isFinite(item.contract) &&
+    Number.isFinite(item.collection)
+  ));
+  if (visibleData.length === 0) {
+    return (
+      <div style={{
+        minHeight: 210,
+        display: "grid",
+        placeItems: "center",
+        background: "var(--surface2)",
+        borderRadius: 10,
+        border: "1px dashed var(--border)",
+        color: "var(--text2)",
+        fontSize: "0.84rem",
+        lineHeight: 1.7,
+        textAlign: "center",
+        padding: 24,
+      }}>
+        暂无可用于月度趋势的日期数据。<br />
+        请检查飞书项目台账中的签约时间或计划开始字段。
+      </div>
+    );
+  }
   const maxVal = Math.max(1, ...visibleData.flatMap(d => [d.contract, d.collection]));
-  const h = 140, w = 400;
-  const scale = (v: number) => (1 - v / maxVal) * h;
-  const xPos = (i: number, length: number) => length <= 1 ? w / 2 : (i / (length - 1)) * w;
+  const h = 170, w = 480;
+  const top = 14, bottom = 28, left = 12, right = 12;
+  const plotBottom = h - bottom;
+  const plotWidth = w - left - right;
+  const scale = (v: number) => top + (1 - v / maxVal) * (h - top - bottom);
+  const xPos = (i: number, length: number) => length <= 1 ? w / 2 : left + (i / (length - 1)) * plotWidth;
 
-  const linePath = (values: number[]) =>
-    values.map((v, i) => `${i === 0 ? "M" : "L"} ${xPos(i, values.length)} ${scale(v)}`).join(" ");
+  const linePath = (values: number[]) => {
+    if (values.length === 1) {
+      const y = scale(values[0]);
+      return `M ${left} ${y} L ${w - right} ${y}`;
+    }
+    return values.map((v, i) => `${i === 0 ? "M" : "L"} ${xPos(i, values.length)} ${scale(v)}`).join(" ");
+  };
 
   const areaPath = (values: number[]) =>
     values.length <= 1
-      ? `${linePath(values)} L ${xPos(0, values.length)} ${h} Z`
-      : `${linePath(values)} L ${w} ${h} L 0 ${h} Z`;
+      ? `${linePath(values)} L ${w - right} ${plotBottom} L ${left} ${plotBottom} Z`
+      : `${linePath(values)} L ${w - right} ${plotBottom} L ${left} ${plotBottom} Z`;
+  const labelStep = Math.max(1, Math.ceil(visibleData.length / 8));
 
   return (
     <div style={{ position: "relative" }}>
-      <svg width="100%" height="180" viewBox={`0 0 ${w} 180`} preserveAspectRatio="none">
+      <svg width="100%" height="200" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" role="img" aria-label="月度合同金额和回款金额趋势">
         <defs>
           <linearGradient id="contractGrad" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.3" />
@@ -100,20 +135,25 @@ function LineChart({ data }: { data: DashboardData["monthlyTrend"] }) {
             <stop offset="100%" stopColor="#10b981" stopOpacity="0" />
           </linearGradient>
         </defs>
+        {[0, 0.5, 1].map((tick) => {
+          const y = top + tick * (h - top - bottom);
+          return <line key={tick} x1={left} x2={w - right} y1={y} y2={y} stroke="var(--border)" strokeDasharray="4 6" opacity="0.42" vectorEffect="non-scaling-stroke" />;
+        })}
         <path d={areaPath(visibleData.map(d => d.contract))} fill="url(#contractGrad)" />
         <path d={areaPath(visibleData.map(d => d.collection))} fill="url(#collectionGrad)" />
-        <path d={linePath(visibleData.map(d => d.contract))} fill="none" stroke="#3b82f6" strokeWidth="2.5" />
-        <path d={linePath(visibleData.map(d => d.collection))} fill="none" stroke="#10b981" strokeWidth="2.5" />
+        <path d={linePath(visibleData.map(d => d.contract))} fill="none" stroke="#3b82f6" strokeWidth="3" vectorEffect="non-scaling-stroke" strokeLinecap="round" strokeLinejoin="round" />
+        <path d={linePath(visibleData.map(d => d.collection))} fill="none" stroke="#10b981" strokeWidth="3" vectorEffect="non-scaling-stroke" strokeLinecap="round" strokeLinejoin="round" />
         {visibleData.map((d, i) => (
           <g key={i}>
-            <circle cx={xPos(i, visibleData.length)} cy={scale(d.contract)} r="4" fill="#3b82f6" />
-            <circle cx={xPos(i, visibleData.length)} cy={scale(d.collection)} r="4" fill="#10b981" />
+            <circle cx={xPos(i, visibleData.length)} cy={scale(d.contract)} r="4" fill="#3b82f6" vectorEffect="non-scaling-stroke" />
+            <circle cx={xPos(i, visibleData.length)} cy={scale(d.collection)} r="4" fill="#10b981" vectorEffect="non-scaling-stroke" />
+            <title>{d.month}: 合同金额{d.contract}万，回款金额{d.collection}万</title>
           </g>
         ))}
       </svg>
-      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8, gap: 8 }}>
         {visibleData.map((d, i) => (
-          <span key={i} style={{ fontSize: "0.7rem", color: "var(--text2)" }}>{d.month}</span>
+          <span key={i} style={{ fontSize: "0.7rem", color: "var(--text2)", visibility: i % labelStep === 0 || i === visibleData.length - 1 ? "visible" : "hidden", whiteSpace: "nowrap" }}>{d.month}</span>
         ))}
       </div>
       <div style={{ display: "flex", gap: 20, marginTop: 12, justifyContent: "center" }}>
@@ -176,11 +216,12 @@ function Histogram({ data }: { data: DashboardData["paymentGroups"] }) {
 
 function DonutChart({ data }: { data: DashboardData["projectLevels"] }) {
   const total = data.reduce((sum, d) => sum + d.value, 0);
-  let cumulative = 0;
-  const paths = data.map((d) => {
-    const startAngle = (cumulative / total) * 360;
-    cumulative += d.value;
-    const endAngle = (cumulative / total) * 360;
+  const safeTotal = Math.max(1, total);
+  const paths = data.map((d, index) => {
+    const startValue = data.slice(0, index).reduce((sum, item) => sum + item.value, 0);
+    const endValue = startValue + d.value;
+    const startAngle = (startValue / safeTotal) * 360;
+    const endAngle = (endValue / safeTotal) * 360;
     const start = (startAngle - 90) * (Math.PI / 180);
     const end = (endAngle - 90) * (Math.PI / 180);
     const r = 60, cx = 70, cy = 70;
@@ -215,23 +256,28 @@ function HealthMatrix({ data }: { data: DashboardData["healthMatrix"] }) {
   const statusColors = { green: "#10b981", yellow: "#f59e0b", red: "#ef4444" };
   const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
   return (
-    <div style={{ position: "relative", height: 260, background: "var(--surface2)", borderRadius: 8, padding: "18px 28px 34px 42px" }}>
-      <div style={{ position: "absolute", left: 42, right: 28, top: "32%", height: 1, borderTop: "1px dashed var(--border)", opacity: 0.5 }} />
-      <div style={{ position: "absolute", left: 42, right: 28, top: "66%", height: 1, borderTop: "1px dashed var(--border)", opacity: 0.5 }} />
-      <div style={{ position: "absolute", top: 18, bottom: 34, left: "50%", width: 1, borderLeft: "1px dashed var(--border)", opacity: 0.5 }} />
-      <div style={{ position: "absolute", top: 18, bottom: 34, left: "28%", width: 1, borderLeft: "1px dashed var(--border)", opacity: 0.5 }} />
-      <div style={{ position: "absolute", top: 18, bottom: 34, left: "74%", width: 1, borderLeft: "1px dashed var(--border)", opacity: 0.5 }} />
-      <div style={{ fontSize: "0.68rem", color: "var(--text2)", position: "absolute", left: 6, top: "50%", transform: "rotate(-90deg) translateX(-50%)", transformOrigin: "left center", whiteSpace: "nowrap" }}>成本健康度</div>
-      <div style={{ fontSize: "0.68rem", color: "var(--text2)", position: "absolute", bottom: 10, left: "50%", transform: "translateX(-50%)", whiteSpace: "nowrap" }}>进度偏差（左落后 / 右领先）</div>
-      <span style={{ fontSize: "0.68rem", color: "var(--green)", position: "absolute", right: 34, top: 10 }}>绿区：健康</span>
-      <span style={{ fontSize: "0.68rem", color: "var(--amber)", position: "absolute", left: 48, bottom: 12 }}>红/黄区：需关注</span>
-      <svg width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none" style={{ position: "absolute", top: 18, left: 42, right: 28, bottom: 34, width: "calc(100% - 70px)", height: "calc(100% - 52px)" }}>
+    <div style={{ position: "relative", minHeight: 330, background: "var(--surface2)", borderRadius: 12, padding: "24px 24px 60px 72px", overflow: "hidden" }}>
+      <div style={{ position: "absolute", inset: "24px 24px 60px 72px", border: "1px solid var(--border)", borderRadius: 10, background: "linear-gradient(135deg, rgba(239,68,68,0.08), rgba(245,158,11,0.06) 45%, rgba(16,185,129,0.08))" }} />
+      <div style={{ fontSize: "0.72rem", color: "var(--text2)", position: "absolute", left: 18, top: "46%", transform: "rotate(-90deg)", transformOrigin: "center", whiteSpace: "nowrap" }}>成本健康度（越高越好）</div>
+      <div style={{ fontSize: "0.72rem", color: "var(--text2)", position: "absolute", bottom: 18, left: "50%", transform: "translateX(-50%)", whiteSpace: "nowrap" }}>进度偏差（左：落后 / 右：领先）</div>
+      <div style={{ fontSize: "0.68rem", color: "var(--text2)", position: "absolute", left: 74, bottom: 40 }}>-25%</div>
+      <div style={{ fontSize: "0.68rem", color: "var(--text2)", position: "absolute", left: "50%", bottom: 40, transform: "translateX(-50%)" }}>0%</div>
+      <div style={{ fontSize: "0.68rem", color: "var(--text2)", position: "absolute", right: 24, bottom: 40 }}>+25%</div>
+      <div style={{ fontSize: "0.68rem", color: "var(--text2)", position: "absolute", left: 42, top: 24 }}>100</div>
+      <div style={{ fontSize: "0.68rem", color: "var(--text2)", position: "absolute", left: 48, bottom: 58 }}>40</div>
+      <svg width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label="项目健康矩阵散点图" style={{ position: "absolute", top: 24, left: 72, right: 24, bottom: 60, width: "calc(100% - 96px)", height: "calc(100% - 84px)" }}>
+        {[33, 66].map(y => (
+          <line key={`h-${y}`} x1="0" x2="100" y1={y} y2={y} stroke="var(--border)" strokeDasharray="4 5" opacity="0.55" vectorEffect="non-scaling-stroke" />
+        ))}
+        {[25, 50, 75].map(x => (
+          <line key={`v-${x}`} x1={x} x2={x} y1="0" y2="100" stroke="var(--border)" strokeDasharray="4 5" opacity="0.55" vectorEffect="non-scaling-stroke" />
+        ))}
         {data.map((p, i) => {
           const x = clamp(((p.progressDev + 25) / 50) * 100, 3, 97);
           const y = clamp(100 - ((p.costHealth - 40) / 60) * 100, 3, 97);
           return (
             <g key={i}>
-              <circle cx={x} cy={y} r="2.2" fill={statusColors[p.status as keyof typeof statusColors]} opacity="0.75" vectorEffect="non-scaling-stroke" />
+              <circle cx={x} cy={y} r="2.4" fill={statusColors[p.status as keyof typeof statusColors]} opacity="0.82" stroke="rgba(255,255,255,0.38)" strokeWidth="0.8" vectorEffect="non-scaling-stroke" />
               <title>{p.name}: 进度{p.progressDev}%, 成本{p.costHealth}%</title>
             </g>
           );
@@ -255,7 +301,7 @@ export default function DashboardPage() {
       try {
         const parsed = JSON.parse(cached);
         if (isDashboardData(parsed)) {
-          setDashboardData(parsed);
+          queueMicrotask(() => setDashboardData(parsed));
           return;
         }
       } catch {
@@ -329,7 +375,7 @@ export default function DashboardPage() {
         gap: 16,
         background: "var(--surface)",
       }}>
-        <a href="/" style={{ color: "var(--text2)", textDecoration: "none", fontSize: "0.85rem" }}>← 返回首页</a>
+        <Link href="/" style={{ color: "var(--text2)", textDecoration: "none", fontSize: "0.85rem" }}>← 返回首页</Link>
         <span style={{ color: "var(--border)" }}>|</span>
         <span style={{ fontWeight: 700 }}>📊 项目组合看板</span>
         <span className="tag tag-blue" style={{ fontSize: "0.7rem" }}>{dashboardData.source.type === "feishu" ? "飞书实时数据" : dashboardData.source.type === "file" ? "文件导入数据" : "样例数据源"}</span>
