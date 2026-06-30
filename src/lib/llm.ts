@@ -1,7 +1,10 @@
-// LLM Gateway - DeepSeek + MiniMax routing with fallback
+// LLM Gateway - user-configurable provider first, DeepSeek + MiniMax routing fallback
+import { SYSTEM_PROMPTS } from "./llm-prompts";
 
 const DEEPSEEK_BASE = "https://api.deepseek.com/v1";
 const MINIMAX_BASE = "https://api.minimax.chat/v1";
+const GLM_BASE = "https://open.bigmodel.cn/api/paas/v4";
+const ANTHROPIC_BASE = "https://api.anthropic.com/v1";
 
 const MODELS = {
   deepseek: "deepseek-chat",
@@ -9,6 +12,15 @@ const MODELS = {
 } as const;
 
 type ModelType = keyof typeof MODELS;
+type UserProvider = "deepseek" | "minimax" | "glm" | "anthropic" | "openai-compatible";
+
+interface UserLLMSettings {
+  provider: UserProvider;
+  model: string;
+  baseUrl?: string | null;
+  apiKey: string;
+  enabled: boolean;
+}
 
 interface LLMResponse {
   content: string;
@@ -93,6 +105,129 @@ async function callMiniMax(
   };
 }
 
+async function callOpenAICompatible(
+  provider: UserProvider,
+  apiKey: string,
+  model: string,
+  baseUrl: string,
+  messages: Array<{ role: string; content: string }>,
+  temperature?: number,
+): Promise<LLMResponse> {
+  const response = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      messages,
+      temperature: temperature ?? 0.7,
+      max_tokens: 2048,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => "");
+    throw new Error(`${provider} API error ${response.status}: ${errorText}`);
+  }
+
+  const data = await response.json();
+  return {
+    content: data.choices?.[0]?.message?.content ?? "",
+    model,
+    usage: data.usage,
+  };
+}
+
+async function callAnthropic(
+  apiKey: string,
+  model: string,
+  baseUrl: string,
+  messages: Array<{ role: string; content: string }>,
+  temperature?: number,
+): Promise<LLMResponse> {
+  const system = messages.find(message => message.role === "system")?.content || "";
+  const userMessages = messages.filter(message => message.role !== "system");
+  const response = await fetch(`${baseUrl.replace(/\/$/, "")}/messages`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify({
+      model,
+      system,
+      messages: userMessages.map(message => ({
+        role: message.role === "assistant" ? "assistant" : "user",
+        content: message.content,
+      })),
+      temperature: temperature ?? 0.7,
+      max_tokens: 2048,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => "");
+    throw new Error(`anthropic API error ${response.status}: ${errorText}`);
+  }
+
+  const data = await response.json();
+  const content = Array.isArray(data.content)
+    ? data.content.map((item: { text?: string }) => item.text || "").join("")
+    : "";
+  return { content, model };
+}
+
+function providerDefaultBase(provider: UserProvider): string {
+  if (provider === "deepseek") return DEEPSEEK_BASE;
+  if (provider === "minimax") return MINIMAX_BASE;
+  if (provider === "glm") return GLM_BASE;
+  if (provider === "anthropic") return ANTHROPIC_BASE;
+  return "";
+}
+
+async function callUserProvider(
+  settings: UserLLMSettings,
+  messages: Array<{ role: string; content: string }>,
+  temperature?: number,
+): Promise<LLMResponse> {
+  const baseUrl = settings.baseUrl || providerDefaultBase(settings.provider);
+  if (!baseUrl) throw new Error("用户模型配置缺少 Base URL");
+  if (settings.provider === "anthropic") {
+    return callAnthropic(settings.apiKey, settings.model, baseUrl, messages, temperature);
+  }
+  return callOpenAICompatible(settings.provider, settings.apiKey, settings.model, baseUrl, messages, temperature);
+}
+
+async function readCurrentUserLLMSettings(): Promise<UserLLMSettings | null> {
+  try {
+    const auth = await import("../features/auth/server.ts");
+    if (!auth.isAuthStorageConfigured()) return null;
+    const user = await auth.getCurrentUser();
+    if (!user) return null;
+    const supabase = auth.getAuthSupabase();
+    const { data, error } = await supabase
+      .from("user_ai_settings")
+      .select("provider,model,base_url,api_key,enabled")
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (error || !data?.api_key || data.enabled === false) return null;
+    const provider = String(data.provider || "minimax") as UserProvider;
+    if (!["deepseek", "minimax", "glm", "anthropic", "openai-compatible"].includes(provider)) return null;
+    return {
+      provider,
+      model: String(data.model || MODELS.minimax),
+      baseUrl: typeof data.base_url === "string" ? data.base_url : null,
+      apiKey: String(data.api_key),
+      enabled: data.enabled !== false,
+    };
+  } catch {
+    return null;
+  }
+}
+
 async function llmComplete(
   scene: keyof typeof ROUTING_TABLE,
   systemPrompt: string,
@@ -109,6 +244,15 @@ async function llmComplete(
   const minimaxKey = process.env.MINIMAX_API_KEY || "";
 
   console.log(`[llmComplete] scene=${scene}, primary=${primary}`);
+
+  const userSettings = await readCurrentUserLLMSettings();
+  if (userSettings) {
+    try {
+      return await callUserProvider(userSettings, messages, options?.temperature);
+    } catch (userErr) {
+      console.warn(`[llmComplete] User provider ${userSettings.provider} failed:`, userErr instanceof Error ? userErr.message : String(userErr));
+    }
+  }
 
   // Try primary
   try {
@@ -139,37 +283,5 @@ async function llmComplete(
   }
 }
 
-export const SYSTEM_PROMPTS = {
-  wbs: `你是一位资深项目管理专家，精通PMBOK和PRINCE2方法论。
-请根据项目信息生成WBS（工作分解结构）。
-规则：
-1. 按"阶段→交付物→工作包→具体活动"四层拆解
-2. 每个工作包标注估算工期（天）和前置依赖
-3. 遵循100%原则
-4. 输出缩进列表，编号如1.1, 1.1.1, 1.1.1.1
-5. 工作包粒度5-15天`,
-
-  risk: `你是教育行业项目管理风险专家。
-分析维度：进度风险、成本风险、质量风险、干系人风险、合同风险。
-输出JSON数组，每项包含：description, probability, impact, mitigation`,
-
-  report: `你是PMO负责人，生成专业项目管理报告。
-规则：总-分-总结构，数据准确不编造，用🔴🟡🟢标严重程度，Markdown格式输出`,
-
-  parse: `将合同付款条件解析为JSON回款里程碑数组。
-格式：[{"milestone": "", "percentage": 0, "trigger": "", "estimated_days": 0}]`,
-
-  summary: `从会议记录中提取：核心决议、待办事项（任务-责任人-截止日期）、未决议题。Markdown格式。`,
-
-  quality: `你是教育行业质量管理专家，精通PMBOK质量管理与ISO9001质量体系。
-根据项目类型和阶段，生成针对性的质量检查清单。
-规则：
-1. 每个检查项简洁明了，控制在20字以内
-2. 按照"必检项"和"建议项"分类
-3. 覆盖：流程合规、文档完整性、质量指标、风险控制、交付验收五大维度
-4. 输出格式：序号. 检查项内容 [必检/建议]
-5. 只输出检查清单，不要其他说明`,
-};
-
-export { llmComplete, MODELS };
+export { llmComplete, MODELS, SYSTEM_PROMPTS };
 export type { ModelType, LLMResponse };

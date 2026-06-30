@@ -1,26 +1,29 @@
 import { FeishuApiError, FeishuBaseClient } from '../../../../../features/feishu/client.ts';
-import { readFeishuConfig } from '../../../../../features/feishu/config.ts';
+import { getEffectiveFeishuConfig } from '../../../../../features/feishu/user-config.ts';
 
 export const runtime = 'nodejs';
 
 export async function GET(): Promise<Response> {
   const id = crypto.randomUUID();
-  const config = readFeishuConfig();
+  const effective = await getEffectiveFeishuConfig();
+  const config = effective.config;
   if (!config) {
     return Response.json({
       status: 'not_configured',
       identity: 'bot',
-      detail: 'Server-side Feishu app credentials and Base mapping are required.',
+      detail: effective.setupHint,
+      lark_cli_hint: effective.larkCliHint,
+      source: effective.source,
       request_id: id,
     }, {
-      status: 503,
+      status: process.env.AUTH_REQUIRED === 'true' && !effective.user ? 401 : 503,
       headers: { 'Cache-Control': 'no-store', 'X-Request-Id': id },
     });
   }
 
   try {
     const health = await new FeishuBaseClient(config).health();
-    return Response.json({ ...health, request_id: id }, {
+    return Response.json({ ...health, source: effective.source, request_id: id }, {
       status: health.status === 'ok' ? 200 : 503,
       headers: { 'Cache-Control': 'no-store', 'X-Request-Id': id },
     });
@@ -36,6 +39,7 @@ export async function GET(): Promise<Response> {
       status: 'error',
       identity: 'bot',
       code,
+      source: effective.source,
       request_id: id,
     }, {
       status: 503,

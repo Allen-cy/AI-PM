@@ -34,7 +34,7 @@ const PHASE_MODULES = [
         href: "/planning",
         icon: "🗺️",
         title: "规划中心",
-        desc: "10大知识领域规划、基准建立、整合管理",
+        desc: "管理计划、基准建立、新项目/中途接手工作流",
         color: "purple",
       },
       {
@@ -104,7 +104,7 @@ const PHASE_MODULES = [
         href: "/risk",
         icon: "🔐",
         title: "风险管理",
-        desc: "AI风险扫描、P-I矩阵、风险登记册与预警",
+        desc: "登记册、敏感性分析、跟踪管理、P-I矩阵",
         color: "purple",
       },
       {
@@ -155,6 +155,13 @@ const PHASE_MODULES = [
         title: "流程设计与白板",
         desc: "draw.io流程图、Excalidraw协作白板",
         color: "blue",
+      },
+      {
+        href: "/templates",
+        icon: "📦",
+        title: "工具/模板下载中心",
+        desc: "风险模板、敏感性分析、新项目/中途接手模板下载导入",
+        color: "purple",
       },
       {
         href: "/knowledge",
@@ -267,7 +274,7 @@ export default function Home() {
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <span style={{ fontSize: "1.4rem" }}>🏗️</span>
           <span style={{ fontWeight: 800, fontSize: "1.05rem" }}>AI项目管理助手</span>
-          <span className="tag tag-blue">V5.2.1</span>
+          <span className="tag tag-blue">V5.2.2</span>
         </div>
         <div style={{ display: "flex", gap: 16, fontSize: "0.8rem", color: "var(--text2)", alignItems: "center" }}>
           <span>作者：柴春宇</span>
@@ -276,7 +283,7 @@ export default function Home() {
           <span style={{ color: "var(--border)" }}>|</span>
           <span>飞书底座 + Vercel AI增强</span>
           <span style={{ color: "var(--border)" }}>|</span>
-          <span>DeepSeek + MiniMax</span>
+          <span>用户可配置AI模型</span>
           <span style={{ color: "var(--border)" }}>|</span>
           {currentUser ? (
             <>

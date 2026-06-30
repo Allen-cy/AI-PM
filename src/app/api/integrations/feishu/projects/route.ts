@@ -1,6 +1,6 @@
 import { feishuTableUrl } from '../../../../../features/feishu/links.ts';
 import { FeishuApiError, FeishuBaseClient, type FeishuProjectCreateInput } from '../../../../../features/feishu/client.ts';
-import { readFeishuConfig } from '../../../../../features/feishu/config.ts';
+import { getEffectiveFeishuConfig } from '../../../../../features/feishu/user-config.ts';
 
 export const runtime = 'nodejs';
 
@@ -60,13 +60,17 @@ function validateProjectBody(body: unknown): FeishuProjectCreateInput {
 
 export async function POST(request: Request): Promise<Response> {
   const requestId = crypto.randomUUID();
-  const config = readFeishuConfig();
+  const effective = await getEffectiveFeishuConfig();
+  const config = effective.config;
   if (!config || !config.tables.project) {
     return json({
       status: 'not_configured',
       code: 'FEISHU_PROJECT_NOT_CONFIGURED',
+      detail: effective.setupHint || '请在用户中心配置个人飞书项目台账表ID。',
+      lark_cli_hint: effective.larkCliHint,
+      source: effective.source,
       request_id: requestId,
-    }, 503, requestId);
+    }, process.env.AUTH_REQUIRED === 'true' && !effective.user ? 401 : 503, requestId);
   }
 
   let input: FeishuProjectCreateInput;
@@ -87,6 +91,7 @@ export async function POST(request: Request): Promise<Response> {
       status: 'succeeded',
       record_id: created.recordId,
       table_url: feishuTableUrl('project'),
+      source: effective.source,
       request_id: requestId,
     }, 201, requestId);
   } catch (error) {
@@ -100,6 +105,7 @@ export async function POST(request: Request): Promise<Response> {
     return json({
       status: 'error',
       code,
+      source: effective.source,
       request_id: requestId,
     }, 503, requestId);
   }

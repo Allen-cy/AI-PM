@@ -523,6 +523,11 @@ export default function RiskPage() {
         <span style={{ color: "var(--border)" }}>|</span>
         <span style={{ fontWeight: 700 }}>🔐 风险管理</span>
         <span className="tag tag-purple" style={{ fontSize: "0.7rem" }}>识别-分析-应对-跟踪闭环</span>
+        <div style={{ marginLeft: "auto", display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <Link href="/risk/sensitivity" className="btn-secondary" style={{ textDecoration: "none", fontSize: "0.78rem", padding: "7px 10px" }}>敏感性分析</Link>
+          <Link href="/risk/tracking" className="btn-secondary" style={{ textDecoration: "none", fontSize: "0.78rem", padding: "7px 10px" }}>风险跟踪管理</Link>
+          <Link href="/templates" className="btn-secondary" style={{ textDecoration: "none", fontSize: "0.78rem", padding: "7px 10px" }}>模板下载中心</Link>
+        </div>
       </header>
 
       <main style={{ flex: 1, padding: "32px", maxWidth: 1440, margin: "0 auto", width: "100%" }}>

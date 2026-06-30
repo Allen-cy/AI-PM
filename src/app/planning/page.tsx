@@ -175,6 +175,32 @@ export default function PlanningPage() {
         )}
       </div>
 
+      <section className="card" style={{ marginBottom: 24, borderColor: 'rgba(139,92,246,0.35)' }}>
+        <div className="section-title" style={{ color: 'var(--purple)' }}>
+          <span>🧭</span>
+          项目经理实战工作流
+        </div>
+        <p style={{ color: 'var(--text2)', fontSize: '0.85rem', lineHeight: 1.7, marginBottom: 16 }}>
+          这里不是理论说明页。使用者需要录入项目事实、交接资料、相关方、风险、计划和规则，系统再生成可下载的诊断报告、行动清单和最佳实践输出。
+        </p>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+          <Link href="/planning/takeover" className="card card-hover" style={{ textDecoration: 'none', color: 'var(--text)', borderColor: 'var(--border)' }}>
+            <div style={{ fontSize: '1.6rem', marginBottom: 10 }}>🔄</div>
+            <h2 style={{ fontSize: '1rem', marginBottom: 8 }}>中途接手项目如何开展</h2>
+            <p style={{ color: 'var(--text2)', fontSize: '0.8rem', lineHeight: 1.7 }}>
+              基于“中途接手的项目.xmind”，覆盖交接双方、组织过程资产、当前进展、项目难点、相关方和隐形信息，输出接手诊断报告。
+            </p>
+          </Link>
+          <Link href="/planning/new-project" className="card card-hover" style={{ textDecoration: 'none', color: 'var(--text)', borderColor: 'var(--border)' }}>
+            <div style={{ fontSize: '1.6rem', marginBottom: 10 }}>🚀</div>
+            <h2 style={{ fontSize: '1rem', marginBottom: 8 }}>新项目接手最佳实践</h2>
+            <p style={{ color: 'var(--text2)', fontSize: '0.8rem', lineHeight: 1.7 }}>
+              融合新项目接手XMind、项目管理20步和项目最佳实践路径，形成从了解全局到监控收尾的实操工作流。
+            </p>
+          </Link>
+        </div>
+      </section>
+
       {/* Tab Navigation */}
       <div style={{ display: 'flex', gap: '8px', marginBottom: '24px', borderBottom: '1px solid var(--border)', paddingBottom: '8px' }}>
         {[

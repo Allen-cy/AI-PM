@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import mammoth from "mammoth";
-import { SYSTEM_PROMPTS } from "@/lib/llm";
+import { SYSTEM_PROMPTS } from "@/lib/llm-prompts";
 
 const PROJECT_TYPES = [
   { value: "it", label: "信息化系统集成" },

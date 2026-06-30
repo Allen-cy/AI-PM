@@ -13,6 +13,32 @@ interface AppUser {
 }
 
 type EditMode = "name" | "email" | "phone" | "password" | null;
+type ModelProvider = "deepseek" | "minimax" | "glm" | "anthropic" | "openai-compatible";
+type FeishuTableKey = "project" | "milestone" | "task" | "risk" | "contract" | "payment" | "cost" | "syncLedger";
+
+interface AiSettings {
+  provider: ModelProvider;
+  model: string;
+  baseUrl: string;
+  enabled: boolean;
+  apiKeyConfigured: boolean;
+  apiKeyLast4: string;
+  providerOptions: ModelProvider[];
+  defaultModels: Record<ModelProvider, string>;
+}
+
+interface FeishuConnection {
+  appId: string;
+  appSecretConfigured: boolean;
+  appSecretLast4: string;
+  baseToken: string;
+  tableMapping: Partial<Record<FeishuTableKey, string>>;
+  configured: boolean;
+  status: string;
+  tableLabels: Record<FeishuTableKey, string>;
+  setupHint: string;
+  larkCliHint: string;
+}
 
 const FIELD_LABELS: Record<Exclude<EditMode, null | "password">, string> = {
   name: "用户名称",
@@ -25,11 +51,35 @@ export default function AccountPage() {
   const [profile, setProfile] = useState({ name: "", email: "", phone: "" });
   const [draftProfile, setDraftProfile] = useState({ name: "", email: "", phone: "" });
   const [passwordForm, setPasswordForm] = useState({ currentPassword: "", newPassword: "" });
+  const [aiSettings, setAiSettings] = useState<AiSettings | null>(null);
+  const [aiDraft, setAiDraft] = useState({
+    provider: "minimax" as ModelProvider,
+    model: "MiniMax-M3",
+    baseUrl: "",
+    apiKey: "",
+    enabled: true,
+  });
+  const [feishuConnection, setFeishuConnection] = useState<FeishuConnection | null>(null);
+  const [feishuDraft, setFeishuDraft] = useState<{
+    appId: string;
+    appSecret: string;
+    baseToken: string;
+    tableMapping: Partial<Record<FeishuTableKey, string>>;
+  }>({
+    appId: "",
+    appSecret: "",
+    baseToken: "",
+    tableMapping: {},
+  });
   const [editMode, setEditMode] = useState<EditMode>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [passwordMessage, setPasswordMessage] = useState<string | null>(null);
+  const [aiMessage, setAiMessage] = useState<string | null>(null);
+  const [feishuMessage, setFeishuMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [aiSaving, setAiSaving] = useState(false);
+  const [feishuSaving, setFeishuSaving] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -50,6 +100,35 @@ export default function AccountPage() {
           setUser(data.user);
           setProfile(nextProfile);
           setDraftProfile(nextProfile);
+        }
+        const [aiResponse, feishuResponse] = await Promise.all([
+          fetch("/api/user/ai-settings", { cache: "no-store" }),
+          fetch("/api/user/feishu-connection", { cache: "no-store" }),
+        ]);
+        if (!cancelled && aiResponse.ok) {
+          const aiData = await aiResponse.json() as { settings?: AiSettings };
+          if (aiData.settings) {
+            setAiSettings(aiData.settings);
+            setAiDraft({
+              provider: aiData.settings.provider,
+              model: aiData.settings.model,
+              baseUrl: aiData.settings.baseUrl,
+              apiKey: "",
+              enabled: aiData.settings.enabled,
+            });
+          }
+        }
+        if (!cancelled && feishuResponse.ok) {
+          const feishuData = await feishuResponse.json() as { connection?: FeishuConnection };
+          if (feishuData.connection) {
+            setFeishuConnection(feishuData.connection);
+            setFeishuDraft({
+              appId: feishuData.connection.appId,
+              appSecret: "",
+              baseToken: feishuData.connection.baseToken,
+              tableMapping: feishuData.connection.tableMapping,
+            });
+          }
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -121,6 +200,53 @@ export default function AccountPage() {
   const logout = async () => {
     await fetch("/api/auth/logout", { method: "POST" });
     window.location.href = "/auth/login";
+  };
+
+  const saveAiSettings = async () => {
+    setAiSaving(true);
+    setAiMessage(null);
+    try {
+      const response = await fetch("/api/user/ai-settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(aiDraft),
+      });
+      const data = await response.json() as { settings?: AiSettings; error?: string };
+      if (!response.ok || !data.settings) throw new Error(data.error || "AI模型配置保存失败");
+      setAiSettings(data.settings);
+      setAiDraft(prev => ({ ...prev, apiKey: "", model: data.settings!.model, baseUrl: data.settings!.baseUrl, provider: data.settings!.provider, enabled: data.settings!.enabled }));
+      setAiMessage("AI模型配置已保存。");
+    } catch (error) {
+      setAiMessage(error instanceof Error ? error.message : "AI模型配置保存失败");
+    } finally {
+      setAiSaving(false);
+    }
+  };
+
+  const saveFeishuConnection = async () => {
+    setFeishuSaving(true);
+    setFeishuMessage(null);
+    try {
+      const response = await fetch("/api/user/feishu-connection", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(feishuDraft),
+      });
+      const data = await response.json() as { connection?: FeishuConnection; error?: string };
+      if (!response.ok || !data.connection) throw new Error(data.error || "飞书配置保存失败");
+      setFeishuConnection(data.connection);
+      setFeishuDraft({
+        appId: data.connection.appId,
+        appSecret: "",
+        baseToken: data.connection.baseToken,
+        tableMapping: data.connection.tableMapping,
+      });
+      setFeishuMessage("个人飞书接入配置已保存。");
+    } catch (error) {
+      setFeishuMessage(error instanceof Error ? error.message : "飞书配置保存失败");
+    } finally {
+      setFeishuSaving(false);
+    }
   };
 
   const profileInput = (field: keyof typeof draftProfile) => (
@@ -453,10 +579,182 @@ export default function AccountPage() {
             )}
           </section>
         </div>
+
+        <section style={{
+          marginTop: 22,
+          borderRadius: 26,
+          padding: 24,
+          background: "linear-gradient(180deg, rgba(238,245,255,0.98), rgba(207,224,248,0.94))",
+          border: "1px solid rgba(255,255,255,0.55)",
+          boxShadow: "0 22px 44px rgba(0,0,0,0.24), inset 0 2px 1px rgba(255,255,255,0.92), inset 0 -12px 28px rgba(49,89,144,0.12)",
+        }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start", marginBottom: 18 }}>
+            <div>
+              <h2 style={{ fontSize: "1.25rem", marginBottom: 6 }}>AI模型配置</h2>
+              <p style={{ color: "#52647c", fontSize: "0.88rem", lineHeight: 1.7 }}>
+                每个用户可以配置自己的模型提供商。密钥保存后不会回显，只显示是否已配置和末四位。
+              </p>
+            </div>
+            <span style={{
+              borderRadius: 999,
+              padding: "7px 12px",
+              background: aiSettings?.apiKeyConfigured ? "rgba(40,131,76,0.12)" : "rgba(172,61,44,0.12)",
+              color: aiSettings?.apiKeyConfigured ? "#287d4b" : "#a13d2c",
+              fontWeight: 900,
+              fontSize: "0.78rem",
+            }}>
+              {aiSettings?.apiKeyConfigured ? `密钥已配置 ****${aiSettings.apiKeyLast4}` : "未配置密钥"}
+            </span>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 14 }}>
+            <div>
+              <label style={brownLabelStyle}>模型提供商</label>
+              <select
+                style={lightInputStyle}
+                value={aiDraft.provider}
+                onChange={event => {
+                  const provider = event.target.value as ModelProvider;
+                  setAiDraft(prev => ({
+                    ...prev,
+                    provider,
+                    model: aiSettings?.defaultModels?.[provider] || prev.model,
+                  }));
+                }}
+              >
+                {(aiSettings?.providerOptions || ["deepseek", "minimax", "glm", "anthropic", "openai-compatible"]).map(provider => (
+                  <option key={provider} value={provider}>{provider}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label style={brownLabelStyle}>模型名称</label>
+              <input style={lightInputStyle} value={aiDraft.model} onChange={event => setAiDraft(prev => ({ ...prev, model: event.target.value }))} placeholder="例如 MiniMax-M3 / deepseek-chat" />
+            </div>
+            <div>
+              <label style={brownLabelStyle}>Base URL（可选）</label>
+              <input style={lightInputStyle} value={aiDraft.baseUrl} onChange={event => setAiDraft(prev => ({ ...prev, baseUrl: event.target.value }))} placeholder="兼容OpenAI接口时填写" />
+            </div>
+            <div>
+              <label style={brownLabelStyle}>API Key</label>
+              <input type="password" style={lightInputStyle} value={aiDraft.apiKey} onChange={event => setAiDraft(prev => ({ ...prev, apiKey: event.target.value }))} placeholder={aiSettings?.apiKeyConfigured ? "留空表示不修改已保存密钥" : "首次配置请填写API Key"} />
+            </div>
+          </div>
+          <label style={{ marginTop: 14, display: "flex", alignItems: "center", gap: 8, color: "#52647c", fontSize: "0.84rem", fontWeight: 800 }}>
+            <input type="checkbox" checked={aiDraft.enabled} onChange={event => setAiDraft(prev => ({ ...prev, enabled: event.target.checked }))} />
+            启用我的模型配置
+          </label>
+          <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 16 }}>
+            <button className="btn-primary" onClick={saveAiSettings} disabled={aiSaving}>{aiSaving ? "保存中..." : "保存AI模型配置"}</button>
+            {aiMessage && <span style={{ color: aiMessage.includes("已") ? "#287d4b" : "#a13d2c", fontSize: "0.84rem", fontWeight: 900 }}>{aiMessage}</span>}
+          </div>
+        </section>
+
+        <section style={{
+          marginTop: 22,
+          borderRadius: 26,
+          padding: 24,
+          background: "linear-gradient(180deg, rgba(242,255,249,0.98), rgba(205,235,221,0.94))",
+          border: "1px solid rgba(255,255,255,0.55)",
+          boxShadow: "0 22px 44px rgba(0,0,0,0.24), inset 0 2px 1px rgba(255,255,255,0.92), inset 0 -12px 28px rgba(35,117,85,0.12)",
+        }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start", marginBottom: 18 }}>
+            <div>
+              <h2 style={{ fontSize: "1.25rem", marginBottom: 6 }}>个人飞书接入</h2>
+              <p style={{ color: "#4e695d", fontSize: "0.88rem", lineHeight: 1.7 }}>
+                注册用户使用自己的飞书应用和多维表格。使用飞书相关功能时，系统优先读取这里的个人配置。
+              </p>
+            </div>
+            <span style={{
+              borderRadius: 999,
+              padding: "7px 12px",
+              background: feishuConnection?.configured ? "rgba(40,131,76,0.12)" : "rgba(172,61,44,0.12)",
+              color: feishuConnection?.configured ? "#287d4b" : "#a13d2c",
+              fontWeight: 900,
+              fontSize: "0.78rem",
+            }}>
+              {feishuConnection?.configured ? `已配置 App Secret ****${feishuConnection.appSecretLast4}` : "未完成配置"}
+            </span>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 14 }}>
+            <div>
+              <label style={brownLabelStyle}>App ID</label>
+              <input style={lightInputStyle} value={feishuDraft.appId} onChange={event => setFeishuDraft(prev => ({ ...prev, appId: event.target.value }))} placeholder="飞书开放平台应用App ID" />
+            </div>
+            <div>
+              <label style={brownLabelStyle}>App Secret</label>
+              <input type="password" style={lightInputStyle} value={feishuDraft.appSecret} onChange={event => setFeishuDraft(prev => ({ ...prev, appSecret: event.target.value }))} placeholder={feishuConnection?.appSecretConfigured ? "留空表示不修改已保存密钥" : "首次配置必须填写"} />
+            </div>
+            <div>
+              <label style={brownLabelStyle}>多维表格 App Token</label>
+              <input style={lightInputStyle} value={feishuDraft.baseToken} onChange={event => setFeishuDraft(prev => ({ ...prev, baseToken: event.target.value }))} placeholder="Base App Token" />
+            </div>
+          </div>
+
+          <div style={{ marginTop: 18 }}>
+            <div style={{ fontWeight: 900, marginBottom: 10 }}>智能表表ID映射（飞书字段名称请使用中文描述）</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12 }}>
+              {(Object.keys(feishuConnection?.tableLabels || {
+                project: "项目台账表ID",
+                milestone: "里程碑表ID",
+                task: "任务表ID",
+                risk: "风险表ID",
+                contract: "合同表ID",
+                payment: "回款表ID",
+                cost: "成本表ID",
+                syncLedger: "同步流水表ID",
+              }) as FeishuTableKey[]).map(key => (
+                <div key={key}>
+                  <label style={brownLabelStyle}>{feishuConnection?.tableLabels?.[key] || key}</label>
+                  <input
+                    style={lightInputStyle}
+                    value={feishuDraft.tableMapping[key] || ""}
+                    onChange={event => setFeishuDraft(prev => ({
+                      ...prev,
+                      tableMapping: { ...prev.tableMapping, [key]: event.target.value },
+                    }))}
+                    placeholder="tbl..."
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ marginTop: 16, padding: 14, borderRadius: 16, background: "rgba(255,255,255,0.52)", border: "1px solid rgba(79,125,104,0.16)", color: "#4e695d", fontSize: "0.82rem", lineHeight: 1.7 }}>
+            <div><strong>网页端：</strong>{feishuConnection?.setupHint || "请配置个人飞书应用、多维表格App Token和表ID。"}</div>
+            <div style={{ marginTop: 6 }}><strong>本机/Codex直连：</strong>{feishuConnection?.larkCliHint || "如果通过本机脚本直接操作飞书，需要安装并配置 lark-cli。"}</div>
+          </div>
+
+          <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 16 }}>
+            <button className="btn-primary" onClick={saveFeishuConnection} disabled={feishuSaving}>{feishuSaving ? "保存中..." : "保存个人飞书配置"}</button>
+            {feishuMessage && <span style={{ color: feishuMessage.includes("已") ? "#287d4b" : "#a13d2c", fontSize: "0.84rem", fontWeight: 900 }}>{feishuMessage}</span>}
+          </div>
+        </section>
       </div>
     </main>
   );
 }
+
+const brownLabelStyle = {
+  display: "block",
+  color: "#6f563e",
+  fontSize: "0.78rem",
+  fontWeight: 900,
+  marginBottom: 7,
+} as const;
+
+const lightInputStyle = {
+  width: "100%",
+  border: "1px solid rgba(76,58,39,0.18)",
+  borderRadius: 14,
+  padding: "12px 13px",
+  background: "linear-gradient(180deg, rgba(255,255,255,0.92), rgba(241,246,252,0.84))",
+  color: "#2b2118",
+  boxShadow: "inset 0 2px 6px rgba(72,51,28,0.08), 0 1px 0 rgba(255,255,255,0.9)",
+  outline: "none",
+  fontSize: "0.9rem",
+} as const;
 
 const profileInputStyle = {
   width: "100%",

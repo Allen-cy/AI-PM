@@ -461,10 +461,40 @@ create table if not exists app_sessions (
   created_at timestamptz default now()
 );
 
+create table if not exists user_ai_settings (
+  id uuid primary key default uuid_generate_v4(),
+  user_id uuid not null references app_users(id) on delete cascade,
+  provider text not null default 'minimax',
+  model text not null default 'MiniMax-M3',
+  base_url text,
+  api_key text,
+  api_key_last4 text,
+  enabled boolean not null default true,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now(),
+  unique (user_id)
+);
+
+create table if not exists user_feishu_connections (
+  id uuid primary key default uuid_generate_v4(),
+  user_id uuid not null references app_users(id) on delete cascade,
+  app_id text,
+  app_secret text,
+  base_token text,
+  table_mapping jsonb not null default '{}',
+  connection_mode text not null default 'web_app',
+  status text not null default 'configured',
+  created_at timestamptz default now(),
+  updated_at timestamptz default now(),
+  unique (user_id)
+);
+
 alter table app_users enable row level security;
 alter table user_registration_requests enable row level security;
 alter table user_registration_codes enable row level security;
 alter table app_sessions enable row level security;
+alter table user_ai_settings enable row level security;
+alter table user_feishu_connections enable row level security;
 
 -- Auth tables are intentionally service-role only.
 -- Do not add public policies for these tables.
@@ -475,3 +505,5 @@ create index if not exists idx_registration_requests_status on user_registration
 create index if not exists idx_registration_codes_lookup on user_registration_codes(email, phone, code_hash);
 create index if not exists idx_app_sessions_token on app_sessions(token_hash);
 create index if not exists idx_app_sessions_user on app_sessions(user_id);
+create index if not exists idx_user_ai_settings_user on user_ai_settings(user_id);
+create index if not exists idx_user_feishu_connections_user on user_feishu_connections(user_id);
