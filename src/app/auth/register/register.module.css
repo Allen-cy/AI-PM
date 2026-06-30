@@ -237,9 +237,21 @@
     0 14px 26px rgba(107, 79, 196, 0.12);
 }
 
+.input:disabled {
+  cursor: not-allowed;
+  color: rgba(48, 37, 69, 0.58);
+  background: rgba(255, 255, 255, 0.28);
+}
+
 .codeInput {
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+.textarea {
+  min-height: 112px;
+  resize: vertical;
+  line-height: 1.6;
 }
 
 .submitButton {

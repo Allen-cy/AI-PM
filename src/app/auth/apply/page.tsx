@@ -1,7 +1,9 @@
 "use client";
 
 import Link from "next/link";
+import type { FormEvent } from "react";
 import { useState } from "react";
+import styles from "../register/register.module.css";
 
 export default function ApplyPage() {
   const [form, setForm] = useState({ name: "", email: "", phone: "", reason: "" });
@@ -11,7 +13,8 @@ export default function ApplyPage() {
 
   const update = (key: keyof typeof form, value: string) => setForm(prev => ({ ...prev, [key]: value }));
 
-  const submit = async () => {
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
     setLoading(true);
     setMessage(null);
     try {
@@ -31,32 +34,110 @@ export default function ApplyPage() {
     }
   };
 
+  const isSuccess = message === "申请已提交，待管理员审核后会通过邮件发送注册码。";
+
   return (
-    <main style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: "var(--bg)", padding: 24 }}>
-      <div className="card" style={{ width: "100%", maxWidth: 520, padding: 28 }}>
-        <Link href="/" style={{ color: "var(--text2)", textDecoration: "none", fontSize: "0.85rem" }}>← 返回首页</Link>
-        <h1 style={{ marginTop: 18, fontSize: "1.6rem" }}>申请使用 AI PMO</h1>
-        <p style={{ color: "var(--text2)", fontSize: "0.9rem", lineHeight: 1.6 }}>
-          初期采用申请制。管理员审核通过后，系统会向你的邮箱发送一次性注册码。
-        </p>
-        <div style={{ display: "grid", gap: 12, marginTop: 20 }}>
-          <input className="input" placeholder="姓名" value={form.name} onChange={event => update("name", event.target.value)} disabled={submitted} />
-          <input className="input" placeholder="邮箱" value={form.email} onChange={event => update("email", event.target.value)} disabled={submitted} />
-          <input className="input" placeholder="手机号码" value={form.phone} onChange={event => update("phone", event.target.value)} disabled={submitted} />
-          <textarea className="input" placeholder="申请原因，可选" rows={4} value={form.reason} onChange={event => update("reason", event.target.value)} disabled={submitted} />
-          <button className="btn-primary" onClick={submit} disabled={loading || submitted}>
+    <main className={styles.page}>
+      <div className={styles.orbOne} aria-hidden="true" />
+      <div className={styles.orbTwo} aria-hidden="true" />
+      <div className={styles.orbThree} aria-hidden="true" />
+
+      <section className={styles.shell} aria-labelledby="apply-title">
+        <div className={styles.introPanel}>
+          <Link href="/" className={styles.backLink}>← 返回首页</Link>
+          <div className={styles.badge}>AI PMO · 申请入口</div>
+          <h1 id="apply-title" className={styles.title}>申请使用 AI PMO</h1>
+          <p className={styles.description}>
+            当前账号体系采用申请制。提交信息后，管理员会在注册审核入口处理申请，并向审核通过的邮箱发送一次性注册码。
+          </p>
+          <div className={styles.noticeCard}>
+            <span className={styles.noticeIcon} aria-hidden="true">✦</span>
+            <div>
+              <strong>申请后会发生什么</strong>
+              <p>申请提交后按钮会置灰，避免重复提交。审核通过后，你会收到注册码，再前往注册页创建账号。</p>
+            </div>
+          </div>
+        </div>
+
+        <form className={styles.formPanel} onSubmit={submit}>
+          <div className={styles.formHeader}>
+            <span className={styles.formEyebrow}>Access request</span>
+            <h2>提交申请信息</h2>
+            <p>请填写真实邮箱和手机号码，便于管理员核对并发送注册码。</p>
+          </div>
+
+          <div className={styles.fieldGrid}>
+            <label className={styles.field} htmlFor="name">
+              <span>姓名</span>
+              <input
+                id="name"
+                className={styles.input}
+                placeholder="请输入姓名"
+                value={form.name}
+                autoComplete="name"
+                onChange={event => update("name", event.target.value)}
+                disabled={submitted}
+              />
+            </label>
+
+            <label className={styles.field} htmlFor="email">
+              <span>邮箱</span>
+              <input
+                id="email"
+                className={styles.input}
+                type="email"
+                placeholder="name@example.com"
+                value={form.email}
+                autoComplete="email"
+                onChange={event => update("email", event.target.value)}
+                disabled={submitted}
+              />
+            </label>
+
+            <label className={styles.field} htmlFor="phone">
+              <span>手机号码</span>
+              <input
+                id="phone"
+                className={styles.input}
+                type="tel"
+                placeholder="请输入手机号码"
+                value={form.phone}
+                autoComplete="tel"
+                onChange={event => update("phone", event.target.value)}
+                disabled={submitted}
+              />
+            </label>
+
+            <label className={styles.field} htmlFor="reason">
+              <span>申请原因</span>
+              <textarea
+                id="reason"
+                className={`${styles.input} ${styles.textarea}`}
+                placeholder="申请原因，可选"
+                rows={4}
+                value={form.reason}
+                onChange={event => update("reason", event.target.value)}
+                disabled={submitted}
+              />
+            </label>
+          </div>
+
+          <button className={styles.submitButton} type="submit" disabled={loading || submitted}>
             {submitted ? "申请已提交，请等待审核" : loading ? "提交中..." : "提交申请"}
           </button>
-        </div>
+        </form>
+
         {message && (
-          <div style={{ marginTop: 14, color: message.includes("已提交") ? "var(--green)" : "var(--red)", fontSize: "0.84rem" }}>
+          <div className={isSuccess ? styles.successMessage : styles.errorMessage} role="status" aria-live="polite">
             {message}
           </div>
         )}
-        <div style={{ marginTop: 18, fontSize: "0.84rem" }}>
-          <Link href="/auth/register" style={{ color: "var(--accent2)" }}>已有注册码，去注册</Link>
+
+        <div className={styles.footerLinks}>
+          <Link href="/auth/register">已有注册码，去注册</Link>
+          <Link href="/auth/login">去登录</Link>
         </div>
-      </div>
+      </section>
     </main>
   );
 }
