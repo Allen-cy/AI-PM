@@ -67,6 +67,10 @@ npm run build
 - 飞书端已建立8张业务表；公开项目记录API会等用户登录和授权模型完成后再开放。
 - 全仓历史 ESLint 基线仍有旧问题；V4新增/改动文件执行独立零错误门禁。
 
+## AI-PMO System V5.2.6
+
+V5.2.6 修复数据与集成中心的 RAG 健康字段兼容：线上 `/api/operating-system/integrations` 透传 RAG 健康检查时使用 `index_version`、`page_count`、`retrieval_mode` 等 snake_case 字段，页面现在同时兼容 snake_case 和 camelCase，避免知识库索引版本、语料数量、检索模式显示为 undefined。
+
 ## AI-PMO System V5.2.5
 
 V5.2.5 将“PM/PMO真实使用视角”的增强建议沉淀为正式需求与任务计划，并落地第一批 P1 功能入口：新增 `docs/ai-pmo-pm-pmo-operating-system-requirements-2026-07-01.md`，同时同步到主工作区可见知识库；首页新增“PMO操作系统”分区，接入 `/workbench` PM/PMO每日工作台、`/integration-center` 数据与集成中心、`/governance-workflows` 治理工作流中心；新增 `/api/operating-system/integrations` 聚合 AI模型、飞书、RAG 和数据质量规则的脱敏状态，新增 `/api/operating-system/workbench` 基于飞书项目组合数据生成今日动作、重点项目进度链和 AI 建议依据；治理工作流中心固化立项评审、阶段门、变更评审、风险升级和项目收尾验收的输入、输出、责任人、状态和审计要求，为后续 Supabase 持久化审批、飞书回写、风险-问题-变更-行动项链路打通奠定结构。

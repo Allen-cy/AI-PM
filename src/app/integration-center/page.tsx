@@ -15,7 +15,16 @@ type Snapshot = {
     detail?: string;
     code?: string;
   };
-  rag: { status: string; provider: string; indexVersion: string; pageCount: number; retrievalMode: string };
+  rag: {
+    status: string;
+    provider: string;
+    indexVersion?: string;
+    index_version?: string;
+    pageCount?: number;
+    page_count?: number;
+    retrievalMode?: string;
+    retrieval_mode?: string;
+  };
   dependencies: Array<{ key: string; name: string; category: string; description: string; owner: string; action: string }>;
   data_quality_rules: Array<{ id: string; name: string; scope: string; severity: string; description: string; nextAction: string }>;
 };
@@ -66,6 +75,10 @@ export default function IntegrationCenterPage() {
     };
   }, []);
 
+  const ragIndexVersion = snapshot?.rag.indexVersion ?? snapshot?.rag.index_version ?? "未知";
+  const ragPageCount = snapshot?.rag.pageCount ?? snapshot?.rag.page_count ?? 0;
+  const ragRetrievalMode = snapshot?.rag.retrievalMode ?? snapshot?.rag.retrieval_mode ?? "未知";
+
   return (
     <main style={{ minHeight: "100vh", background: "var(--bg)", padding: "28px 32px" }}>
       <div style={{ maxWidth: 1180, margin: "0 auto" }}>
@@ -109,9 +122,9 @@ export default function IntegrationCenterPage() {
 
               <div className="card">
                 <div className="section-title">📚 RAG 知识库 <StatusPill status={snapshot.rag.status} /></div>
-                <div style={{ fontSize: "1.25rem", fontWeight: 800 }}>{snapshot.rag.pageCount} 篇语料</div>
+                <div style={{ fontSize: "1.25rem", fontWeight: 800 }}>{ragPageCount} 篇语料</div>
                 <p style={{ color: "var(--text2)", marginTop: 8, lineHeight: 1.6 }}>
-                  索引：{snapshot.rag.indexVersion}；模式：{snapshot.rag.retrievalMode}
+                  索引：{ragIndexVersion}；模式：{ragRetrievalMode}
                 </p>
               </div>
             </section>
