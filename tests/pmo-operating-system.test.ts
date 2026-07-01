@@ -12,6 +12,7 @@ import {
   evaluateDataQuality,
   evaluateFeishuFieldMappings,
 } from '../src/features/operating-system/diagnostics.ts';
+import { buildOperationalWorkbench } from '../src/features/operating-system/workbench.ts';
 import type { DashboardData } from '../src/features/dashboard/types.ts';
 
 test('operating system dependencies cover data ai knowledge and storage', () => {
@@ -166,4 +167,99 @@ test('integration diagnostics summarize failed mappings and data quality issues'
   assert.equal(advices.some(item => item.id === 'data-quality-issues'), true);
   assert.equal(advices.some(item => item.id === 'ai-model-not-configured'), true);
   assert.equal(advices.some(item => item.id === 'sync-log-not-persisted'), true);
+});
+
+test('operational workbench filters projects risks todos and reminders for current user', () => {
+  const workbench = buildOperationalWorkbench({
+    user: { name: '张三', email: 'zhangsan@example.com', phone: '13800000000', role: 'user' },
+    projects: [
+      {
+        项目编号: 'P-1',
+        项目名称: '张三负责项目',
+        项目负责人: '张三',
+        项目状态: '进行中',
+        当前阶段: '执行',
+        当前进度: 0.55,
+        风险等级: '高',
+        应收金额: 20,
+        到期日期: '2026-07-02',
+      },
+      {
+        项目编号: 'P-2',
+        项目名称: '李四负责项目',
+        项目负责人: '李四',
+        项目状态: '进行中',
+        当前进度: 0.9,
+      },
+    ],
+    risks: [
+      {
+        风险编号: 'R-1',
+        项目名称: '张三负责项目',
+        风险描述: '核心资源冲突',
+        风险等级: '高',
+        状态: '应对中',
+        风险责任人: '张三',
+        复核日期: '2026-07-02',
+        应对措施: '升级资源协调',
+      },
+    ],
+    tasks: [
+      {
+        任务编号: 'T-1',
+        项目名称: '张三负责项目',
+        任务名称: '完成阶段计划',
+        责任人: '张三',
+        计划完成: '2026-07-02',
+        任务状态: '进行中',
+      },
+    ],
+    milestones: [
+      {
+        里程碑编号: 'M-1',
+        项目名称: '李四负责项目',
+        里程碑名称: '李四项目阶段门',
+        责任人: '李四',
+        计划完成: '2026-07-02',
+        里程碑状态: '进行中',
+      },
+    ],
+    payments: [
+      {
+        回款编号: 'PAY-1',
+        项目名称: '张三负责项目',
+        客户名称: '客户A',
+        应收金额: 20,
+        到期日期: '2026-07-02',
+        回款状态: '待回款',
+      },
+    ],
+  });
+
+  assert.equal(workbench.evidence.userScope, 'matched-owner');
+  assert.equal(workbench.myProjects.length, 1);
+  assert.equal(workbench.myProjects[0].name, '张三负责项目');
+  assert.equal(workbench.myRisks.length, 1);
+  assert.equal(workbench.todayTodos.some(item => item.id === 'T-1'), true);
+  assert.equal(workbench.todayTodos.some(item => item.id === 'M-1'), false);
+  assert.equal(workbench.businessReminders.length >= 1, true);
+  assert.match(workbench.aiSuggestions[0].basis, /任务1条/);
+});
+
+test('operational workbench shows all records for admin role', () => {
+  const workbench = buildOperationalWorkbench({
+    user: { name: '管理员', role: 'admin' },
+    projects: [
+      { 项目编号: 'P-1', 项目名称: '项目A', 项目负责人: '张三', 项目状态: '进行中', 当前进度: 0.5 },
+      { 项目编号: 'P-2', 项目名称: '项目B', 项目负责人: '李四', 项目状态: '进行中', 当前进度: 0.6 },
+    ],
+    risks: [],
+    tasks: [],
+    milestones: [],
+    payments: [],
+  });
+
+  assert.equal(workbench.evidence.userScope, 'admin-all');
+  assert.equal(workbench.myProjects.length, 2);
+  assert.equal(workbench.kpis.find(item => item.label === '我的项目')?.value, '2');
 });
