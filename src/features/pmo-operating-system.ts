@@ -48,7 +48,7 @@ export interface WorkbenchSummary {
   kpis: Array<{ label: string; value: string; hint: string; status: HealthStatus }>;
   actions: WorkbenchAction[];
   keyProjects: Array<{ name: string; status: string; progress: string; risk: string; next: string }>;
-  aiSuggestions: Array<{ title: string; basis: string; confirmation: string }>;
+  aiSuggestions: Array<{ title: string; basis: string; confirmation: string; actionTitle?: string; priority?: "P0" | "P1" | "P2"; owner?: string; dueDate?: string }>;
 }
 
 export const operatingDependencies: OperatingDependency[] = [

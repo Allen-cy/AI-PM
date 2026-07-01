@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
+import type { AiEvidence, AiSuggestedAction } from "@/features/ai/evidence";
 import {
   Task,
   Deliverable,
@@ -22,9 +24,11 @@ export default function ExecutionPage() {
     summary: string;
     risks: string[];
     recommendations: string[];
+    evidence?: AiEvidence;
   } | null>(null);
   const [loadingAI, setLoadingAI] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [savingEvidenceAction, setSavingEvidenceAction] = useState<string | null>(null);
 
   const blockedTasks = getBlockedTasks(tasks);
   const teamWorkload = calculateTeamWorkload(tasks);
@@ -84,6 +88,7 @@ export default function ExecutionPage() {
         summary: typeof data.summary === "string" ? data.summary : "当前执行数据已完成分析，但AI返回格式不完整。",
         risks: Array.isArray(data.risks) ? data.risks : ["AI返回格式异常，请人工复核阻塞任务和交付物状态。"],
         recommendations: Array.isArray(data.recommendations) ? data.recommendations : ["优先处理阻塞任务，并补齐交付物验收责任人。"],
+        evidence: data.evidence,
       });
     } catch {
       setAiSummary({
@@ -99,6 +104,37 @@ export default function ExecutionPage() {
       });
     } finally {
       setLoadingAI(false);
+    }
+  };
+
+  const convertEvidenceAction = async (action: AiSuggestedAction, index: number) => {
+    if (!aiSummary?.evidence) return;
+    const actionKey = `${aiSummary.evidence.id}-${index}`;
+    setSavingEvidenceAction(actionKey);
+    setMessage(null);
+    try {
+      const response = await fetch("/api/issue-change", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          operation: "create_action",
+          title: action.title,
+          owner: action.owner || "项目经理",
+          dueDate: action.dueDate,
+          priority: action.priority,
+          projectName: "执行与交付",
+          sourceType: "manual",
+          sourceId: aiSummary.evidence.id,
+          sourceReason: action.sourceReason,
+        }),
+      });
+      const payload = await response.json().catch(() => ({})) as { action?: { id?: string }; error?: string; migrationHint?: string };
+      if (!response.ok || !payload.action) throw new Error([payload.error, payload.migrationHint].filter(Boolean).join("；") || "行动项创建失败");
+      setMessage(`已转为问题/变更行动项：${payload.action.id || action.title}`);
+    } catch (e: unknown) {
+      setMessage(`行动项创建失败：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSavingEvidenceAction(null);
     }
   };
 
@@ -144,7 +180,7 @@ export default function ExecutionPage() {
         gap: 16,
         background: "var(--surface)",
       }}>
-        <a href="/" style={{ color: "var(--text2)", textDecoration: "none", fontSize: "0.85rem" }}>← 返回首页</a>
+        <Link href="/" style={{ color: "var(--text2)", textDecoration: "none", fontSize: "0.85rem" }}>← 返回首页</Link>
         <span style={{ color: "var(--border)" }}>|</span>
         <span style={{ fontWeight: 700 }}>⚡ 执行与交付</span>
         <span className="tag" style={{ background: "rgba(6,182,212,0.15)", color: "var(--cyan)", border: "1px solid rgba(6,182,212,0.3)" }}>
@@ -488,6 +524,42 @@ export default function ExecutionPage() {
                     </div>
                   ))}
                 </div>
+                {aiSummary.evidence && (
+                  <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid rgba(6,182,212,0.22)" }}>
+                    <div style={{ fontSize: "0.72rem", fontWeight: 800, color: "var(--text2)", marginBottom: 8, textTransform: "uppercase" }}>依据与审计</div>
+                    <div style={{ fontSize: "0.78rem", color: "var(--text2)", lineHeight: 1.6, marginBottom: 8 }}>
+                      {aiSummary.evidence.inputSummary}
+                    </div>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+                      <span className="tag" style={{ background: "rgba(6,182,212,0.15)", color: "var(--cyan)" }}>{aiSummary.evidence.model}</span>
+                      <span className="tag" style={{ background: "rgba(139,92,246,0.14)", color: "var(--purple)" }}>{aiSummary.evidence.status}</span>
+                      <span className="tag" style={{ background: "rgba(245,158,11,0.14)", color: "var(--amber)" }}>{aiSummary.evidence.confidence}</span>
+                    </div>
+                    {aiSummary.evidence.basis.map(item => (
+                      <div key={`${item.source}-${item.label}`} style={{ fontSize: "0.76rem", color: "var(--text2)", lineHeight: 1.5, marginBottom: 4 }}>
+                        <strong style={{ color: "var(--text)" }}>{item.label}：</strong>{item.detail}
+                      </div>
+                    ))}
+                    {aiSummary.evidence.suggestedActions.map((action, index) => {
+                      const actionKey = `${aiSummary.evidence!.id}-${index}`;
+                      return (
+                        <div key={action.title} style={{ marginTop: 8, padding: "8px 10px", borderRadius: 8, background: "rgba(16,185,129,0.08)", display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+                          <span style={{ fontSize: "0.76rem", color: "var(--text2)", lineHeight: 1.5 }}>
+                            <strong style={{ color: "var(--green)" }}>{action.priority}</strong> · {action.title} · {action.owner || "待定"} · {action.dueDate || "待定"}
+                          </span>
+                          <button className="btn-secondary" onClick={() => void convertEvidenceAction(action, index)} disabled={savingEvidenceAction === actionKey} style={{ fontSize: "0.7rem", padding: "4px 8px", whiteSpace: "nowrap" }}>
+                            {savingEvidenceAction === actionKey ? "转入中..." : "转行动项"}
+                          </button>
+                        </div>
+                      );
+                    })}
+                    <div style={{ marginTop: 8, fontSize: "0.75rem", color: aiSummary.evidence.auditStatus === "succeeded" ? "var(--green)" : "var(--amber)" }}>
+                      审计状态：{aiSummary.evidence.auditStatus || "待写入"}
+                      {aiSummary.evidence.auditId ? ` · ${aiSummary.evidence.auditId}` : ""}
+                      {aiSummary.evidence.auditWarning ? ` · ${aiSummary.evidence.auditWarning}` : ""}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 

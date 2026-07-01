@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import type { AiEvidence, AiSuggestedAction } from "@/features/ai/evidence";
 import {
   type LinkedModule,
   type Risk,
@@ -269,6 +270,9 @@ export default function RiskPage() {
   const [scanStage, setScanStage] = useState<RiskStage>("规划");
   const [scanning, setScanning] = useState(false);
   const [loadingFeishu, setLoadingFeishu] = useState(false);
+  const [lastRiskEvidence, setLastRiskEvidence] = useState<AiEvidence | null>(null);
+  const [savingEvidenceAction, setSavingEvidenceAction] = useState<string | null>(null);
+  const [evidenceActionMessage, setEvidenceActionMessage] = useState("");
   const [reviewNow] = useState(() => Date.now());
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -453,13 +457,15 @@ export default function RiskPage() {
     setScanning(true);
     setError("");
     setMessage("");
+    setEvidenceActionMessage("");
     try {
       const response = await fetch("/api/risk/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ projectDescription: projectDesc, projectName: scanProjectName, stage: scanStage }),
       });
-      const data = await response.json() as { risks?: Risk[]; aiReasoning?: string; error?: string };
+      const data = await response.json() as { risks?: Risk[]; aiReasoning?: string; error?: string; evidence?: AiEvidence };
+      setLastRiskEvidence(data.evidence ?? null);
       if (!response.ok || !Array.isArray(data.risks)) throw new Error(data.error || "AI风险扫描失败");
       const saveResponse = await fetch("/api/risk", {
         method: "POST",
@@ -475,6 +481,37 @@ export default function RiskPage() {
       setError(`风险扫描失败：${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setScanning(false);
+    }
+  };
+
+  const convertEvidenceAction = async (action: AiSuggestedAction, index: number) => {
+    if (!lastRiskEvidence) return;
+    const actionKey = `${lastRiskEvidence.id}-${index}`;
+    setSavingEvidenceAction(actionKey);
+    setEvidenceActionMessage("");
+    try {
+      const response = await fetch("/api/issue-change", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          operation: "create_action",
+          title: action.title,
+          owner: action.owner || "项目经理",
+          dueDate: action.dueDate,
+          priority: action.priority,
+          projectName: scanProjectName || "风险管理",
+          sourceType: "risk",
+          sourceId: lastRiskEvidence.id,
+          sourceReason: action.sourceReason,
+        }),
+      });
+      const payload = await response.json().catch(() => ({})) as { action?: { id?: string }; error?: string; migrationHint?: string };
+      if (!response.ok || !payload.action) throw new Error([payload.error, payload.migrationHint].filter(Boolean).join("；") || "行动项创建失败");
+      setEvidenceActionMessage(`已转为问题/变更行动项：${payload.action.id || action.title}`);
+    } catch (e: unknown) {
+      setEvidenceActionMessage(`行动项创建失败：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSavingEvidenceAction(null);
     }
   };
 
@@ -673,6 +710,63 @@ export default function RiskPage() {
                   {scanning ? "扫描中..." : "AI风险扫描"}
                 </button>
               </div>
+              {lastRiskEvidence && (
+                <div style={{
+                  marginTop: 14,
+                  padding: "14px 16px",
+                  borderRadius: 12,
+                  border: "1px solid rgba(139,92,246,0.25)",
+                  background: "rgba(139,92,246,0.08)",
+                  fontSize: "0.8rem",
+                  lineHeight: 1.7,
+                }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginBottom: 8 }}>
+                    <div>
+                      <div style={{ fontWeight: 800, color: "var(--purple)" }}>AI风险扫描依据</div>
+                      <div style={{ color: "var(--text2)" }}>{lastRiskEvidence.inputSummary}</div>
+                    </div>
+                    <span className="tag tag-purple" style={{ whiteSpace: "nowrap" }}>
+                      {lastRiskEvidence.model} · {lastRiskEvidence.status} · {lastRiskEvidence.confidence}
+                    </span>
+                  </div>
+                  <div style={{ color: "var(--text)", marginBottom: 8 }}>{lastRiskEvidence.outputSummary}</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                    <div>
+                      <div style={{ fontWeight: 800, color: "var(--text2)", marginBottom: 6 }}>依据来源</div>
+                      {lastRiskEvidence.basis.map(item => (
+                        <div key={`${item.source}-${item.label}`} style={{ color: "var(--text2)", marginBottom: 4 }}>
+                          <strong style={{ color: "var(--text)" }}>{item.label}：</strong>{item.detail}
+                        </div>
+                      ))}
+                      <div style={{ marginTop: 6, color: "var(--text2)" }}>
+                        引用：{lastRiskEvidence.citations.join(" / ")}
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ fontWeight: 800, color: "var(--text2)", marginBottom: 6 }}>建议动作</div>
+                      {lastRiskEvidence.suggestedActions.map((action, index) => {
+                        const actionKey = `${lastRiskEvidence.id}-${index}`;
+                        return (
+                          <div key={action.title} style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                            <span style={{ color: "var(--text2)" }}>
+                              <strong style={{ color: "var(--amber)" }}>{action.priority}</strong> · {action.title} · {action.owner || "待定"} · {action.dueDate || "待定"}
+                            </span>
+                            <button className="btn-secondary" onClick={() => void convertEvidenceAction(action, index)} disabled={savingEvidenceAction === actionKey} style={{ fontSize: "0.72rem", padding: "4px 8px", whiteSpace: "nowrap" }}>
+                              {savingEvidenceAction === actionKey ? "转入中..." : "转行动项"}
+                            </button>
+                          </div>
+                        );
+                      })}
+                      <div style={{ color: lastRiskEvidence.auditStatus === "succeeded" ? "var(--green)" : "var(--amber)" }}>
+                        审计状态：{lastRiskEvidence.auditStatus || "待写入"}
+                        {lastRiskEvidence.auditId ? ` · ${lastRiskEvidence.auditId}` : ""}
+                        {lastRiskEvidence.auditWarning ? ` · ${lastRiskEvidence.auditWarning}` : ""}
+                      </div>
+                      {evidenceActionMessage && <div style={{ marginTop: 8, color: evidenceActionMessage.includes("失败") ? "var(--red)" : "var(--green)" }}>{evidenceActionMessage}</div>}
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, marginBottom: 16 }}>

@@ -1,4 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getCurrentUser } from '@/features/auth/server';
+import { buildExecutionSummaryEvidence, withAuditResult } from '@/features/ai/evidence';
+import { persistAiEvidence } from '@/features/ai/evidence-repository';
 import { llmComplete } from '@/lib/llm';
 
 const SYSTEM_PROMPT = `你是AI PM系统执行与交付模块的智能助手。
@@ -38,15 +41,21 @@ function buildFallbackSummary(tasks: ExecutionTask[], deliverables: ExecutionDel
 }
 
 export async function POST(req: NextRequest) {
+  const requestId = crypto.randomUUID();
+  const user = await getCurrentUser();
   try {
     const { tasks = [], deliverables = [], projectId } = await req.json();
+    const typedTasks = tasks as ExecutionTask[];
+    const typedDeliverables = deliverables as ExecutionDeliverable[];
+    const blockedTaskCount = typedTasks.filter(task => task.status === 'blocked').length;
+    const pendingDeliverableCount = typedDeliverables.filter(deliverable => ['pending', 'in-progress', 'rejected'].includes(deliverable.status)).length;
 
-    const taskSummary = tasks
+    const taskSummary = typedTasks
       .map((t: ExecutionTask) =>
         `- ${t.name} [${t.status}] @${t.assignee}`)
       .join('\n');
 
-    const deliverableSummary = deliverables
+    const deliverableSummary = typedDeliverables
       .map((d: ExecutionDeliverable) =>
         `- ${d.name} [${d.status}]`)
       .join('\n');
@@ -66,13 +75,17 @@ ${deliverableSummary}
   "recommendations": ["建议1", "建议2", "建议3"]
 }`;
 
+    let resultModel = "configured-llm";
+    let parsedStatus: "generated" | "fallback" = "generated";
     const result = await llmComplete("execution", SYSTEM_PROMPT, userMessage);
+    resultModel = result.model;
 
     let parsed;
     try {
       const jsonMatch = result.content.match(/\{[\s\S]*\}/);
       parsed = JSON.parse(jsonMatch?.[0] ?? result.content);
     } catch {
+      parsedStatus = "fallback";
       parsed = {
         summary: result.content.slice(0, 200),
         risks: ['数据解析异常，请人工确认'],
@@ -80,14 +93,40 @@ ${deliverableSummary}
       };
     }
 
+    const evidence = buildExecutionSummaryEvidence({
+      projectId,
+      taskCount: typedTasks.length,
+      blockedTaskCount,
+      deliverableCount: typedDeliverables.length,
+      pendingDeliverableCount,
+      model: parsedStatus === "generated" ? resultModel : `${resultModel}/parse-fallback`,
+      status: parsedStatus,
+    });
+    const audit = await persistAiEvidence({ evidence, user, requestId, metadata: { route: "/api/execution" } });
+
     return NextResponse.json({
-      summary: typeof parsed.summary === 'string' ? parsed.summary : buildFallbackSummary(tasks, deliverables).summary,
-      risks: Array.isArray(parsed.risks) ? parsed.risks : buildFallbackSummary(tasks, deliverables).risks,
-      recommendations: Array.isArray(parsed.recommendations) ? parsed.recommendations : buildFallbackSummary(tasks, deliverables).recommendations,
+      request_id: requestId,
+      summary: typeof parsed.summary === 'string' ? parsed.summary : buildFallbackSummary(typedTasks, typedDeliverables).summary,
+      risks: Array.isArray(parsed.risks) ? parsed.risks : buildFallbackSummary(typedTasks, typedDeliverables).risks,
+      recommendations: Array.isArray(parsed.recommendations) ? parsed.recommendations : buildFallbackSummary(typedTasks, typedDeliverables).recommendations,
+      evidence: withAuditResult(evidence, audit.status === "succeeded" ? { status: "succeeded", id: audit.id } : { status: audit.status, warning: audit.warning }),
     });
   } catch (error) {
     console.error('[execution] AI summary fallback:', error);
     const fallback = buildFallbackSummary([], []);
-    return NextResponse.json(fallback);
+    const evidence = buildExecutionSummaryEvidence({
+      taskCount: 0,
+      blockedTaskCount: 0,
+      deliverableCount: 0,
+      pendingDeliverableCount: 0,
+      model: "rule-based-fallback",
+      status: "fallback",
+    });
+    const audit = await persistAiEvidence({ evidence, user, requestId, metadata: { route: "/api/execution", error: error instanceof Error ? error.message : String(error) } });
+    return NextResponse.json({
+      request_id: requestId,
+      ...fallback,
+      evidence: withAuditResult(evidence, audit.status === "succeeded" ? { status: "succeeded", id: audit.id } : { status: audit.status, warning: audit.warning }),
+    });
   }
 }

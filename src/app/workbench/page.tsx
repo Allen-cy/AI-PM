@@ -7,7 +7,7 @@ type Workbench = {
   kpis: Array<{ label: string; value: string; hint: string; status: string }>;
   actions: Array<{ id: string; priority: string; title: string; owner: string; due: string; source: string; action: string }>;
   keyProjects: Array<{ name: string; status: string; progress: string; risk: string; next: string }>;
-  aiSuggestions: Array<{ title: string; basis: string; confirmation: string }>;
+  aiSuggestions: Array<{ title: string; basis: string; confirmation: string; actionTitle?: string; priority?: "P0" | "P1" | "P2"; owner?: string; dueDate?: string }>;
   myProjects: Array<{ id: string; name: string; owner: string; status: string; stage: string; progress: number; health: string; riskLevel: string; nextMilestone: string; source: string }>;
   myRisks: Array<{ id: string; projectName: string; description: string; severity: string; status: string; owner: string; dueDate: string; nextAction: string; source: string }>;
   todayTodos: Array<{ id: string; type: string; title: string; projectName: string; owner: string; dueDate: string; daysLeft: number | null; status: string; priority: string; source: string; action: string }>;
@@ -68,6 +68,8 @@ function StatusTag({ value }: { value: string }) {
 export default function WorkbenchPage() {
   const [data, setData] = useState<WorkbenchResponse | null>(null);
   const [error, setError] = useState("");
+  const [actionMessage, setActionMessage] = useState("");
+  const [savingSuggestion, setSavingSuggestion] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -87,6 +89,37 @@ export default function WorkbenchPage() {
   }, []);
 
   const workbench = data?.workbench;
+
+  async function convertSuggestionToAction(item: Workbench["aiSuggestions"][number], index: number) {
+    setSavingSuggestion(item.title);
+    setActionMessage("");
+    try {
+      const response = await fetch("/api/issue-change", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          operation: "create_action",
+          title: item.actionTitle || item.title,
+          owner: item.owner || "项目经理/PMO",
+          dueDate: item.dueDate,
+          priority: item.priority || "P1",
+          projectName: "PM/PMO每日工作台",
+          sourceType: "manual",
+          sourceId: `workbench-ai-suggestion-${index + 1}`,
+          sourceReason: `AI建议：${item.title}。依据：${item.basis}`,
+        }),
+      });
+      const body = await response.json();
+      if (!response.ok || body.status !== "succeeded") {
+        throw new Error(body.warning || "AI建议转行动项失败。");
+      }
+      setActionMessage(`已转入统一行动项：${body.action?.title || item.actionTitle || item.title}`);
+    } catch (error) {
+      setActionMessage(error instanceof Error ? error.message : "AI建议转行动项失败。");
+    } finally {
+      setSavingSuggestion(null);
+    }
+  }
 
   return (
     <main style={{ minHeight: "100vh", background: "var(--bg)", padding: "28px 32px" }}>
@@ -285,12 +318,25 @@ export default function WorkbenchPage() {
 
               <div className="card">
                 <div className="section-title">🧠 AI 今日建议</div>
+                {actionMessage && (
+                  <div style={{ marginBottom: 12, color: actionMessage.includes("失败") ? "var(--red)" : "var(--green)", fontSize: "0.82rem" }}>
+                    {actionMessage}
+                  </div>
+                )}
                 <div style={{ display: "grid", gap: 12 }}>
-                  {workbench.aiSuggestions.map(item => (
+                  {workbench.aiSuggestions.map((item, index) => (
                     <div key={item.title} style={{ background: "var(--surface2)", borderRadius: 10, padding: 14 }}>
-                      <strong>{item.title}</strong>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "start" }}>
+                        <strong>{item.title}</strong>
+                        <button className="btn-secondary" disabled={savingSuggestion === item.title} onClick={() => void convertSuggestionToAction(item, index)} style={{ padding: "7px 10px", fontSize: "0.76rem", whiteSpace: "nowrap" }}>
+                          {savingSuggestion === item.title ? "写入中..." : "转行动项"}
+                        </button>
+                      </div>
                       <p style={{ color: "var(--text2)", fontSize: "0.82rem", lineHeight: 1.6, marginTop: 8 }}>依据：{item.basis}</p>
                       <p style={{ color: "var(--amber)", fontSize: "0.82rem", lineHeight: 1.6, marginTop: 6 }}>人工确认：{item.confirmation}</p>
+                      <p style={{ color: "var(--accent2)", fontSize: "0.78rem", lineHeight: 1.6, marginTop: 6 }}>
+                        建议行动项：{item.actionTitle || item.title} · {item.priority || "P1"} · {item.owner || "项目经理/PMO"} · {item.dueDate || "待设定"}
+                      </p>
                     </div>
                   ))}
                 </div>

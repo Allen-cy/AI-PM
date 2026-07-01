@@ -128,6 +128,17 @@ export interface ChangeCreateInput {
   actionItems?: unknown;
 }
 
+export interface UnifiedActionCreateInput {
+  title: string;
+  owner?: string;
+  dueDate?: string;
+  priority?: UnifiedActionPriority;
+  projectName?: string;
+  sourceType?: UnifiedActionSource;
+  sourceId?: string;
+  sourceReason?: string;
+}
+
 export const issueSeverityLabels: Record<IssueSeverity, string> = {
   high: "高",
   medium: "中",

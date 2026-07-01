@@ -4,6 +4,7 @@ import {
   createChange,
   createIssue,
   createIssueFromRisk,
+  createUnifiedAction,
   listIssueChangeChain,
   transitionChange,
   transitionIssue,
@@ -11,7 +12,7 @@ import {
   type CloseActionInput,
   type IssueTransitionInput,
 } from "@/features/issue-change/repository";
-import type { ChangeCreateInput, IssueCreateInput } from "@/features/issue-change/model";
+import type { ChangeCreateInput, IssueCreateInput, UnifiedActionCreateInput } from "@/features/issue-change/model";
 import { writeIntegrationSyncLog } from "@/features/operating-system/sync-logs";
 import type { Risk } from "@/lib/risk";
 
@@ -23,7 +24,8 @@ type OperationBody =
   | ({ operation: "transition_issue" } & IssueTransitionInput)
   | ({ operation: "create_change" } & ChangeCreateInput)
   | ({ operation: "transition_change" } & ChangeTransitionInput)
-  | ({ operation: "close_action" } & CloseActionInput);
+  | ({ operation: "close_action" } & CloseActionInput)
+  | ({ operation: "create_action" } & UnifiedActionCreateInput);
 
 function jsonResponse(body: unknown, status = 200, requestId = crypto.randomUUID()) {
   return Response.json(body, {
@@ -70,7 +72,8 @@ export async function POST(request: Request): Promise<Response> {
     | Awaited<ReturnType<typeof transitionIssue>>
     | Awaited<ReturnType<typeof createChange>>
     | Awaited<ReturnType<typeof transitionChange>>
-    | Awaited<ReturnType<typeof closeUnifiedAction>>;
+    | Awaited<ReturnType<typeof closeUnifiedAction>>
+    | Awaited<ReturnType<typeof createUnifiedAction>>;
   let eventType = "issue_change_operation";
   let summary = "P5链路动作已处理。";
 
@@ -110,6 +113,12 @@ export async function POST(request: Request): Promise<Response> {
     summary = result.status === "succeeded" && "action" in result && result.action
       ? `行动项已关闭：${result.action.title}`
       : "行动项关闭失败。";
+  } else if (body.operation === "create_action") {
+    result = await createUnifiedAction(body, user);
+    eventType = "ai_suggestion_action_created";
+    summary = result.status === "succeeded" && "action" in result && result.action
+      ? `AI建议已转行动项：${result.action.title}`
+      : "AI建议转行动项失败。";
   } else {
     return jsonResponse({ request_id: requestId, status: "failed", warning: "未知P5操作。" }, 400, requestId);
   }

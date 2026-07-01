@@ -18,6 +18,7 @@ import {
   type IssueCreateInput,
   type IssueRecord,
   type IssueStatus,
+  type UnifiedActionCreateInput,
   type UnifiedActionPriority,
   type UnifiedActionRecord,
   type UnifiedActionSource,
@@ -671,6 +672,48 @@ export async function closeUnifiedAction(input: CloseActionInput, user: AppUser 
     return {
       status: isMissingTableError(error instanceof Error ? error.message : "") ? "not_configured" : "failed",
       warning: error instanceof Error ? error.message : "行动项关闭失败。",
+    };
+  }
+}
+
+export async function createUnifiedAction(input: UnifiedActionCreateInput, user: AppUser | null): Promise<{
+  status: "succeeded" | "not_configured" | "failed";
+  action?: UnifiedActionRecord;
+  event?: IssueChangeEventRecord;
+  warning?: string;
+}> {
+  if (!isAuthStorageConfigured()) return missingStorageResult();
+  if (!input.title?.trim()) return { status: "failed", warning: "行动项标题不能为空。" };
+
+  try {
+    const actions = await createActionItems({
+      sourceType: input.sourceType || "manual",
+      sourceId: input.sourceId || `manual-${Date.now()}`,
+      projectName: input.projectName || null,
+      value: [{
+        title: input.title.trim(),
+        owner: input.owner?.trim() || undefined,
+        dueDate: input.dueDate || undefined,
+        priority: input.priority || "P1",
+      }],
+      user,
+    });
+    const action = actions[0];
+    if (!action) return { status: "failed", warning: "行动项创建失败。" };
+    const event = await insertEvent({
+      subjectType: "action",
+      subjectId: action.id,
+      eventType: "ai_suggestion_converted",
+      toStatus: action.status,
+      user,
+      comment: input.sourceReason || "AI建议已转为统一行动项。",
+      metadata: { source_type: action.sourceType, source_id: action.sourceId },
+    });
+    return { status: "succeeded", action, event };
+  } catch (error) {
+    return {
+      status: isMissingTableError(error instanceof Error ? error.message : "") ? "not_configured" : "failed",
+      warning: error instanceof Error ? error.message : "行动项创建失败。",
     };
   }
 }

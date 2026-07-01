@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
+import { buildBusinessCaseEvidence, type AiEvidence, type AiSuggestedAction } from "@/features/ai/evidence";
 import { feishuTableUrl } from "@/features/feishu/links";
 
 // ============================================================================
@@ -236,6 +238,9 @@ export default function InitiationPage() {
   const [activeTab, setActiveTab] = useState<"registration" | "business" | "charter" | "stakeholder" | "requirements">("registration");
   const [feishuSaving, setFeishuSaving] = useState(false);
   const [feishuSaveResult, setFeishuSaveResult] = useState<{ status: "success" | "error"; message: string; recordId?: string } | null>(null);
+  const [businessEvidence, setBusinessEvidence] = useState<AiEvidence | null>(null);
+  const [businessEvidenceActionMessage, setBusinessEvidenceActionMessage] = useState("");
+  const [savingBusinessEvidenceAction, setSavingBusinessEvidenceAction] = useState<string | null>(null);
 
   // Project Registration State
   const [projectInfo, setProjectInfo] = useState<ProjectInfo>({
@@ -339,7 +344,7 @@ export default function InitiationPage() {
     setAiLoading("business");
     // Simulate AI generation delay
     await new Promise(resolve => setTimeout(resolve, 1500));
-    setBusinessCase({
+    const generatedCase: BusinessCase = {
       marketOpportunity: "随着教育信息化2.0行动的推进，学校急需构建统一的数字化管理平台，以提升教学管理效率和家校沟通质量。预计市场规模年增长15%，政策支持力度持续加大。",
       costBenefit: {
         investment: "80万元",
@@ -349,7 +354,42 @@ export default function InitiationPage() {
       },
       riskAssessment: "主要风险包括：需求变更风险（中等）、技术选型风险（低）、实施团队能力风险（中等）。建议采用敏捷迭代方式分阶段交付，制定详细的需求变更流程。",
       recommendation: "批准",
+    };
+    setBusinessCase(generatedCase);
+
+    const evidence = buildBusinessCaseEvidence({
+      projectName: projectInfo.name,
+      projectType: projectInfo.type,
+      projectLevel: projectInfo.level,
+      sponsor: projectInfo.sponsor,
+      businessJustification: projectInfo.businessJustification,
+      recommendation: generatedCase.recommendation,
     });
+    setBusinessEvidence(evidence);
+    try {
+      const response = await fetch("/api/ai/evidence", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ evidence }),
+      });
+      const payload = await response.json().catch(() => ({})) as {
+        status?: AiEvidence["auditStatus"];
+        audit_id?: string;
+        warning?: string;
+      };
+      setBusinessEvidence({
+        ...evidence,
+        auditId: payload.audit_id,
+        auditStatus: payload.status,
+        auditWarning: payload.warning,
+      });
+    } catch (error) {
+      setBusinessEvidence({
+        ...evidence,
+        auditStatus: "failed",
+        auditWarning: error instanceof Error ? error.message : "AI依据审计写入失败。",
+      });
+    }
     setAiLoading(null);
   };
 
@@ -376,6 +416,37 @@ export default function InitiationPage() {
       },
     });
     setAiLoading(null);
+  };
+
+  const convertBusinessEvidenceAction = async (action: AiSuggestedAction, index: number) => {
+    if (!businessEvidence) return;
+    const actionKey = `${businessEvidence.id}-${index}`;
+    setSavingBusinessEvidenceAction(actionKey);
+    setBusinessEvidenceActionMessage("");
+    try {
+      const response = await fetch("/api/issue-change", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          operation: "create_action",
+          title: action.title,
+          owner: action.owner || projectInfo.sponsor || "项目发起人",
+          dueDate: action.dueDate,
+          priority: action.priority,
+          projectName: projectInfo.name || "商业论证",
+          sourceType: "manual",
+          sourceId: businessEvidence.id,
+          sourceReason: action.sourceReason,
+        }),
+      });
+      const payload = await response.json().catch(() => ({})) as { action?: { id?: string }; error?: string; migrationHint?: string };
+      if (!response.ok || !payload.action) throw new Error([payload.error, payload.migrationHint].filter(Boolean).join("；") || "行动项创建失败");
+      setBusinessEvidenceActionMessage(`已转为问题/变更行动项：${payload.action.id || action.title}`);
+    } catch (e: unknown) {
+      setBusinessEvidenceActionMessage(`行动项创建失败：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSavingBusinessEvidenceAction(null);
+    }
   };
 
   // ============================================================================
@@ -447,7 +518,7 @@ export default function InitiationPage() {
         gap: 16,
         background: "var(--surface)",
       }}>
-        <a href="/" style={{ color: "var(--text2)", textDecoration: "none", fontSize: "0.85rem" }}>← 返回首页</a>
+        <Link href="/" style={{ color: "var(--text2)", textDecoration: "none", fontSize: "0.85rem" }}>← 返回首页</Link>
         <span style={{ color: "var(--border)" }}>|</span>
         <span style={{ fontWeight: 700 }}>🚀 项目启动阶段</span>
         <span className="tag tag-purple" style={{ fontSize: "0.7rem" }}>立项与授权</span>
@@ -648,6 +719,64 @@ export default function InitiationPage() {
               <span style={{ color: "var(--amber)", fontWeight: 700 }}>生成依据：</span>
               当前立项信息（项目名称、类型、等级、发起人、业务立项理由）+ PMO知识库中的商业论证结构（成本收益、风险、阶段门、持续商业论证）+ 系统内置项目管理模板。当前不会自动读取外部市场数据、真实财务系统或飞书合同回款明细，生成结果是立项草案，正式提交前需要人工复核。
             </div>
+            {businessEvidence && (
+              <div style={{
+                marginBottom: 20,
+                padding: "16px 18px",
+                borderRadius: 12,
+                background: "rgba(139,92,246,0.08)",
+                border: "1px solid rgba(139,92,246,0.25)",
+                fontSize: "0.82rem",
+                lineHeight: 1.7,
+              }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", marginBottom: 10 }}>
+                  <div>
+                    <div style={{ fontWeight: 800, color: "var(--purple)", marginBottom: 4 }}>AI生成依据审计</div>
+                    <div style={{ color: "var(--text2)" }}>{businessEvidence.inputSummary}</div>
+                  </div>
+                  <span className="tag tag-purple" style={{ whiteSpace: "nowrap" }}>
+                    {businessEvidence.model} · {businessEvidence.confidence}
+                  </span>
+                </div>
+                <div style={{ color: "var(--text)", marginBottom: 10 }}>{businessEvidence.outputSummary}</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                  <div>
+                    <div style={{ fontWeight: 800, color: "var(--text2)", marginBottom: 6 }}>依据来源</div>
+                    {businessEvidence.basis.map(item => (
+                      <div key={`${item.source}-${item.label}`} style={{ color: "var(--text2)", marginBottom: 4 }}>
+                        <strong style={{ color: "var(--text)" }}>{item.label}：</strong>{item.detail}
+                      </div>
+                    ))}
+                  </div>
+                  <div>
+                    <div style={{ fontWeight: 800, color: "var(--text2)", marginBottom: 6 }}>后续动作</div>
+                    {businessEvidence.suggestedActions.map((action, index) => {
+                      const actionKey = `${businessEvidence.id}-${index}`;
+                      return (
+                        <div key={action.title} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                          <span style={{ color: "var(--text2)" }}>
+                            <strong style={{ color: "var(--amber)" }}>{action.priority}</strong> · {action.title} · {action.owner || "待定"} · {action.dueDate || "待定"}
+                          </span>
+                          <button className="btn-secondary" onClick={() => void convertBusinessEvidenceAction(action, index)} disabled={savingBusinessEvidenceAction === actionKey} style={{ fontSize: "0.72rem", padding: "4px 8px", whiteSpace: "nowrap" }}>
+                            {savingBusinessEvidenceAction === actionKey ? "转入中..." : "转行动项"}
+                          </button>
+                        </div>
+                      );
+                    })}
+                    <div style={{ marginTop: 8, color: businessEvidence.auditStatus === "succeeded" ? "var(--green)" : "var(--amber)" }}>
+                      审计状态：{businessEvidence.auditStatus || "待写入"}
+                      {businessEvidence.auditId ? ` · ${businessEvidence.auditId}` : ""}
+                      {businessEvidence.auditWarning ? ` · ${businessEvidence.auditWarning}` : ""}
+                    </div>
+                    {businessEvidenceActionMessage && (
+                      <div style={{ marginTop: 8, color: businessEvidenceActionMessage.includes("失败") ? "var(--red)" : "var(--green)" }}>
+                        {businessEvidenceActionMessage}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
 
             <SectionCard title="市场机会分析" icon="📊">
               <LabelTextarea

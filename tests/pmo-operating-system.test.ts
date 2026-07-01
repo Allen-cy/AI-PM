@@ -26,6 +26,11 @@ import {
   parseUnifiedActionItems,
   riskToIssueDraft,
 } from '../src/features/issue-change/model.ts';
+import {
+  buildBusinessCaseEvidence,
+  buildExecutionSummaryEvidence,
+  buildRiskScanEvidence,
+} from '../src/features/ai/evidence.ts';
 import type { Risk } from '../src/lib/risk.ts';
 import type { DashboardData } from '../src/features/dashboard/types.ts';
 
@@ -258,6 +263,47 @@ test('operational workbench filters projects risks todos and reminders for curre
   assert.equal(workbench.todayTodos.some(item => item.id === 'M-1'), false);
   assert.equal(workbench.businessReminders.length >= 1, true);
   assert.match(workbench.aiSuggestions[0].basis, /任务1条/);
+});
+
+test('ai evidence builders expose basis citations and convertible actions', () => {
+  const business = buildBusinessCaseEvidence({
+    projectName: 'AI PMO平台',
+    projectType: '信息化',
+    projectLevel: 'S',
+    sponsor: 'PMO',
+    businessJustification: '提升项目治理效率',
+    recommendation: '批准',
+  });
+  const risk = buildRiskScanEvidence({
+    projectName: 'AI PMO平台',
+    stage: '执行',
+    description: '关键路径延期，客户验收标准未冻结。',
+    riskCount: 3,
+    model: 'MiniMax-M3',
+    status: 'generated',
+  });
+  const execution = buildExecutionSummaryEvidence({
+    projectId: 'PRJ-1',
+    taskCount: 5,
+    blockedTaskCount: 1,
+    deliverableCount: 2,
+    pendingDeliverableCount: 1,
+    model: 'MiniMax-M3',
+    status: 'generated',
+  });
+
+  for (const evidence of [business, risk, execution]) {
+    assert.ok(evidence.id.startsWith('AIE-'));
+    assert.equal(evidence.basis.length > 0, true);
+    assert.equal(evidence.citations.length > 0, true);
+    assert.equal(evidence.suggestedActions.length > 0, true);
+    assert.match(evidence.suggestedActions[0].priority, /^P[0-2]$/);
+    assert.ok(evidence.inputSummary);
+    assert.ok(evidence.outputSummary);
+  }
+  assert.equal(business.scene, 'business_case');
+  assert.equal(risk.scene, 'risk_scan');
+  assert.equal(execution.scene, 'execution_summary');
 });
 
 test('operational workbench shows all records for admin role', () => {

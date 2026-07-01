@@ -1,4 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getCurrentUser } from "@/features/auth/server";
+import { buildRiskScanEvidence, withAuditResult } from "@/features/ai/evidence";
+import { persistAiEvidence } from "@/features/ai/evidence-repository";
 import { llmComplete, SYSTEM_PROMPTS } from "@/lib/llm";
 import {
   calculateRiskPriority,
@@ -168,6 +171,8 @@ function buildRuleBasedRisks(input: AnalyzeInput): Risk[] {
 }
 
 export async function POST(request: NextRequest) {
+  const requestId = crypto.randomUUID();
+  const user = await getCurrentUser();
   try {
     const input: AnalyzeInput = await request.json();
     const { projectDescription } = input;
@@ -199,10 +204,22 @@ ${projectDescription}
       content = result.content || "";
     } catch {
       const fallbackRisks = buildRuleBasedRisks(input);
+      const evidence = buildRiskScanEvidence({
+        projectName: input.projectName,
+        stage: input.stage,
+        description: projectDescription,
+        riskCount: fallbackRisks.length,
+        model: "rule-based-fallback",
+        status: "fallback",
+        reason: "AI风险扫描不可用，使用风险核查清单规则兜底。",
+      });
+      const audit = await persistAiEvidence({ evidence, user, requestId, metadata: { route: "/api/risk/analyze" } });
       return NextResponse.json({
+        request_id: requestId,
         risks: fallbackRisks,
         aiReasoning: "AI风险扫描不可用，已使用风险核查清单规则生成候选风险。",
         model: "rule-based-fallback",
+        evidence: withAuditResult(evidence, audit.status === "succeeded" ? { status: "succeeded", id: audit.id } : { status: audit.status, warning: audit.warning }),
       });
     }
 
@@ -210,10 +227,22 @@ ${projectDescription}
     const jsonMatch = content.match(/\[[\s\S]*?\]/);
     if (!jsonMatch) {
       const fallbackRisks = buildRuleBasedRisks(input);
+      const evidence = buildRiskScanEvidence({
+        projectName: input.projectName,
+        stage: input.stage,
+        description: projectDescription,
+        riskCount: fallbackRisks.length,
+        model: "rule-based-fallback",
+        status: "fallback",
+        reason: "AI返回格式不符合登记册字段要求，使用风险核查清单规则兜底。",
+      });
+      const audit = await persistAiEvidence({ evidence, user, requestId, metadata: { route: "/api/risk/analyze", parse_error: "missing_json_array" } });
       return NextResponse.json({
+        request_id: requestId,
         risks: fallbackRisks,
         aiReasoning: "AI返回格式不符合登记册字段要求，已使用风险核查清单规则生成候选风险。",
         model: "rule-based-fallback",
+        evidence: withAuditResult(evidence, audit.status === "succeeded" ? { status: "succeeded", id: audit.id } : { status: audit.status, warning: audit.warning }),
       });
     }
 
@@ -222,23 +251,47 @@ ${projectDescription}
       parsed = JSON.parse(jsonMatch[0]) as AIParsedRisk[];
     } catch {
       const fallbackRisks = buildRuleBasedRisks(input);
+      const evidence = buildRiskScanEvidence({
+        projectName: input.projectName,
+        stage: input.stage,
+        description: projectDescription,
+        riskCount: fallbackRisks.length,
+        model: "rule-based-fallback",
+        status: "fallback",
+        reason: "AI返回JSON片段无法解析，使用风险核查清单规则兜底。",
+      });
+      const audit = await persistAiEvidence({ evidence, user, requestId, metadata: { route: "/api/risk/analyze", parse_error: "invalid_json" } });
       return NextResponse.json({
+        request_id: requestId,
         risks: fallbackRisks,
         aiReasoning: "AI返回JSON片段无法解析，已使用风险核查清单规则生成候选风险。",
         model: "rule-based-fallback",
+        evidence: withAuditResult(evidence, audit.status === "succeeded" ? { status: "succeeded", id: audit.id } : { status: audit.status, warning: audit.warning }),
       });
     }
     const risks: Risk[] = parsed.map((item, index) => buildRisk(item, index, input, "AI风险扫描"));
+    const evidence = buildRiskScanEvidence({
+      projectName: input.projectName,
+      stage: input.stage,
+      description: projectDescription,
+      riskCount: risks.length,
+      model: "configured-llm",
+      status: "generated",
+      reason: "AI生成候选风险，仍需项目经理确认后进入正式风险闭环。",
+    });
+    const audit = await persistAiEvidence({ evidence, user, requestId, metadata: { route: "/api/risk/analyze" } });
 
     return NextResponse.json({
+      request_id: requestId,
       risks,
       aiReasoning: content.slice(0, 500),
       model: "configured-llm",
+      evidence: withAuditResult(evidence, audit.status === "succeeded" ? { status: "succeeded", id: audit.id } : { status: audit.status, warning: audit.warning }),
     });
   } catch (error) {
     console.error("[risk/analyze] Error:", error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "AI风险分析失败" },
+      { request_id: requestId, error: error instanceof Error ? error.message : "AI风险分析失败" },
       { status: 500 }
     );
   }

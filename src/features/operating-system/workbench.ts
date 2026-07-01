@@ -452,17 +452,28 @@ function buildAiSuggestions(input: {
   const secondTitle = overduePayments > 0
     ? "经营动作需要优先升级逾期回款节点"
     : "保持验收、合同和回款节点同步";
+  const dueDate = new Date();
+  dueDate.setDate(dueDate.getDate() + 1);
+  const due = dueDate.toISOString().slice(0, 10);
 
   return [
     {
       title: firstTitle,
       basis: `扫描项目${input.evidence.scanned.projects}条、风险${input.evidence.scanned.risks}条、任务${input.evidence.scanned.tasks}条、里程碑${input.evidence.scanned.milestones}条；P0事项${p0Todos}个，高风险${highRisks}个，预警项目${unhealthyProjects}个。`,
       confirmation: "AI建议只做排序辅助，项目经理需确认真实阻塞、责任人和完成证据。",
+      actionTitle: p0Todos + highRisks > 0 ? "处理今日P0事项和高风险阻塞" : "完成今日计划确认和数据完整性巡检",
+      priority: p0Todos + highRisks > 0 ? "P0" : "P1",
+      owner: "项目经理/PMO",
+      dueDate: due,
     },
     {
       title: secondTitle,
       basis: `扫描回款${input.evidence.scanned.payments}条，当前经营提醒${input.reminders.length}个，其中逾期${overduePayments}个。`,
       confirmation: "需要人工确认验收状态、客户付款条件、开票状态和合同条款。",
+      actionTitle: overduePayments > 0 ? "升级逾期回款节点并确认付款障碍" : "同步验收、合同和回款节点状态",
+      priority: overduePayments > 0 ? "P0" : "P1",
+      owner: "项目经理/商务负责人",
+      dueDate: due,
     },
   ];
 }
