@@ -30,6 +30,13 @@ const PHASE_MODULES = [
         desc: "立项、阶段门、变更、风险升级、收尾验收的输入输出闭环",
         color: "amber",
       },
+      {
+        href: "/issue-change",
+        icon: "🔗",
+        title: "风险问题变更链路",
+        desc: "风险升级、问题处理、变更影响分析、行动项和关闭证据",
+        color: "purple",
+      },
     ],
   },
   {
@@ -326,7 +333,7 @@ export default function Home() {
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <span style={{ fontSize: "1.4rem" }}>🏗️</span>
           <span style={{ fontWeight: 800, fontSize: "1.05rem" }}>AI项目管理助手</span>
-          <span className="tag tag-blue">V5.2.9</span>
+          <span className="tag tag-blue">V5.3.0</span>
         </div>
         <div style={{ display: "flex", gap: 16, fontSize: "0.8rem", color: "var(--text2)", alignItems: "center" }}>
           <span>作者：柴春宇</span>
@@ -508,7 +515,7 @@ export default function Home() {
         fontSize: "0.75rem",
         background: "var(--surface)",
       }}>
-        AI项目管理助手 V5.2.9 · 基于 PMBOK 7th 与 PRINCE2 2017 · 飞书底座 + Vercel AI增强层混合架构
+        AI项目管理助手 V5.3.0 · 基于 PMBOK 7th 与 PRINCE2 2017 · 飞书底座 + Vercel AI增强层混合架构
       </footer>
     </div>
   );

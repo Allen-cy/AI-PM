@@ -19,6 +19,14 @@ import {
   initialGovernanceState,
   parseGovernanceActionItems,
 } from '../src/features/governance/model.ts';
+import {
+  buildIssueChangeChainReport,
+  deriveChangeNextStatus,
+  deriveIssueNextStatus,
+  parseUnifiedActionItems,
+  riskToIssueDraft,
+} from '../src/features/issue-change/model.ts';
+import type { Risk } from '../src/lib/risk.ts';
 import type { DashboardData } from '../src/features/dashboard/types.ts';
 
 test('operating system dependencies cover data ai knowledge and storage', () => {
@@ -344,4 +352,143 @@ test('governance report includes outputs actions and audit trail', () => {
   assert.match(markdown, /同意进入下一阶段/);
   assert.match(markdown, /同步下一阶段计划/);
   assert.match(markdown, /待评审 → 已通过/);
+});
+
+test('issue change model derives risk issue change lifecycle', () => {
+  assert.equal(deriveIssueNextStatus('open', 'analyze'), 'analyzing');
+  assert.equal(deriveIssueNextStatus('analyzing', 'require_change'), 'change-required');
+  assert.equal(deriveIssueNextStatus('change-required', 'resolve'), 'resolving');
+  assert.equal(deriveIssueNextStatus('resolved', 'close'), 'closed');
+
+  assert.equal(deriveChangeNextStatus('proposed', 'analyze'), 'analyzing');
+  assert.equal(deriveChangeNextStatus('analyzing', 'approve'), 'approved');
+  assert.equal(deriveChangeNextStatus('approved', 'implement'), 'implementing');
+  assert.equal(deriveChangeNextStatus('implementing', 'complete'), 'implemented');
+  assert.equal(deriveChangeNextStatus('implemented', 'close'), 'closed');
+});
+
+test('risk can be converted into an issue draft with accountable action', () => {
+  const risk: Risk = {
+    id: 'RISK-001',
+    riskCode: 'R-001',
+    projectName: '重点项目A',
+    description: '客户验收标准反复变化，已经影响交付范围',
+    category: '需求',
+    stage: '执行',
+    source: '风险登记册',
+    impactArea: '范围',
+    probability: 4,
+    impact: 5,
+    urgency: 5,
+    piScore: 20,
+    priorityScore: 100,
+    status: 'tracking',
+    responseStrategyType: '上报',
+    responseStrategy: '提交PMO处理',
+    preventiveAction: '冻结需求口径',
+    contingencyPlan: '发起变更',
+    trigger: '客户新增验收项',
+    trackingMethod: '周会跟踪',
+    owner: '项目经理',
+    dueDate: '2026-07-05',
+    nextReviewDate: '2026-07-03',
+    closingCriteria: '变更审批完成',
+    linkedModule: '监控',
+    createdAt: '2026-07-01',
+  };
+
+  const issue = riskToIssueDraft(risk);
+
+  assert.equal(issue.projectName, '重点项目A');
+  assert.equal(issue.severity, 'high');
+  assert.equal(issue.owner, '项目经理');
+  assert.match(issue.description || '', /来源风险：R-001/);
+  assert.equal(Array.isArray(issue.actionItems), true);
+});
+
+test('unified action parser supports rows with owner due date and priority', () => {
+  const actions = parseUnifiedActionItems('补充影响分析|项目经理|2026-07-05|P0\n提交审批|PMO|2026-07-06|P1');
+
+  assert.equal(actions.length, 2);
+  assert.equal(actions[0].owner, '项目经理');
+  assert.equal(actions[0].priority, 'P0');
+  assert.equal(actions[1].dueDate, '2026-07-06');
+});
+
+test('issue change chain report includes issues changes actions and audit trail', () => {
+  const markdown = buildIssueChangeChainReport({
+    issues: [
+      {
+        id: 'issue-1',
+        issueCode: 'ISS-1',
+        projectName: '项目A',
+        title: '核心资源冲突',
+        description: '资源冲突导致关键路径延误',
+        severity: 'high',
+        status: 'change-required',
+        owner: '项目经理',
+        dueDate: '2026-07-05',
+        impactScope: '进度',
+        sourceRiskCode: 'R-001',
+        createdAt: '2026-07-01T00:00:00.000Z',
+        updatedAt: '2026-07-01T00:00:00.000Z',
+      },
+    ],
+    changes: [
+      {
+        id: 'change-1',
+        changeCode: 'CHG-1',
+        issueId: 'issue-1',
+        projectName: '项目A',
+        title: '调整资源投入',
+        reason: '解决关键路径延误',
+        changeType: 'resource',
+        impactScope: '关键路径',
+        impactCost: 5,
+        impactScheduleDays: -3,
+        impactRevenue: 0,
+        impactCollection: '不影响本月回款',
+        status: 'approved',
+        owner: '项目经理',
+        approver: 'PMO',
+        dueDate: '2026-07-06',
+        createdAt: '2026-07-01T00:00:00.000Z',
+        updatedAt: '2026-07-01T00:00:00.000Z',
+      },
+    ],
+    actions: [
+      {
+        id: 'action-1',
+        sourceType: 'change',
+        sourceId: 'change-1',
+        projectName: '项目A',
+        title: '同步资源调整计划',
+        owner: '项目经理',
+        dueDate: '2026-07-06',
+        status: 'open',
+        priority: 'P0',
+        createdAt: '2026-07-01T00:00:00.000Z',
+        updatedAt: '2026-07-01T00:00:00.000Z',
+      },
+    ],
+    events: [
+      {
+        id: 'event-1',
+        subjectType: 'issue',
+        subjectId: 'issue-1',
+        eventType: 'require_change',
+        fromStatus: 'analyzing',
+        toStatus: 'change-required',
+        actorName: 'PMO',
+        comment: '需要变更',
+        createdAt: '2026-07-01T01:00:00.000Z',
+      },
+    ],
+  });
+
+  assert.match(markdown, /风险-问题-变更-行动项链路报告/);
+  assert.match(markdown, /核心资源冲突/);
+  assert.match(markdown, /调整资源投入/);
+  assert.match(markdown, /同步资源调整计划/);
+  assert.match(markdown, /analyzing → change-required/);
 });

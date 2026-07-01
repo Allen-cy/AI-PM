@@ -526,6 +526,7 @@ export default function RiskPage() {
         <div style={{ marginLeft: "auto", display: "flex", gap: 8, flexWrap: "wrap" }}>
           <Link href="/risk/sensitivity" className="btn-secondary" style={{ textDecoration: "none", fontSize: "0.78rem", padding: "7px 10px" }}>敏感性分析</Link>
           <Link href="/risk/tracking" className="btn-secondary" style={{ textDecoration: "none", fontSize: "0.78rem", padding: "7px 10px" }}>风险跟踪管理</Link>
+          <Link href="/issue-change" className="btn-secondary" style={{ textDecoration: "none", fontSize: "0.78rem", padding: "7px 10px" }}>问题/变更链路</Link>
           <Link href="/templates" className="btn-secondary" style={{ textDecoration: "none", fontSize: "0.78rem", padding: "7px 10px" }}>模板下载中心</Link>
         </div>
       </header>

@@ -67,6 +67,10 @@ npm run build
 - 飞书端已建立8张业务表；公开项目记录API会等用户登录和授权模型完成后再开放。
 - 全仓历史 ESLint 基线仍有旧问题；V4新增/改动文件执行独立零错误门禁。
 
+## AI-PMO System V5.3.0
+
+V5.3.0 完成 P5「风险-问题-变更-行动项链路」：新增 `supabase-v530-issue-change-action-chain.sql`，创建问题、变更、统一行动项和审计事件四张表；新增 `/api/issue-change`，支持风险升级为问题、问题状态流转、问题触发变更、变更影响范围/成本/进度/收入/回款录入、变更审批实施和行动项关闭证据；新增 `/api/issue-change/report` 下载 Markdown 链路报告；新增 `/issue-change` 页面，让使用者参与录入、审批、实施和关闭，不再用静态展示代替事务闭环；首页和风险管理页已接入 P5 入口。
+
 ## AI-PMO System V5.2.9
 
 V5.2.9 完成 P4「治理流程持久化」：新增 `supabase-v529-governance-workflows.sql`，创建治理流程实例、状态流转审计和行动项表；新增 `/api/governance/workflows`，支持治理流程实例创建、提交、审批、有条件通过、退回、驳回和关闭；新增 `/api/governance/workflows/[id]/report`，可下载 Markdown 输出报告；治理工作流中心从静态说明页升级为可操作页面，支持录入输入材料、审批意见、输出成果和行动项；治理动作会写入 Supabase 审计日志，并尝试回写飞书同步账本，失败不阻断主流程。
