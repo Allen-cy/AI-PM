@@ -13,6 +13,12 @@ import {
   evaluateFeishuFieldMappings,
 } from '../src/features/operating-system/diagnostics.ts';
 import { buildOperationalWorkbench } from '../src/features/operating-system/workbench.ts';
+import {
+  buildGovernanceReport,
+  deriveGovernanceNextState,
+  initialGovernanceState,
+  parseGovernanceActionItems,
+} from '../src/features/governance/model.ts';
 import type { DashboardData } from '../src/features/dashboard/types.ts';
 
 test('operating system dependencies cover data ai knowledge and storage', () => {
@@ -262,4 +268,80 @@ test('operational workbench shows all records for admin role', () => {
   assert.equal(workbench.evidence.userScope, 'admin-all');
   assert.equal(workbench.myProjects.length, 2);
   assert.equal(workbench.kpis.find(item => item.label === '我的项目')?.value, '2');
+});
+
+test('governance workflow model derives lifecycle transitions', () => {
+  assert.equal(initialGovernanceState('project-initiation-review'), '待提交');
+  assert.equal(deriveGovernanceNextState('project-initiation-review', '待提交', 'submit'), '待评审');
+  assert.equal(deriveGovernanceNextState('project-initiation-review', '待评审', 'approve'), '已通过');
+  assert.equal(deriveGovernanceNextState('project-initiation-review', '待评审', 'return'), '需补充');
+  assert.equal(deriveGovernanceNextState('change-control', '待审批', 'reject'), '已拒绝');
+  assert.equal(deriveGovernanceNextState('project-closure', '已验收', 'close'), '已归档');
+});
+
+test('governance action item parser supports text rows and structured rows', () => {
+  const textRows = parseGovernanceActionItems('补充商业论证 | 项目经理 | 2026-07-05\n确认回款条件 | 商务 | 2026-07-06');
+  assert.equal(textRows.length, 2);
+  assert.equal(textRows[0].owner, '项目经理');
+
+  const structuredRows = parseGovernanceActionItems([{ title: '更新阶段门材料', owner: 'PMO', dueDate: '2026-07-07' }]);
+  assert.equal(structuredRows.length, 1);
+  assert.equal(structuredRows[0].title, '更新阶段门材料');
+});
+
+test('governance report includes outputs actions and audit trail', () => {
+  const markdown = buildGovernanceReport({
+    instance: {
+      id: 'gov-1',
+      workflowId: 'stage-gate-review',
+      workflowName: '阶段门评审',
+      stage: '全生命周期',
+      projectName: '项目A',
+      title: '项目A阶段门评审',
+      triggerSummary: '进入下一阶段前',
+      inputSummary: '阶段成果、风险清单',
+      outputSummary: '同意进入下一阶段',
+      owner: '项目经理',
+      approver: 'PMO',
+      state: '已通过',
+      priority: 'high',
+      deadline: '2026-07-05',
+      source: 'ai-pmo',
+      createdByName: '管理员',
+      createdAt: '2026-07-01T00:00:00.000Z',
+      updatedAt: '2026-07-01T00:00:00.000Z',
+    },
+    events: [
+      {
+        id: 'event-1',
+        instanceId: 'gov-1',
+        eventType: 'approve',
+        fromState: '待评审',
+        toState: '已通过',
+        comment: '材料完整',
+        actorName: 'PMO',
+        actorRole: 'admin',
+        decision: 'approve',
+        outputs: {},
+        createdAt: '2026-07-01T01:00:00.000Z',
+      },
+    ],
+    actions: [
+      {
+        id: 'action-1',
+        instanceId: 'gov-1',
+        title: '同步下一阶段计划',
+        owner: '项目经理',
+        dueDate: '2026-07-06',
+        status: 'open',
+        createdAt: '2026-07-01T01:00:00.000Z',
+        updatedAt: '2026-07-01T01:00:00.000Z',
+      },
+    ],
+  });
+
+  assert.match(markdown, /阶段门评审治理流程输出/);
+  assert.match(markdown, /同意进入下一阶段/);
+  assert.match(markdown, /同步下一阶段计划/);
+  assert.match(markdown, /待评审 → 已通过/);
 });
