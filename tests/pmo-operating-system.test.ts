@@ -7,6 +7,11 @@ import {
   governanceWorkflows,
   operatingDependencies,
 } from '../src/features/pmo-operating-system.ts';
+import {
+  diagnoseIntegrationState,
+  evaluateDataQuality,
+  evaluateFeishuFieldMappings,
+} from '../src/features/operating-system/diagnostics.ts';
 import type { DashboardData } from '../src/features/dashboard/types.ts';
 
 test('operating system dependencies cover data ai knowledge and storage', () => {
@@ -90,4 +95,75 @@ test('workbench summary gives setup action when dashboard data is unavailable', 
 
   assert.equal(summary.actions[0].id, 'connect-feishu');
   assert.equal(summary.kpis[0].value, '待连接');
+});
+
+test('field mapping diagnostics detect missing Chinese fields and aliases', () => {
+  const checks = evaluateFeishuFieldMappings({
+    configuredTables: ['project'],
+    fieldNamesByTable: {
+      project: ['项目ID', '项目名称', '项目状态', '项目等级', '项目类型', '项目负责人', '当前进度'],
+    },
+  });
+
+  const project = checks.find(item => item.tableKey === 'project');
+  const risk = checks.find(item => item.tableKey === 'risk');
+
+  assert.equal(project?.status, 'warning');
+  assert.equal(project?.missingFields.includes('项目编号'), false);
+  assert.equal(project?.missingFields.includes('合同金额'), true);
+  assert.equal(risk?.status, 'not_configured');
+});
+
+test('live data quality scanner flags owner deadline finance and risk closure issues', () => {
+  const checks = evaluateDataQuality({
+    rules: dataQualityRules,
+    dashboard: null,
+    projectRecords: [
+      {
+        项目名称: '高风险项目A',
+        项目状态: '随便填',
+        风险等级: '高',
+        合同金额: 100,
+        已回款金额: 120,
+      },
+    ],
+    riskRecords: [
+      {
+        风险编号: 'R-1',
+        项目名称: '高风险项目A',
+        风险等级: '高',
+      },
+    ],
+  });
+
+  assert.equal(checks.find(item => item.id === 'missing-owner')?.affectedCount, 1);
+  assert.equal(checks.find(item => item.id === 'missing-deadline')?.status, 'error');
+  assert.equal(checks.find(item => item.id === 'finance-mismatch')?.affectedCount, 1);
+  assert.equal(checks.find(item => item.id === 'risk-without-action')?.status, 'error');
+});
+
+test('integration diagnostics summarize failed mappings and data quality issues', () => {
+  const fieldChecks = evaluateFeishuFieldMappings({
+    configuredTables: ['project'],
+    fieldNamesByTable: { project: ['项目名称'] },
+  });
+  const qualityChecks = evaluateDataQuality({
+    rules: dataQualityRules,
+    dashboard: null,
+    projectRecords: [{ 项目名称: '项目A', 风险等级: '高' }],
+  });
+
+  const advices = diagnoseIntegrationState({
+    feishuStatus: 'degraded',
+    aiConfigured: false,
+    ragStatus: 'ok',
+    fieldMappingChecks: fieldChecks,
+    dataQualityChecks: qualityChecks,
+    syncLogStatus: 'skipped',
+  });
+
+  assert.equal(advices.some(item => item.id === 'field-mapping-missing'), true);
+  assert.equal(advices.some(item => item.id === 'data-quality-issues'), true);
+  assert.equal(advices.some(item => item.id === 'ai-model-not-configured'), true);
+  assert.equal(advices.some(item => item.id === 'sync-log-not-persisted'), true);
 });

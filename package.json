@@ -1,6 +1,6 @@
 {
   "name": "ai-pm-system",
-  "version": "5.2.6",
+  "version": "5.2.7",
   "private": true,
   "scripts": {
     "dev": "next dev",

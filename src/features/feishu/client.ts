@@ -48,6 +48,19 @@ interface RecordListResponse {
   };
 }
 
+interface FieldListResponse {
+  code: number;
+  msg?: string;
+  data?: {
+    items?: Array<{
+      field_id: string;
+      field_name?: string;
+      name?: string;
+      type?: number;
+    }>;
+  };
+}
+
 export interface FeishuEventClaimInput {
   eventId: string;
   eventType: string;
@@ -77,6 +90,12 @@ export interface FeishuRecordCreateResult {
 export interface FeishuRecordItem {
   recordId: string;
   fields: Record<string, unknown>;
+}
+
+export interface FeishuFieldItem {
+  fieldId: string;
+  name: string;
+  type?: number;
 }
 
 export interface FeishuHealth {
@@ -247,6 +266,34 @@ export class FeishuBaseClient {
     } while (pageToken && output.length < limit);
 
     return output.slice(0, limit);
+  }
+
+  async listFields(tableKey: FeishuTableKey): Promise<FeishuFieldItem[]> {
+    const tableId = this.config.tables[tableKey];
+    if (!tableId) {
+      throw new FeishuApiError(`Feishu table ${tableKey} is not configured.`, 'FEISHU_TABLE_NOT_CONFIGURED');
+    }
+
+    const token = await this.getTenantToken();
+    const url = new URL(
+      `https://open.feishu.cn/open-apis/bitable/v1/apps/${encodeURIComponent(this.config.baseToken)}/tables/${encodeURIComponent(tableId)}/fields`,
+    );
+    url.searchParams.set('page_size', '100');
+    const response = await this.fetcher(url, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!response.ok) {
+      throw new FeishuApiError('Feishu Base field list request failed.', 'FEISHU_FIELD_LIST_HTTP_ERROR');
+    }
+    const payload = await response.json() as FieldListResponse;
+    if (payload.code !== 0) {
+      throw new FeishuApiError('Feishu Base field list was rejected.', `FEISHU_FIELD_LIST_${payload.code}`);
+    }
+    return (payload.data?.items ?? []).map(item => ({
+      fieldId: item.field_id,
+      name: item.field_name ?? item.name ?? item.field_id,
+      type: item.type,
+    }));
   }
 
   async createProject(input: FeishuProjectCreateInput): Promise<FeishuRecordCreateResult> {

@@ -67,6 +67,10 @@ npm run build
 - 飞书端已建立8张业务表；公开项目记录API会等用户登录和授权模型完成后再开放。
 - 全仓历史 ESLint 基线仍有旧问题；V4新增/改动文件执行独立零错误门禁。
 
+## AI-PMO System V5.2.7
+
+V5.2.7 完成 P2「数据质量与同步日志」：`/api/operating-system/integrations` 从状态聚合升级为可运行诊断层，新增飞书字段映射检查、实时业务数据质量扫描、故障诊断建议和同步日志写入；数据与集成中心页面新增字段缺口、数据质量样例、处理建议和同步日志展示；新增 `/api/operating-system/sync-logs` 与 `supabase-v527-integration-sync-logs.sql`，用于在 Supabase 持久化集成健康检查日志；字段要求全部以中文业务字段展示，避免把页面做成静态演示。
+
 ## AI-PMO System V5.2.6
 
 V5.2.6 修复数据与集成中心的 RAG 健康字段兼容：线上 `/api/operating-system/integrations` 透传 RAG 健康检查时使用 `index_version`、`page_count`、`retrieval_mode` 等 snake_case 字段，页面现在同时兼容 snake_case 和 camelCase，避免知识库索引版本、语料数量、检索模式显示为 undefined。
