@@ -67,6 +67,10 @@ npm run build
 - 飞书端已建立8张业务表；公开项目记录API会等用户登录和授权模型完成后再开放。
 - 全仓历史 ESLint 基线仍有旧问题；V4新增/改动文件执行独立零错误门禁。
 
+## AI-PMO System V5.2.5
+
+V5.2.5 将“PM/PMO真实使用视角”的增强建议沉淀为正式需求与任务计划，并落地第一批 P1 功能入口：新增 `docs/ai-pmo-pm-pmo-operating-system-requirements-2026-07-01.md`，同时同步到主工作区可见知识库；首页新增“PMO操作系统”分区，接入 `/workbench` PM/PMO每日工作台、`/integration-center` 数据与集成中心、`/governance-workflows` 治理工作流中心；新增 `/api/operating-system/integrations` 聚合 AI模型、飞书、RAG 和数据质量规则的脱敏状态，新增 `/api/operating-system/workbench` 基于飞书项目组合数据生成今日动作、重点项目进度链和 AI 建议依据；治理工作流中心固化立项评审、阶段门、变更评审、风险升级和项目收尾验收的输入、输出、责任人、状态和审计要求，为后续 Supabase 持久化审批、飞书回写、风险-问题-变更-行动项链路打通奠定结构。
+
 ## AI-PMO System V5.2.4
 
 V5.2.4 增加首页运行时模型显示与默认配置回退：`/api/auth/me` 返回脱敏的当前 AI 模型摘要，首页顶部和“模型路由”区域显示当前模型名称、配置来源和待配置状态，不暴露 API Key；登录用户未配置个人飞书时，飞书后端能力自动回退到管理员全局飞书配置，避免项目台账、看板、健康检查等功能因个人配置为空而失效；保留项目台账直达当前飞书多维表格视图的链接；新增 `npm run config:seed-runtime` 脚本，用于在 Supabase 中为管理员账号写入 MiniMax-M3 与飞书表映射配置，脚本输出仅显示配置状态，不打印密钥。

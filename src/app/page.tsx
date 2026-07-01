@@ -5,6 +5,34 @@ import { useEffect, useState } from "react";
 
 const PHASE_MODULES = [
   {
+    phase: "PMO操作系统",
+    emoji: "🧭",
+    tag: "每日管理闭环",
+    modules: [
+      {
+        href: "/workbench",
+        icon: "✅",
+        title: "PM/PMO每日工作台",
+        desc: "今日待办、重点项目、风险动作、经营提醒、AI建议依据",
+        color: "cyan",
+      },
+      {
+        href: "/integration-center",
+        icon: "🧪",
+        title: "数据与集成中心",
+        desc: "飞书、Supabase、AI模型、RAG知识库、数据质量检查",
+        color: "blue",
+      },
+      {
+        href: "/governance-workflows",
+        icon: "🔁",
+        title: "治理工作流中心",
+        desc: "立项、阶段门、变更、风险升级、收尾验收的输入输出闭环",
+        color: "amber",
+      },
+    ],
+  },
+  {
     phase: "启动阶段",
     emoji: "🚀",
     tag: "阶段门治理",
@@ -298,7 +326,7 @@ export default function Home() {
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <span style={{ fontSize: "1.4rem" }}>🏗️</span>
           <span style={{ fontWeight: 800, fontSize: "1.05rem" }}>AI项目管理助手</span>
-          <span className="tag tag-blue">V5.2.4</span>
+          <span className="tag tag-blue">V5.2.5</span>
         </div>
         <div style={{ display: "flex", gap: 16, fontSize: "0.8rem", color: "var(--text2)", alignItems: "center" }}>
           <span>作者：柴春宇</span>
@@ -480,7 +508,7 @@ export default function Home() {
         fontSize: "0.75rem",
         background: "var(--surface)",
       }}>
-        AI项目管理助手 V5.2.4 · 基于 PMBOK 7th 与 PRINCE2 2017 · 飞书底座 + Vercel AI增强层混合架构
+        AI项目管理助手 V5.2.5 · 基于 PMBOK 7th 与 PRINCE2 2017 · 飞书底座 + Vercel AI增强层混合架构
       </footer>
     </div>
   );
