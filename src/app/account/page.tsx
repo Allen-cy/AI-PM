@@ -364,6 +364,35 @@ export default function AccountPage() {
           </section>
         )}
 
+        <section style={{
+          marginBottom: 18,
+          padding: "16px 18px",
+          borderRadius: 20,
+          background: "linear-gradient(180deg, rgba(231,244,255,0.98), rgba(209,230,250,0.94))",
+          border: "1px solid rgba(59,130,246,0.25)",
+          boxShadow: "0 14px 26px rgba(30,64,175,0.12), inset 0 2px 1px rgba(255,255,255,0.85)",
+          display: "flex",
+          justifyContent: "space-between",
+          gap: 16,
+          alignItems: "center",
+        }}>
+          <div>
+            <div style={{ fontWeight: 800, color: "#1d4ed8" }}>项目访问申请</div>
+            <div style={{ color: "#52657a", fontSize: "0.86rem", marginTop: 4 }}>如果需要查看非本人负责的项目，可以提交访问申请，由管理员审批授权。</div>
+          </div>
+          <Link href="/account/project-access" style={{
+            textDecoration: "none",
+            borderRadius: 14,
+            padding: "10px 16px",
+            color: "#fff",
+            fontWeight: 800,
+            background: "linear-gradient(180deg, #3b82f6, #1d4ed8)",
+            boxShadow: "0 10px 20px rgba(29,78,216,0.22), inset 0 2px 2px rgba(255,255,255,0.32)",
+          }}>
+            提交项目访问申请
+          </Link>
+        </section>
+
         <div style={{
           display: "grid",
           gridTemplateColumns: "330px minmax(0, 1fr)",

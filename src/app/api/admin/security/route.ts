@@ -40,6 +40,16 @@ function jsonValue(value: unknown): Record<string, unknown> {
   throw new AdminSecurityError("配置值必须是JSON对象");
 }
 
+function missingTableMessage(message: string): string {
+  if (message.includes("project_access_requests")) return "P10 SQL 尚未执行或表不存在，请先执行 supabase-v536-security-ops.sql";
+  if (message.includes("user_project_access_grants") || message.includes("operation_audit_logs") || message.includes("system_configurations")) {
+    return "P9 SQL 尚未执行或表不存在，请先执行 supabase-v534-enterprise-security.sql";
+  }
+  return message.includes("does not exist") || message.includes("relation")
+    ? "P9/P10 SQL 尚未执行或表不存在，请先依次执行 supabase-v534-enterprise-security.sql 与 supabase-v536-security-ops.sql"
+    : message;
+}
+
 function role(value: unknown): AppRole {
   if (value === "admin" || value === "user") return value;
   throw new AdminSecurityError("角色必须是 admin 或 user");
@@ -208,6 +218,100 @@ export async function POST(request: Request) {
       return json({ ok: true, id: data.id, audit, request_id: requestId });
     }
 
+    if (operation === "approve_project_access_request") {
+      const accessRequestId = text(body.requestId, "requestId", 80);
+      const reviewComment = optionalText(body.reviewComment, 500);
+      const { data: accessRequest, error: requestError } = await supabase
+        .from("project_access_requests")
+        .select("id,requester_id,project_name,project_code,access_level,reason,status")
+        .eq("id", accessRequestId)
+        .maybeSingle();
+      if (requestError) throw new AdminSecurityError(requestError.message, 500);
+      if (!accessRequest) throw new AdminSecurityError("项目访问申请不存在", 404);
+      if (accessRequest.status !== "pending") throw new AdminSecurityError("该申请已处理，不能重复审批", 409);
+
+      const { data: grant, error: grantError } = await supabase
+        .from("user_project_access_grants")
+        .insert({
+          user_id: accessRequest.requester_id,
+          project_name: accessRequest.project_name,
+          project_code: accessRequest.project_code,
+          access_level: accessRequest.access_level,
+          status: "active",
+          grant_reason: accessRequest.reason,
+          granted_by: admin.id,
+          granted_by_name: admin.name || admin.email || admin.phone,
+          updated_at: new Date().toISOString(),
+        })
+        .select("id")
+        .single();
+      if (grantError) throw new AdminSecurityError(grantError.message, 500);
+
+      const { error: updateError } = await supabase
+        .from("project_access_requests")
+        .update({
+          status: "approved",
+          reviewer_id: admin.id,
+          reviewer_name: admin.name || admin.email || admin.phone,
+          review_comment: reviewComment,
+          related_grant_id: grant.id,
+          reviewed_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", accessRequest.id);
+      if (updateError) throw new AdminSecurityError(updateError.message, 500);
+
+      const audit = await writeOperationAudit({
+        user: admin,
+        action: "approve_project_access_request",
+        resourceType: "project_access_request",
+        resourceId: accessRequest.id,
+        status: "succeeded",
+        severity: "medium",
+        summary: `批准项目访问申请：${accessRequest.project_name || accessRequest.project_code} / ${accessRequest.access_level}`,
+        detail: { accessRequestId, grantId: grant.id },
+        requestId,
+      });
+      return json({ ok: true, grant_id: grant.id, audit, request_id: requestId });
+    }
+
+    if (operation === "reject_project_access_request") {
+      const accessRequestId = text(body.requestId, "requestId", 80);
+      const reviewComment = text(body.reviewComment, "驳回原因", 500);
+      const { data: accessRequest, error: requestError } = await supabase
+        .from("project_access_requests")
+        .select("id,project_name,project_code,status")
+        .eq("id", accessRequestId)
+        .maybeSingle();
+      if (requestError) throw new AdminSecurityError(requestError.message, 500);
+      if (!accessRequest) throw new AdminSecurityError("项目访问申请不存在", 404);
+      if (accessRequest.status !== "pending") throw new AdminSecurityError("该申请已处理，不能重复审批", 409);
+      const { error: updateError } = await supabase
+        .from("project_access_requests")
+        .update({
+          status: "rejected",
+          reviewer_id: admin.id,
+          reviewer_name: admin.name || admin.email || admin.phone,
+          review_comment: reviewComment,
+          reviewed_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", accessRequest.id);
+      if (updateError) throw new AdminSecurityError(updateError.message, 500);
+      const audit = await writeOperationAudit({
+        user: admin,
+        action: "reject_project_access_request",
+        resourceType: "project_access_request",
+        resourceId: accessRequest.id,
+        status: "succeeded",
+        severity: "medium",
+        summary: `驳回项目访问申请：${accessRequest.project_name || accessRequest.project_code}`,
+        detail: { accessRequestId },
+        requestId,
+      });
+      return json({ ok: true, audit, request_id: requestId });
+    }
+
     throw new AdminSecurityError("不支持的管理员安全操作", 400);
   } catch (error) {
     const message = error instanceof Error ? error.message : "操作失败";
@@ -221,7 +325,7 @@ export async function POST(request: Request) {
       requestId,
     });
     return json({
-      error: message.includes("does not exist") || message.includes("relation") ? "P9 SQL 尚未执行或表不存在，请先执行 supabase-v534-enterprise-security.sql" : message,
+      error: missingTableMessage(message),
       request_id: requestId,
     }, error instanceof AdminSecurityError ? error.status : 500);
   }

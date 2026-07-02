@@ -35,6 +35,23 @@ type ProjectAccessGrant = {
   createdAt?: string;
 };
 
+type ProjectAccessRequest = {
+  id: string;
+  requesterId: string;
+  requesterName?: string | null;
+  requesterEmail?: string | null;
+  projectName?: string | null;
+  projectCode?: string | null;
+  accessLevel: "viewer" | "editor" | "owner";
+  reason: string;
+  status: "pending" | "approved" | "rejected" | "cancelled";
+  reviewerName?: string | null;
+  reviewComment?: string | null;
+  relatedGrantId?: string | null;
+  createdAt?: string;
+  reviewedAt?: string | null;
+};
+
 type AuditLog = {
   id: string;
   actorName: string;
@@ -66,6 +83,7 @@ type SecuritySnapshot = {
   };
   users: AppUser[];
   projectAccess: ProjectAccessGrant[];
+  projectAccessRequests: ProjectAccessRequest[];
   auditLogs: AuditLog[];
   systemConfigurations: SystemConfiguration[];
   warnings: string[];
@@ -130,6 +148,7 @@ export default function AdminSecurityPage() {
       secret_redaction: true,
     }, null, 2),
   });
+  const [reviewDraft, setReviewDraft] = useState<Record<string, string>>({});
 
   async function loadSnapshot() {
     setLoading(true);
@@ -211,6 +230,34 @@ export default function AdminSecurityPage() {
     }, "系统配置已保存");
   }
 
+  async function approveAccessRequest(id: string) {
+    await runOperation({
+      operation: "approve_project_access_request",
+      requestId: id,
+      reviewComment: reviewDraft[id] || "审批通过",
+    }, "项目访问申请已批准并生成授权");
+  }
+
+  async function rejectAccessRequest(id: string) {
+    await runOperation({
+      operation: "reject_project_access_request",
+      requestId: id,
+      reviewComment: reviewDraft[id] || "申请信息不足或不符合当前授权策略",
+    }, "项目访问申请已驳回");
+  }
+
+  const securityRisks = useMemo(() => {
+    const risks: Array<{ title: string; detail: string; severity: "high" | "medium" | "low" }> = [];
+    if (!snapshot?.runtime.authRequired) risks.push({ title: "公网登录开关未启用", detail: "AUTH_REQUIRED 不是 true 时，公网访问边界不足。", severity: "high" });
+    if (snapshot?.warnings.length) risks.push({ title: "安全表或配置存在告警", detail: snapshot.warnings.join("；"), severity: "high" });
+    const failedAudits = snapshot?.auditLogs.filter(log => log.status === "failed" || log.status === "rejected").length ?? 0;
+    if (failedAudits > 0) risks.push({ title: "存在失败/拒绝审计事件", detail: `最近审计日志中有 ${failedAudits} 条失败或拒绝事件，需要复核。`, severity: "medium" });
+    const pendingRequests = snapshot?.projectAccessRequests.filter(item => item.status === "pending").length ?? 0;
+    if (pendingRequests > 0) risks.push({ title: "存在待审批项目访问申请", detail: `${pendingRequests} 条项目访问申请等待管理员处理。`, severity: "medium" });
+    risks.push({ title: "Excel解析依赖待替换", detail: "xlsx 上游暂无修复版本，当前已限制上传类型/大小/行数，长期建议替换或隔离解析服务。", severity: "medium" });
+    return risks;
+  }, [snapshot]);
+
   return (
     <main style={{ minHeight: "100vh", background: "var(--bg)" }}>
       <header style={{
@@ -225,7 +272,7 @@ export default function AdminSecurityPage() {
         <Link href="/account" style={{ color: "var(--text2)", textDecoration: "none", fontSize: "0.85rem" }}>用户中心</Link>
         <span style={{ color: "var(--border)" }}>|</span>
         <strong style={{ color: "var(--purple)" }}>🛡️ 管理员安全配置中心</strong>
-        <span className="tag tag-purple">P9</span>
+        <span className="tag tag-purple">P9/P10</span>
       </header>
 
       <div style={{ maxWidth: 1440, margin: "0 auto", padding: "28px 32px" }}>
@@ -233,10 +280,14 @@ export default function AdminSecurityPage() {
           <div>
             <h1 style={{ margin: "0 0 8px", fontSize: "1.5rem", fontWeight: 900 }}>权限、项目授权、审计和企业配置统一管理</h1>
             <p style={{ margin: 0, color: "var(--text2)", lineHeight: 1.7, maxWidth: 920 }}>
-              P9 将公网使用从“登录即可用”推进到“角色权限 + 项目级授权 + 操作审计”。普通用户只能查看本人负责或被授权的项目，管理员动作会写入审计日志。
+              P9/P10 将公网使用从“登录即可用”推进到“角色权限 + 项目级授权 + 操作审计 + 申请审批 + 审计导出”。普通用户只能查看本人负责或被授权的项目，管理员动作会写入审计日志。
             </p>
           </div>
-          <button className="btn-secondary" onClick={() => void loadSnapshot()} disabled={loading}>{loading ? "刷新中..." : "刷新"}</button>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+            <a className="btn-secondary" href="/api/admin/security/export?format=markdown" style={{ textDecoration: "none" }}>导出Markdown</a>
+            <a className="btn-secondary" href="/api/admin/security/export?format=csv" style={{ textDecoration: "none" }}>导出CSV</a>
+            <button className="btn-secondary" onClick={() => void loadSnapshot()} disabled={loading}>{loading ? "刷新中..." : "刷新"}</button>
+          </div>
         </div>
 
         {(message || error || snapshot?.warnings?.length) && (
@@ -293,6 +344,21 @@ export default function AdminSecurityPage() {
               <p style={{ color: "var(--text2)", fontSize: "0.8rem", lineHeight: 1.7 }}>
                 环境变量仍然只在 Vercel/Supabase 中配置；本页面保存的是企业化策略说明和可审计配置，不保存密钥。
               </p>
+            </section>
+
+            <section style={{ ...cardStyle, gridColumn: "1 / -1" }}>
+              <h2 style={{ margin: "0 0 14px", fontSize: "1rem" }}>安全风险面板</h2>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 10 }}>
+                {securityRisks.map(item => {
+                  const color = item.severity === "high" ? "var(--red)" : item.severity === "medium" ? "var(--amber)" : "var(--green)";
+                  return (
+                    <div key={item.title} style={{ padding: 12, borderRadius: 12, background: "var(--surface2)", border: `1px solid ${color}55` }}>
+                      <div style={{ color, fontWeight: 900 }}>{item.title}</div>
+                      <div style={{ color: "var(--text2)", fontSize: "0.76rem", lineHeight: 1.6, marginTop: 6 }}>{item.detail}</div>
+                    </div>
+                  );
+                })}
+              </div>
             </section>
 
             <section style={cardStyle}>
@@ -358,6 +424,44 @@ export default function AdminSecurityPage() {
                       <div style={{ color: "var(--text2)", fontSize: "0.75rem", marginTop: 4 }}>{grant.userName || grant.userEmail || grant.userId} · {grant.accessLevel} · {grant.status}</div>
                     </div>
                     {grant.status === "active" && <button className="btn-secondary" onClick={() => void revokeGrant(grant.id)} disabled={saving}>撤销</button>}
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            <section style={cardStyle}>
+              <h2 style={{ margin: "0 0 14px", fontSize: "1rem" }}>项目访问申请审批</h2>
+              <div style={{ display: "grid", gap: 10, maxHeight: 430, overflow: "auto" }}>
+                {snapshot.projectAccessRequests.length === 0 && <div style={{ color: "var(--text2)" }}>暂无项目访问申请。</div>}
+                {snapshot.projectAccessRequests.map(item => (
+                  <div key={item.id} style={{ padding: 12, borderRadius: 12, background: "var(--surface2)", border: "1px solid var(--border)" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                      <div>
+                        <div style={{ fontWeight: 900 }}>{item.projectName || item.projectCode}</div>
+                        <div style={{ color: "var(--text2)", fontSize: "0.75rem", marginTop: 4 }}>{item.requesterName || item.requesterEmail || item.requesterId} · {item.accessLevel}</div>
+                      </div>
+                      <StatusTag value={item.status} />
+                    </div>
+                    <div style={{ color: "var(--text2)", fontSize: "0.78rem", lineHeight: 1.6, marginTop: 8 }}>{item.reason}</div>
+                    {item.status === "pending" ? (
+                      <>
+                        <input
+                          className="input"
+                          value={reviewDraft[item.id] || ""}
+                          onChange={event => setReviewDraft(prev => ({ ...prev, [item.id]: event.target.value }))}
+                          placeholder="审批意见，可选"
+                          style={{ marginTop: 10, minHeight: 36 }}
+                        />
+                        <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                          <button className="btn-primary" onClick={() => void approveAccessRequest(item.id)} disabled={saving}>批准并授权</button>
+                          <button className="btn-secondary" onClick={() => void rejectAccessRequest(item.id)} disabled={saving}>驳回</button>
+                        </div>
+                      </>
+                    ) : (
+                      <div style={{ color: "var(--text2)", fontSize: "0.75rem", marginTop: 8 }}>
+                        审批人：{item.reviewerName || "-"}；意见：{item.reviewComment || "-"}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>

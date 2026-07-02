@@ -48,6 +48,22 @@ export interface AdminSecuritySnapshot {
     createdAt?: string;
     updatedAt?: string;
   }>;
+  projectAccessRequests: Array<{
+    id: string;
+    requesterId: string;
+    requesterName?: string | null;
+    requesterEmail?: string | null;
+    projectName?: string | null;
+    projectCode?: string | null;
+    accessLevel: "viewer" | "editor" | "owner";
+    reason: string;
+    status: "pending" | "approved" | "rejected" | "cancelled";
+    reviewerName?: string | null;
+    reviewComment?: string | null;
+    relatedGrantId?: string | null;
+    createdAt?: string;
+    reviewedAt?: string | null;
+  }>;
   auditLogs: Array<{
     id: string;
     actorName: string;
@@ -74,7 +90,7 @@ export interface AdminSecuritySnapshot {
 }
 
 function isMissingTableError(message?: string): boolean {
-  return Boolean(message?.includes("does not exist") || message?.includes("relation") || message?.includes("operation_audit_logs") || message?.includes("user_project_access_grants") || message?.includes("system_configurations"));
+  return Boolean(message?.includes("does not exist") || message?.includes("relation") || message?.includes("operation_audit_logs") || message?.includes("user_project_access_grants") || message?.includes("system_configurations") || message?.includes("project_access_requests"));
 }
 
 function actorName(user: AppUser | null): string {
@@ -174,6 +190,7 @@ export async function loadAdminSecuritySnapshot(): Promise<AdminSecuritySnapshot
     permissions: { definitions: PERMISSION_DEFINITIONS, matrix: ROLE_PERMISSION_MATRIX },
     users: [],
     projectAccess: [],
+    projectAccessRequests: [],
     auditLogs: [],
     systemConfigurations: [],
     warnings: [],
@@ -184,9 +201,10 @@ export async function loadAdminSecuritySnapshot(): Promise<AdminSecuritySnapshot
   }
 
   const supabase = getAuthSupabase();
-  const [users, grants, audits, configs] = await Promise.all([
+  const [users, grants, requests, audits, configs] = await Promise.all([
     supabase.from("app_users").select("id,email,phone,name,role,status,created_at").order("created_at", { ascending: false }).limit(200),
     supabase.from("user_project_access_grants").select("id,user_id,project_name,project_code,access_level,status,grant_reason,created_at,updated_at,app_users(name,email)").order("updated_at", { ascending: false }).limit(200),
+    supabase.from("project_access_requests").select("id,requester_id,requester_name,requester_email,project_name,project_code,access_level,reason,status,reviewer_name,review_comment,related_grant_id,created_at,reviewed_at").order("created_at", { ascending: false }).limit(200),
     supabase.from("operation_audit_logs").select("id,actor_name,actor_role,action,resource_type,resource_id,status,severity,summary,created_at,request_id").order("created_at", { ascending: false }).limit(100),
     supabase.from("system_configurations").select("id,config_key,config_value,category,description,updated_at,updated_by_name").order("updated_at", { ascending: false }).limit(100),
   ]);
@@ -206,6 +224,26 @@ export async function loadAdminSecuritySnapshot(): Promise<AdminSecuritySnapshot
 
   if (grants.error) snapshot.warnings.push(isMissingTableError(grants.error.message) ? "P9 SQL 未执行：user_project_access_grants 不存在。" : grants.error.message);
   else snapshot.projectAccess = (grants.data ?? []).map(row => mapGrant(row as Record<string, unknown>));
+
+  if (requests.error) snapshot.warnings.push(requests.error.message.includes("project_access_requests") || requests.error.message.includes("does not exist") || requests.error.message.includes("relation") ? "P10 SQL 未执行：project_access_requests 不存在。" : requests.error.message);
+  else {
+    snapshot.projectAccessRequests = (requests.data ?? []).map(row => ({
+      id: row.id,
+      requesterId: row.requester_id,
+      requesterName: row.requester_name,
+      requesterEmail: row.requester_email,
+      projectName: row.project_name,
+      projectCode: row.project_code,
+      accessLevel: row.access_level,
+      reason: row.reason,
+      status: row.status,
+      reviewerName: row.reviewer_name,
+      reviewComment: row.review_comment,
+      relatedGrantId: row.related_grant_id,
+      createdAt: row.created_at,
+      reviewedAt: row.reviewed_at,
+    }));
+  }
 
   if (audits.error) snapshot.warnings.push(isMissingTableError(audits.error.message) ? "P9 SQL 未执行：operation_audit_logs 不存在。" : audits.error.message);
   else {

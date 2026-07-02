@@ -46,6 +46,7 @@ import {
   recordMatchesProjectGrant,
   ROLE_PERMISSION_MATRIX,
 } from '../src/features/security/authorization.ts';
+import { buildSecurityCsv, buildSecurityMarkdown } from '../src/features/security/export.ts';
 import type { Risk } from '../src/lib/risk.ts';
 import type { DashboardData } from '../src/features/dashboard/types.ts';
 
@@ -585,6 +586,35 @@ test('enterprise security permissions and project access scope data', () => {
   assert.equal(emptyScoped.records.length, 0);
   assert.equal(emptyScoped.kpi.totalProjects, 0);
   assert.equal(emptyScoped.source.note?.includes('可见项目 0/2 个'), true);
+});
+
+test('security export includes access requests audits and omits secrets', () => {
+  const snapshot = {
+    permissions: { definitions: PERMISSION_DEFINITIONS, matrix: ROLE_PERMISSION_MATRIX },
+    users: [
+      { id: 'u-1', email: 'zhangsan@example.com', phone: '13800000000', name: '张三', role: 'user' as const, status: 'active' as const },
+    ],
+    projectAccess: [
+      { id: 'g-1', userId: 'u-1', userName: '张三', userEmail: 'zhangsan@example.com', projectName: '智慧校园一期', accessLevel: 'viewer' as const, status: 'active' as const, grantReason: '参与验收' },
+    ],
+    projectAccessRequests: [
+      { id: 'r-1', requesterId: 'u-1', requesterName: '张三', requesterEmail: 'zhangsan@example.com', projectName: '智慧校园一期', accessLevel: 'viewer' as const, reason: '参与验收复核', status: 'pending' as const },
+    ],
+    auditLogs: [
+      { id: 'a-1', actorName: '管理员', actorRole: 'admin', action: 'approve_project_access_request', resourceType: 'project_access_request', status: 'succeeded' as const, severity: 'medium' as const, summary: '批准访问', createdAt: '2026-07-02T00:00:00.000Z', requestId: 'req-1' },
+    ],
+    systemConfigurations: [],
+    warnings: ['xlsx dependency pending replacement'],
+  };
+
+  const markdown = buildSecurityMarkdown(snapshot, '2026-07-02T00:00:00.000Z');
+  const csv = buildSecurityCsv(snapshot);
+
+  assert.match(markdown, /企业安全运营报告/);
+  assert.match(markdown, /项目访问申请/);
+  assert.match(markdown, /批准访问/);
+  assert.match(csv, /access_request/);
+  assert.equal(/sk-[A-Za-z0-9_-]{20,}|A512355|19331651682/.test(markdown), false);
 });
 
 test('operational workbench shows all records for admin role', () => {
