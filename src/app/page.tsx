@@ -241,10 +241,10 @@ const PHASE_MODULES = [
         color: "blue",
       },
       {
-        href: "/blueprint-v3/delivery-management",
+        href: "/blueprint-v3",
         icon: "🗺️",
         title: "蓝图v2-BPM视图",
-        desc: "项目全流程交付管理蓝图，打通销售、交付、监控、成本和工具",
+        desc: "业务场景与工具蓝图，保留原BPM视图，并提供正式流程蓝图入口",
         color: "green",
       },
       {
@@ -340,7 +340,7 @@ export default function Home() {
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <span style={{ fontSize: "1.4rem" }}>🏗️</span>
           <span style={{ fontWeight: 800, fontSize: "1.05rem" }}>AI项目管理助手</span>
-          <span className="tag tag-blue">V5.3.8</span>
+          <span className="tag tag-blue">V5.3.9</span>
         </div>
         <div style={{ display: "flex", gap: 16, fontSize: "0.8rem", color: "var(--text2)", alignItems: "center" }}>
           <span>作者：柴春宇</span>

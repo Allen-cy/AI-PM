@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
@@ -82,6 +83,17 @@ test('delivery management blueprint models sales project monitoring and cost dep
   assert.equal(deliveryPhases.every(phase => phase.costGate && phase.nodes.every(node => node.output && node.evidence)), true);
   assert.equal(deliveryControlPoints.some(point => point.title.includes('里程碑') && point.output.includes('回款')), true);
   assert.equal(monitoringTracks.every(track => track.purpose && track.evidence), true);
+});
+
+test('delivery management blueprint remains a separate BPM subpage with arrow flow links', () => {
+  const homeSource = readFileSync(new URL('../src/app/page.tsx', import.meta.url), 'utf8');
+  const deliveryPageSource = readFileSync(new URL('../src/app/blueprint-v3/delivery-management/page.tsx', import.meta.url), 'utf8');
+  assert.match(homeSource, /href: "\/blueprint-v3"/);
+  assert.doesNotMatch(homeSource, /href: "\/blueprint-v3\/delivery-management"[\s\S]*title: "蓝图v2-BPM视图"/);
+  assert.match(deliveryPageSource, /项目全流程交付管理蓝图/);
+  assert.match(deliveryPageSource, /BPM泳道流程图/);
+  assert.match(deliveryPageSource, /flowLinks/);
+  assert.match(deliveryPageSource, /markerEnd/);
 });
 
 test('governance workflows define inputs outputs owners states and audit trail', () => {
