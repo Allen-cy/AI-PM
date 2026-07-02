@@ -13,6 +13,20 @@ export interface ReportRequest {
   tone: 'formal' | 'concise' | 'detailed';
 }
 
+export interface ReportDataSource {
+  label: string;
+  detail: string;
+  source: 'user_input' | 'feishu' | 'system' | 'ai' | 'fallback';
+}
+
+export interface ReportActionItem {
+  title: string;
+  owner: string;
+  dueDate: string;
+  priority: 'P0' | 'P1' | 'P2';
+  sourceReason: string;
+}
+
 export interface GeneratedReport {
   id: string;
   type: ReportType;
@@ -20,11 +34,15 @@ export interface GeneratedReport {
   content: string;
   generatedAt: string;
   projectName: string;
+  dataSources?: ReportDataSource[];
+  actionItems?: ReportActionItem[];
+  evidence?: import('@/features/ai/evidence').AiEvidence;
+  requestId?: string;
 }
 
 export const REPORT_TYPE_LABELS: Record<ReportType, string> = {
   weekly: '项目周报',
-  monthly: '项目月报',
+  monthly: 'PMO月报',
   progress: '项目进度报告',
   meeting: '会议纪要',
   acceptance: '验收报告',

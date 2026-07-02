@@ -32,6 +32,12 @@ import {
   buildRiskScanEvidence,
 } from '../src/features/ai/evidence.ts';
 import { buildFinanceCockpit } from '../src/features/finance/cockpit.ts';
+import {
+  buildReportEvidence,
+  buildReportFactoryPackage,
+  extractMeetingActionItems,
+  fallbackReportContent,
+} from '../src/features/reports/factory.ts';
 import type { Risk } from '../src/lib/risk.ts';
 import type { DashboardData } from '../src/features/dashboard/types.ts';
 
@@ -394,6 +400,92 @@ test('finance cockpit links contract cost collection margin and acceptance block
   assert.equal(cockpit.alerts.some(alert => alert.type === 'low_margin'), true);
   assert.equal(cockpit.paymentAcceptanceLinks[0].projectName, '验收阻塞项目');
   assert.equal(cockpit.portfolioByLevel.some(group => group.name === 'A级' && group.contractAmount === 300), true);
+});
+
+test('report factory cites data sources and turns meeting minutes into actions', () => {
+  const dashboard: DashboardData = {
+    source: { type: 'feishu', name: '飞书项目台账', generatedAt: '2026-07-02T00:00:00.000Z' },
+    kpi: {
+      totalProjects: 1,
+      totalContract: 300,
+      totalCollection: 120,
+      collectionRate: 40,
+      receivable: 180,
+    },
+    statusDistribution: [],
+    monthlyTrend: [],
+    regionDistribution: [],
+    paymentGroups: [],
+    projectLevels: [],
+    healthMatrix: [],
+    keyProjects: [],
+    riskProjects: [
+      { id: 'R-1', name: '智慧校园一期', riskType: '回款风险', severity: '高', status: '应对中', trend: '恶化' },
+    ],
+    upcomingPayments: [
+      { project: '智慧校园一期', party: '客户A', amount: 180, dueDate: '2026-07-01', daysLeft: -1 },
+    ],
+    records: [
+      {
+        项目编号: 'P-RPT-1',
+        项目名称: '智慧校园一期',
+        省份: '上海',
+        客户名称: '客户A',
+        项目状态: '验收中',
+        项目等级: 'A',
+        项目类型: '信息化',
+        产品类别: '平台',
+        当前进度: 0.92,
+        合同金额: 300,
+        已回款金额: 120,
+        应收金额: 180,
+        回款率: 0.4,
+        成本健康度: 70,
+        进度偏差: -3,
+        风险类型: '回款风险',
+        风险等级: '高',
+        风险状态: '应对中',
+        风险趋势: '恶化',
+        到期日期: '2026-07-01',
+        预算金额: 210,
+        实际成本: 205,
+        预计成本: 255,
+        验收状态: '验收中',
+      },
+    ],
+  };
+  const finance = buildFinanceCockpit(dashboard, { asOf: new Date('2026-07-02T00:00:00.000Z') });
+  const request = {
+    type: 'meeting' as const,
+    projectName: '智慧校园一期',
+    completedWork: '补齐客户付款条件清单|商务负责人|2026-07-05|P1\n协调交付负责人关闭剩余缺陷|交付负责人|2026-07-04|P0',
+    nextPlans: '下次会议复核验收材料、回款承诺和遗留缺陷关闭情况。',
+    issues: '客户验收签字依赖缺陷修复和付款材料确认。',
+    resourceNeeds: '需要PMO协调商务、交付和财务BP共同确认应收与验收口径。',
+    tone: 'formal' as const,
+  };
+  const context = {
+    dashboard,
+    finance,
+    sourceLabel: '飞书项目台账',
+    sourceStatus: 'live' as const,
+    model: 'MiniMax-M3',
+  };
+
+  const dataPackage = buildReportFactoryPackage(request, context);
+  const actionItems = extractMeetingActionItems(request.completedWork, request.projectName);
+  const evidence = buildReportEvidence({ request, context, dataPackage, actionItems, status: 'generated' });
+  const markdown = fallbackReportContent(request, dataPackage, actionItems);
+
+  assert.equal(dataPackage.dataSources.some(source => source.source === 'feishu'), true);
+  assert.equal(dataPackage.financeFacts.some(item => item.includes('验收阻塞回款')), true);
+  assert.equal(actionItems.length, 2);
+  assert.equal(actionItems[1].priority, 'P0');
+  assert.equal(evidence.scene, 'report');
+  assert.equal(evidence.citations.includes('飞书项目台账'), true);
+  assert.equal(evidence.suggestedActions.length, 2);
+  assert.match(markdown, /数据来源与生成边界/);
+  assert.match(markdown, /补齐客户付款条件清单/);
 });
 
 test('operational workbench shows all records for admin role', () => {
