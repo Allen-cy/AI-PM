@@ -5,6 +5,13 @@ import { loadAdminSecuritySnapshot, writeOperationAudit } from "@/features/secur
 
 export const runtime = "nodejs";
 
+function json(body: unknown, status = 200) {
+  return NextResponse.json(body, {
+    status,
+    headers: { "Cache-Control": "no-store" },
+  });
+}
+
 class AdminSecurityError extends Error {
   constructor(message: string, public status = 400) {
     super(message);
@@ -50,12 +57,12 @@ function accessLevel(value: unknown): "viewer" | "editor" | "owner" {
 
 export async function GET() {
   if (!isAuthStorageConfigured()) {
-    return NextResponse.json({ error: "AUTH_STORAGE_NOT_CONFIGURED" }, { status: 503 });
+    return json({ error: "AUTH_STORAGE_NOT_CONFIGURED" }, 503);
   }
   const admin = await requireAdmin();
-  if (!admin || !hasPermission(admin, "system:admin")) return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
+  if (!admin || !hasPermission(admin, "system:admin")) return json({ error: "FORBIDDEN" }, 403);
   const snapshot = await loadAdminSecuritySnapshot();
-  return NextResponse.json({
+  return json({
     ...snapshot,
     runtime: {
       authRequired: process.env.AUTH_REQUIRED === "true",
@@ -67,18 +74,18 @@ export async function GET() {
 export async function POST(request: Request) {
   const requestId = crypto.randomUUID();
   if (!isAuthStorageConfigured()) {
-    return NextResponse.json({ error: "AUTH_STORAGE_NOT_CONFIGURED", request_id: requestId }, { status: 503 });
+    return json({ error: "AUTH_STORAGE_NOT_CONFIGURED", request_id: requestId }, 503);
   }
   const admin = await requireAdmin();
   if (!admin || !hasPermission(admin, "system:admin")) {
-    return NextResponse.json({ error: "FORBIDDEN", request_id: requestId }, { status: 403 });
+    return json({ error: "FORBIDDEN", request_id: requestId }, 403);
   }
 
   let body: Record<string, unknown>;
   try {
     body = await request.json() as Record<string, unknown>;
   } catch {
-    return NextResponse.json({ error: "请求JSON格式错误", request_id: requestId }, { status: 400 });
+    return json({ error: "请求JSON格式错误", request_id: requestId }, 400);
   }
 
   const operation = text(body.operation, "operation", 80);
@@ -119,7 +126,7 @@ export async function POST(request: Request) {
         detail: { userId, projectName, projectCode, accessLevel: level },
         requestId,
       });
-      return NextResponse.json({ ok: true, id: data.id, audit, request_id: requestId });
+      return json({ ok: true, id: data.id, audit, request_id: requestId });
     }
 
     if (operation === "revoke_project_access") {
@@ -139,7 +146,7 @@ export async function POST(request: Request) {
         summary: "撤销项目访问授权",
         requestId,
       });
-      return NextResponse.json({ ok: true, audit, request_id: requestId });
+      return json({ ok: true, audit, request_id: requestId });
     }
 
     if (operation === "update_user_role") {
@@ -165,7 +172,7 @@ export async function POST(request: Request) {
         detail: { userId, role: nextRole, status: nextStatus },
         requestId,
       });
-      return NextResponse.json({ ok: true, audit, request_id: requestId });
+      return json({ ok: true, audit, request_id: requestId });
     }
 
     if (operation === "save_system_config") {
@@ -198,7 +205,7 @@ export async function POST(request: Request) {
         detail: { configKey: key, category },
         requestId,
       });
-      return NextResponse.json({ ok: true, id: data.id, audit, request_id: requestId });
+      return json({ ok: true, id: data.id, audit, request_id: requestId });
     }
 
     throw new AdminSecurityError("不支持的管理员安全操作", 400);
@@ -213,9 +220,9 @@ export async function POST(request: Request) {
       summary: message,
       requestId,
     });
-    return NextResponse.json({
+    return json({
       error: message.includes("does not exist") || message.includes("relation") ? "P9 SQL 尚未执行或表不存在，请先执行 supabase-v534-enterprise-security.sql" : message,
       request_id: requestId,
-    }, { status: error instanceof AdminSecurityError ? error.status : 500 });
+    }, error instanceof AdminSecurityError ? error.status : 500);
   }
 }
