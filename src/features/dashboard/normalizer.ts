@@ -228,6 +228,18 @@ export function normalizeProjectRows(rows: RawRow[]): DashboardProjectRecord[] {
         风险状态: text(row, ['风险状态'], status.includes('验收') ? '监控中' : '已识别'),
         风险趋势: text(row, ['风险趋势']) as '恶化' | '平稳' | '改善',
         到期日期: dueDate,
+        预算金额: number(row, ['预算金额', '项目预算', '预算'], Number.NaN),
+        计划成本: number(row, ['计划成本', '成本预算'], Number.NaN),
+        实际成本: number(row, ['实际成本', '已发生成本', '累计成本', 'AC'], Number.NaN),
+        预计成本: number(row, ['预计成本', '预测成本', 'EAC'], Number.NaN),
+        毛利: number(row, ['毛利', '项目毛利'], Number.NaN),
+        毛利率: number(row, ['毛利率'], Number.NaN),
+        验收状态: text(row, ['验收状态', '客户验收状态', '交付验收状态']),
+        验收日期: dateText(row, ['验收日期', '客户验收日期']),
+        验收进度: number(row, ['验收进度'], Number.NaN),
+        回款条件: text(row, ['回款条件', '付款条件']),
+        开票金额: number(row, ['开票金额', '已开票金额'], Number.NaN),
+        未开票金额: number(row, ['未开票金额'], Number.NaN),
       };
       project.风险等级 = ['高', '中', '低'].includes(project.风险等级) ? project.风险等级 : severityFromRecord(project);
       project.风险趋势 = ['恶化', '平稳', '改善'].includes(project.风险趋势) ? project.风险趋势 : trendFromRecord(project);

@@ -37,6 +37,13 @@ const PHASE_MODULES = [
         desc: "风险升级、问题处理、变更影响分析、行动项和关闭证据",
         color: "purple",
       },
+      {
+        href: "/finance",
+        icon: "💹",
+        title: "业财一体化驾驶舱",
+        desc: "合同、预算、成本、回款、毛利、应收和验收阻塞联动",
+        color: "green",
+      },
     ],
   },
   {
@@ -333,7 +340,7 @@ export default function Home() {
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <span style={{ fontSize: "1.4rem" }}>🏗️</span>
           <span style={{ fontWeight: 800, fontSize: "1.05rem" }}>AI项目管理助手</span>
-          <span className="tag tag-blue">V5.3.0</span>
+          <span className="tag tag-blue">V5.3.2</span>
         </div>
         <div style={{ display: "flex", gap: 16, fontSize: "0.8rem", color: "var(--text2)", alignItems: "center" }}>
           <span>作者：柴春宇</span>

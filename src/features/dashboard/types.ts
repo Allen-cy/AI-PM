@@ -97,6 +97,18 @@ export interface DashboardProjectRecord {
   风险状态: string;
   风险趋势: '恶化' | '平稳' | '改善';
   到期日期?: string;
+  预算金额?: number;
+  计划成本?: number;
+  实际成本?: number;
+  预计成本?: number;
+  毛利?: number;
+  毛利率?: number;
+  验收状态?: string;
+  验收日期?: string;
+  验收进度?: number;
+  回款条件?: string;
+  开票金额?: number;
+  未开票金额?: number;
   重点项目标记?: string;
   是否重点项目?: boolean;
   重点项目原因?: string;

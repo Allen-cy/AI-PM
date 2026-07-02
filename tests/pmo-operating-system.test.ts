@@ -31,6 +31,7 @@ import {
   buildExecutionSummaryEvidence,
   buildRiskScanEvidence,
 } from '../src/features/ai/evidence.ts';
+import { buildFinanceCockpit } from '../src/features/finance/cockpit.ts';
 import type { Risk } from '../src/lib/risk.ts';
 import type { DashboardData } from '../src/features/dashboard/types.ts';
 
@@ -304,6 +305,95 @@ test('ai evidence builders expose basis citations and convertible actions', () =
   assert.equal(business.scene, 'business_case');
   assert.equal(risk.scene, 'risk_scan');
   assert.equal(execution.scene, 'execution_summary');
+});
+
+test('finance cockpit links contract cost collection margin and acceptance blockers', () => {
+  const dashboard: DashboardData = {
+    source: { type: 'feishu', name: '飞书智能表', generatedAt: '2026-07-02T00:00:00.000Z' },
+    kpi: {
+      totalProjects: 2,
+      totalContract: 500,
+      totalCollection: 220,
+      collectionRate: 44,
+      receivable: 280,
+    },
+    statusDistribution: [],
+    monthlyTrend: [],
+    regionDistribution: [],
+    paymentGroups: [],
+    projectLevels: [],
+    healthMatrix: [],
+    keyProjects: [],
+    riskProjects: [],
+    upcomingPayments: [],
+    records: [
+      {
+        项目编号: 'P-FIN-1',
+        项目名称: '验收阻塞项目',
+        省份: '上海',
+        客户名称: '客户A',
+        项目状态: '验收中',
+        项目等级: 'A',
+        项目类型: '信息化',
+        产品类别: '平台',
+        当前进度: 0.95,
+        合同金额: 300,
+        已回款金额: 120,
+        应收金额: 180,
+        回款率: 0.4,
+        成本健康度: 70,
+        进度偏差: -3,
+        风险类型: '回款风险',
+        风险等级: '高',
+        风险状态: '应对中',
+        风险趋势: '恶化',
+        到期日期: '2026-07-01',
+        预算金额: 210,
+        实际成本: 205,
+        预计成本: 255,
+        验收状态: '验收中',
+      },
+      {
+        项目编号: 'P-FIN-2',
+        项目名称: '健康项目',
+        省份: '浙江',
+        客户名称: '客户B',
+        项目状态: '已验收',
+        项目等级: 'B',
+        项目类型: '信息化',
+        产品类别: '平台',
+        当前进度: 1,
+        合同金额: 200,
+        已回款金额: 100,
+        应收金额: 100,
+        回款率: 0.5,
+        成本健康度: 90,
+        进度偏差: 2,
+        风险类型: '综合风险',
+        风险等级: '低',
+        风险状态: '监控中',
+        风险趋势: '平稳',
+        到期日期: '2026-08-30',
+        预算金额: 120,
+        实际成本: 80,
+        预计成本: 120,
+        验收状态: '已验收',
+      },
+    ],
+  };
+
+  const cockpit = buildFinanceCockpit(dashboard, { asOf: new Date('2026-07-02T00:00:00.000Z') });
+
+  assert.equal(cockpit.kpis.totalContract, 500);
+  assert.equal(cockpit.kpis.receivable, 280);
+  assert.equal(cockpit.kpis.overdueReceivable, 180);
+  assert.equal(cockpit.kpis.acceptanceBlockedReceivable, 180);
+  assert.equal(cockpit.projects[0].businessHealth, 'red');
+  assert.equal(cockpit.projects.some(project => project.costSource === 'actual' || project.costSource === 'forecast'), true);
+  assert.equal(cockpit.alerts.some(alert => alert.type === 'acceptance_block' && alert.priority === 'P0'), true);
+  assert.equal(cockpit.alerts.some(alert => alert.type === 'low_margin'), true);
+  assert.equal(cockpit.paymentAcceptanceLinks[0].projectName, '验收阻塞项目');
+  assert.equal(cockpit.portfolioByLevel.some(group => group.name === 'A级' && group.contractAmount === 300), true);
 });
 
 test('operational workbench shows all records for admin role', () => {
