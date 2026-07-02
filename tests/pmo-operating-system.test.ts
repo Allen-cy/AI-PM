@@ -56,6 +56,12 @@ import {
   monitoringTracks,
   salesStages,
 } from '../src/lib/delivery-blueprint.ts';
+import {
+  assessMigrationReadiness,
+  migrationDataObjects,
+  migrationReadinessAreas,
+  migrationStages,
+} from '../src/features/migration/readiness.ts';
 import type { Risk } from '../src/lib/risk.ts';
 import type { DashboardData } from '../src/features/dashboard/types.ts';
 
@@ -124,6 +130,33 @@ test('governance workflows define inputs outputs owners states and audit trail',
 
 test('data quality rules include high severity closure prerequisites', () => {
   assert.equal(dataQualityRules.some(rule => rule.severity === 'high' && rule.id === 'risk-without-action'), true);
+});
+
+test('migration center models competitor migration conditions and data onboarding gates', () => {
+  assert.equal(migrationReadinessAreas.length >= 7, true);
+  assert.equal(migrationReadinessAreas.reduce((sum, area) => sum + area.weight, 0), 100);
+  assert.equal(migrationStages.map(stage => stage.id).join('>'), 'inventory>mapping>trial-import>pilot>cutover>operate');
+  assert.equal(migrationDataObjects.some(object => object.name === '项目台账' && object.requiredFields.includes('项目经理')), true);
+  assert.equal(migrationDataObjects.some(object => object.name === '合同与回款' && object.qualityChecks.some(check => check.includes('合同额'))), true);
+
+  const trial = assessMigrationReadiness(['process-coverage', 'data-portability', 'security']);
+  assert.equal(trial.level, 'trial-ready');
+  assert.match(trial.summary, /小批量数据试迁移|流程回放/);
+
+  const ready = assessMigrationReadiness(migrationReadinessAreas.map(area => area.id));
+  assert.equal(ready.level, 'migration-ready');
+  assert.equal(ready.score, 100);
+});
+
+test('migration center is discoverable from home and integration center', () => {
+  const homeSource = readFileSync(new URL('../src/app/page.tsx', import.meta.url), 'utf8');
+  const integrationSource = readFileSync(new URL('../src/app/integration-center/page.tsx', import.meta.url), 'utf8');
+  const migrationPageSource = readFileSync(new URL('../src/app/migration-center/page.tsx', import.meta.url), 'utf8');
+
+  assert.match(homeSource, /href: "\/migration-center"/);
+  assert.match(integrationSource, /href="\/migration-center"/);
+  assert.match(migrationPageSource, /迁移与数据接入中心/);
+  assert.match(migrationPageSource, /字段均要求中文口径/);
 });
 
 test('workbench summary derives action priorities from dashboard facts', () => {
@@ -681,7 +714,7 @@ test('security export includes access requests audits and omits secrets', () => 
   assert.match(markdown, /项目访问申请/);
   assert.match(markdown, /批准访问/);
   assert.match(csv, /access_request/);
-  assert.equal(/sk-[A-Za-z0-9_-]{20,}|A512355|19331651682/.test(markdown), false);
+  assert.equal(/sk-[A-Za-z0-9_-]{20,}|TEST_PASSWORD_SHOULD_NOT_APPEAR|TEST_PHONE_SHOULD_NOT_APPEAR/.test(markdown), false);
 });
 
 test('operational workbench shows all records for admin role', () => {

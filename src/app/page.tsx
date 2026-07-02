@@ -24,6 +24,13 @@ const PHASE_MODULES = [
         color: "blue",
       },
       {
+        href: "/migration-center",
+        icon: "🧳",
+        title: "迁移与数据接入中心",
+        desc: "竞品迁移成熟度、字段映射、试迁移阶段门和数据对象清单",
+        color: "cyan",
+      },
+      {
         href: "/governance-workflows",
         icon: "🔁",
         title: "治理工作流中心",
@@ -340,7 +347,7 @@ export default function Home() {
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <span style={{ fontSize: "1.4rem" }}>🏗️</span>
           <span style={{ fontWeight: 800, fontSize: "1.05rem" }}>AI项目管理助手</span>
-          <span className="tag tag-blue">V5.3.10</span>
+          <span className="tag tag-blue">V5.3.11</span>
         </div>
         <div style={{ display: "flex", gap: 16, fontSize: "0.8rem", color: "var(--text2)", alignItems: "center" }}>
           <span>作者：柴春宇</span>

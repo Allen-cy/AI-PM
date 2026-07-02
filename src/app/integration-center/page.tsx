@@ -154,7 +154,10 @@ export default function IntegrationCenterPage() {
               统一检查飞书、Supabase、AI 模型和 RAG 知识库状态。这里不展示任何密钥，只展示脱敏运行状态。
             </p>
           </div>
-          <Link href="/account" className="btn-secondary" style={{ textDecoration: "none" }}>用户配置</Link>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
+            <Link href="/migration-center" className="btn-secondary" style={{ textDecoration: "none" }}>迁移与数据接入</Link>
+            <Link href="/account" className="btn-secondary" style={{ textDecoration: "none" }}>用户配置</Link>
+          </div>
         </div>
 
         {error && <div className="card" style={{ borderColor: "var(--red)", color: "var(--red)", marginBottom: 18 }}>{error}</div>}
