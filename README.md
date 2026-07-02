@@ -67,6 +67,10 @@ npm run build
 - 飞书端已建立8张业务表；公开项目记录API会等用户登录和授权模型完成后再开放。
 - 全仓历史 ESLint 基线仍有旧问题；V4新增/改动文件执行独立零错误门禁。
 
+## AI-PMO System V5.3.8
+
+V5.3.8 修复管理员安全中心 P9 SQL 误报：`/admin/security` 不再通过 Supabase 嵌套关系 `app_users(name,email)` 读取项目授权，改为先读取 `app_users` 与 `user_project_access_grants` 后在服务端完成用户名称映射，避免 PostgREST schema cache 的 relationship 错误被误判为 `user_project_access_grants` 表不存在；同时收窄缺表判断逻辑，只在真实缺表时显示“P9 SQL 未执行”。
+
 ## AI-PMO System V5.3.7
 
 V5.3.7 完成蓝图v2-BPM视图正式优化：新增 `/blueprint-v3/delivery-management`「项目全流程交付管理蓝图」子页面，将原附件流程图结构化为销售管理、项目管理、监控管理、成本管理和工具支撑五类泳道；沉淀 7 个销售节点、4 个项目交付阶段、10 个交付经营联动控制点、3 条贯穿监控轨道和成本管理闭环。首页「蓝图v2-BPM视图」入口已直达正式页面，旧 `/blueprint-v3` 继续保留为蓝图入口和原图参考。

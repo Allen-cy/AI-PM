@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAuthSupabase, isAuthStorageConfigured, requireAdmin } from "@/features/auth/server";
 import { hasPermission, type AppRole } from "@/features/security/authorization";
+import { isMissingSecurityTableError } from "@/features/security/errors";
 import { loadAdminSecuritySnapshot, writeOperationAudit } from "@/features/security/repository";
 
 export const runtime = "nodejs";
@@ -41,13 +42,15 @@ function jsonValue(value: unknown): Record<string, unknown> {
 }
 
 function missingTableMessage(message: string): string {
-  if (message.includes("project_access_requests")) return "P10 SQL 尚未执行或表不存在，请先执行 supabase-v536-security-ops.sql";
-  if (message.includes("user_project_access_grants") || message.includes("operation_audit_logs") || message.includes("system_configurations")) {
+  if (isMissingSecurityTableError(message, "project_access_requests")) return "P10 SQL 尚未执行或表不存在，请先执行 supabase-v536-security-ops.sql";
+  if (
+    isMissingSecurityTableError(message, "user_project_access_grants")
+    || isMissingSecurityTableError(message, "operation_audit_logs")
+    || isMissingSecurityTableError(message, "system_configurations")
+  ) {
     return "P9 SQL 尚未执行或表不存在，请先执行 supabase-v534-enterprise-security.sql";
   }
-  return message.includes("does not exist") || message.includes("relation")
-    ? "P9/P10 SQL 尚未执行或表不存在，请先依次执行 supabase-v534-enterprise-security.sql 与 supabase-v536-security-ops.sql"
-    : message;
+  return message;
 }
 
 function role(value: unknown): AppRole {

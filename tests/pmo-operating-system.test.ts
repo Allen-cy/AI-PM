@@ -47,6 +47,7 @@ import {
   ROLE_PERMISSION_MATRIX,
 } from '../src/features/security/authorization.ts';
 import { buildSecurityCsv, buildSecurityMarkdown } from '../src/features/security/export.ts';
+import { isMissingSecurityTableError } from '../src/features/security/errors.ts';
 import {
   deliveryControlPoints,
   deliveryPhases,
@@ -609,6 +610,23 @@ test('enterprise security permissions and project access scope data', () => {
   assert.equal(emptyScoped.records.length, 0);
   assert.equal(emptyScoped.kpi.totalProjects, 0);
   assert.equal(emptyScoped.source.note?.includes('可见项目 0/2 个'), true);
+});
+
+test('security missing table detection does not confuse PostgREST relationship cache errors with P9 migration', () => {
+  assert.equal(
+    isMissingSecurityTableError(
+      "Could not find a relationship between 'user_project_access_grants' and 'app_users' in the schema cache",
+      "user_project_access_grants",
+    ),
+    false,
+  );
+  assert.equal(
+    isMissingSecurityTableError(
+      'relation "public.user_project_access_grants" does not exist',
+      "user_project_access_grants",
+    ),
+    true,
+  );
 });
 
 test('security export includes access requests audits and omits secrets', () => {

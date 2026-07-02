@@ -423,6 +423,7 @@ V5.3.6 落地说明：
 - 新增 `/api/admin/security/export`，支持导出 Markdown/CSV 企业安全运营报告，覆盖用户角色、项目授权、访问申请、审计日志和风险提示。
 - 管理员安全中心新增安全风险面板，展示登录开关、缺表告警、失败审计、待审批申请和 Excel 解析依赖替换风险。
 - 移除未使用的 `echarts` / `echarts-for-react` 运行时依赖，减少无业务使用价值的供应链暴露面。
+- V5.3.8 安全中心热修：项目授权列表不再依赖 Supabase 嵌套关系 `app_users(name,email)`，改为服务端映射用户信息，并收窄缺表判断逻辑，避免 PostgREST relationship/schema cache 错误被误判为 `P9 SQL 未执行：user_project_access_grants 不存在`。
 
 ### P11 蓝图与流程资产正式化
 

@@ -5,6 +5,7 @@ import {
   type AppRole,
   type ProjectAccessGrant,
 } from "./authorization.ts";
+import { isMissingSecurityTableError } from "./errors.ts";
 
 export type AuditStatus = "succeeded" | "failed" | "rejected" | "skipped";
 export type AuditSeverity = "low" | "medium" | "high";
@@ -89,10 +90,6 @@ export interface AdminSecuritySnapshot {
   warnings: string[];
 }
 
-function isMissingTableError(message?: string): boolean {
-  return Boolean(message?.includes("does not exist") || message?.includes("relation") || message?.includes("operation_audit_logs") || message?.includes("user_project_access_grants") || message?.includes("system_configurations") || message?.includes("project_access_requests"));
-}
-
 function actorName(user: AppUser | null): string {
   return user?.name || user?.email || user?.phone || "匿名/系统";
 }
@@ -112,12 +109,11 @@ function mapGrant(row: Record<string, unknown>): ProjectAccessGrant & {
   createdAt?: string;
   updatedAt?: string;
 } {
-  const user = Array.isArray(row.app_users) ? row.app_users[0] : row.app_users as { name?: string | null; email?: string | null } | undefined;
   return {
     id: String(row.id),
     userId: String(row.user_id),
-    userName: user?.name ?? null,
-    userEmail: user?.email ?? null,
+    userName: typeof row.user_name === "string" ? row.user_name : null,
+    userEmail: typeof row.user_email === "string" ? row.user_email : null,
     projectName: typeof row.project_name === "string" ? row.project_name : null,
     projectCode: typeof row.project_code === "string" ? row.project_code : null,
     accessLevel: String(row.access_level || "viewer") as ProjectAccessGrant["accessLevel"],
@@ -155,8 +151,8 @@ export async function writeOperationAudit(input: OperationAuditInput): Promise<O
 
   if (error) {
     return {
-      status: isMissingTableError(error.message) ? "skipped" : "failed",
-      warning: isMissingTableError(error.message)
+      status: isMissingSecurityTableError(error.message, "operation_audit_logs") ? "skipped" : "failed",
+      warning: isMissingSecurityTableError(error.message, "operation_audit_logs")
         ? "P9 SQL 未执行：operation_audit_logs 不存在。"
         : error.message,
     };
@@ -203,7 +199,7 @@ export async function loadAdminSecuritySnapshot(): Promise<AdminSecuritySnapshot
   const supabase = getAuthSupabase();
   const [users, grants, requests, audits, configs] = await Promise.all([
     supabase.from("app_users").select("id,email,phone,name,role,status,created_at").order("created_at", { ascending: false }).limit(200),
-    supabase.from("user_project_access_grants").select("id,user_id,project_name,project_code,access_level,status,grant_reason,created_at,updated_at,app_users(name,email)").order("updated_at", { ascending: false }).limit(200),
+    supabase.from("user_project_access_grants").select("id,user_id,project_name,project_code,access_level,status,grant_reason,granted_by_name,created_at,updated_at").order("updated_at", { ascending: false }).limit(200),
     supabase.from("project_access_requests").select("id,requester_id,requester_name,requester_email,project_name,project_code,access_level,reason,status,reviewer_name,review_comment,related_grant_id,created_at,reviewed_at").order("created_at", { ascending: false }).limit(200),
     supabase.from("operation_audit_logs").select("id,actor_name,actor_role,action,resource_type,resource_id,status,severity,summary,created_at,request_id").order("created_at", { ascending: false }).limit(100),
     supabase.from("system_configurations").select("id,config_key,config_value,category,description,updated_at,updated_by_name").order("updated_at", { ascending: false }).limit(100),
@@ -221,11 +217,22 @@ export async function loadAdminSecuritySnapshot(): Promise<AdminSecuritySnapshot
       created_at: row.created_at,
     }));
   }
+  const usersById = new Map(snapshot.users.map(user => [user.id, user]));
 
-  if (grants.error) snapshot.warnings.push(isMissingTableError(grants.error.message) ? "P9 SQL 未执行：user_project_access_grants 不存在。" : grants.error.message);
-  else snapshot.projectAccess = (grants.data ?? []).map(row => mapGrant(row as Record<string, unknown>));
+  if (grants.error) {
+    snapshot.warnings.push(isMissingSecurityTableError(grants.error.message, "user_project_access_grants") ? "P9 SQL 未执行：user_project_access_grants 不存在。" : grants.error.message);
+  } else {
+    snapshot.projectAccess = (grants.data ?? []).map(row => {
+      const user = usersById.get(row.user_id);
+      return mapGrant({
+        ...(row as Record<string, unknown>),
+        user_name: user?.name ?? null,
+        user_email: user?.email ?? null,
+      });
+    });
+  }
 
-  if (requests.error) snapshot.warnings.push(requests.error.message.includes("project_access_requests") || requests.error.message.includes("does not exist") || requests.error.message.includes("relation") ? "P10 SQL 未执行：project_access_requests 不存在。" : requests.error.message);
+  if (requests.error) snapshot.warnings.push(isMissingSecurityTableError(requests.error.message, "project_access_requests") ? "P10 SQL 未执行：project_access_requests 不存在。" : requests.error.message);
   else {
     snapshot.projectAccessRequests = (requests.data ?? []).map(row => ({
       id: row.id,
@@ -245,7 +252,7 @@ export async function loadAdminSecuritySnapshot(): Promise<AdminSecuritySnapshot
     }));
   }
 
-  if (audits.error) snapshot.warnings.push(isMissingTableError(audits.error.message) ? "P9 SQL 未执行：operation_audit_logs 不存在。" : audits.error.message);
+  if (audits.error) snapshot.warnings.push(isMissingSecurityTableError(audits.error.message, "operation_audit_logs") ? "P9 SQL 未执行：operation_audit_logs 不存在。" : audits.error.message);
   else {
     snapshot.auditLogs = (audits.data ?? []).map(row => ({
       id: row.id,
@@ -262,7 +269,7 @@ export async function loadAdminSecuritySnapshot(): Promise<AdminSecuritySnapshot
     }));
   }
 
-  if (configs.error) snapshot.warnings.push(isMissingTableError(configs.error.message) ? "P9 SQL 未执行：system_configurations 不存在。" : configs.error.message);
+  if (configs.error) snapshot.warnings.push(isMissingSecurityTableError(configs.error.message, "system_configurations") ? "P9 SQL 未执行：system_configurations 不存在。" : configs.error.message);
   else {
     snapshot.systemConfigurations = (configs.data ?? []).map(row => ({
       id: row.id,
