@@ -67,6 +67,10 @@ npm run build
 - 飞书端已建立8张业务表；公开项目记录API会等用户登录和授权模型完成后再开放。
 - 全仓历史 ESLint 基线仍有旧问题；V4新增/改动文件执行独立零错误门禁。
 
+## AI-PMO System V5.3.7
+
+V5.3.7 完成蓝图v2-BPM视图正式优化：新增 `/blueprint-v3/delivery-management`「项目全流程交付管理蓝图」子页面，将原附件流程图结构化为销售管理、项目管理、监控管理、成本管理和工具支撑五类泳道；沉淀 7 个销售节点、4 个项目交付阶段、10 个交付经营联动控制点、3 条贯穿监控轨道和成本管理闭环。首页「蓝图v2-BPM视图」入口已直达正式页面，旧 `/blueprint-v3` 继续保留为蓝图入口和原图参考。
+
 ## AI-PMO System V5.3.6
 
 V5.3.6 完成 P10「企业化运营增强」第一版：新增 `supabase-v536-security-ops.sql`，创建 `project_access_requests` 表、索引和更新时间触发器；普通用户可在 `/account/project-access` 提交项目访问申请，管理员可在 `/admin/security` 审批或驳回，批准后自动生成项目级授权；管理员安全中心新增安全风险面板、待审批访问申请列表，以及 Markdown/CSV 审计导出入口；新增 `/api/admin/security/export`，导出用户角色、项目授权、访问申请、审计日志和风险提示，响应全部 `no-store` 且不包含密钥字段。本版同时移除未使用的 `echarts` / `echarts-for-react` 运行时依赖，减少供应链暴露面。

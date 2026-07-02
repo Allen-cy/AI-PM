@@ -54,7 +54,7 @@ export default function PptGuidePage() {
         gap: 16,
         background: "var(--surface)",
       }}>
-        <a href="/" style={{ color: "var(--text2)", textDecoration: "none", fontSize: "0.85rem" }}>← 返回首页</a>
+        <Link href="/" style={{ color: "var(--text2)", textDecoration: "none", fontSize: "0.85rem" }}>← 返回首页</Link>
         <span style={{ color: "var(--border)" }}>|</span>
         <span style={{ fontWeight: 700 }}>📊 PPT智能制作难点分析</span>
         <span className="tag" style={{ fontSize: "0.7rem", background: "rgba(59, 130, 246, 0.1)", color: "#3b82f6" }}>方法论</span>
@@ -223,7 +223,7 @@ export default function PptGuidePage() {
             justifyContent: "center",
           }}>
             <Link
-              href="/blueprint-v2"
+              href="/blueprint-v3/delivery-management"
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -238,8 +238,8 @@ export default function PptGuidePage() {
             >
               <span style={{ fontSize: "1.4rem" }}>🗺️</span>
               <div>
-                <div style={{ fontSize: "0.88rem", fontWeight: 600, color: "var(--text)" }}>项目全流程蓝图</div>
-                <div style={{ fontSize: "0.72rem", color: "var(--text2)" }}>查看完整流程节点</div>
+                <div style={{ fontSize: "0.88rem", fontWeight: 600, color: "var(--text)" }}>项目全流程交付管理蓝图</div>
+                <div style={{ fontSize: "0.72rem", color: "var(--text2)" }}>查看销售、交付、监控、成本联动关系</div>
               </div>
             </Link>
             <Link

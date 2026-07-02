@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { useState } from "react";
 
 // Initial data structure matching the user's requirements
@@ -96,34 +97,49 @@ export default function BlueprintV3Page() {
         <div className="flex items-center gap-4">
           <Link href="/" className="text-gray-500 hover:text-gray-800 text-sm">← 返回首页</Link>
           <span className="text-gray-300">|</span>
-          <h1 className="font-bold text-lg text-gray-800">🗺️ 业务场景与工具蓝图 V3</h1>
+          <h1 className="font-bold text-lg text-gray-800">🗺️ 蓝图v2-BPM视图</h1>
           <span className="text-xs bg-purple-100 text-purple-600 px-2 py-1 rounded-full border border-purple-200">双击文字可编辑</span>
         </div>
+        <Link
+          href="/blueprint-v3/delivery-management"
+          className="text-sm bg-orange-100 text-orange-700 border border-orange-200 rounded-lg px-4 py-2 font-semibold hover:bg-orange-200 transition-colors"
+        >
+          打开项目全流程交付管理蓝图
+        </Link>
       </header>
 
       <main className="flex-1 overflow-auto p-8 flex flex-col items-center gap-8">
+        <section className="w-full max-w-7xl bg-white rounded-xl border border-orange-200 shadow-sm p-6 flex flex-col lg:flex-row lg:items-center justify-between gap-5">
+          <div>
+            <div className="text-xs text-orange-600 font-bold mb-2">正式优化版已创建</div>
+            <h2 className="text-xl font-bold text-gray-900">项目全流程交付管理蓝图</h2>
+            <p className="text-sm text-gray-600 mt-2 leading-6 max-w-3xl">
+              正式版已将原图从“图片展示”转为结构化 BPM 泳道：销售管理、项目管理、监控管理、成本管理和工具支撑，并保留 10 个交付经营联动控制点。
+            </p>
+          </div>
+          <Link
+            href="/blueprint-v3/delivery-management"
+            className="shrink-0 rounded-lg bg-orange-500 px-5 py-3 text-sm font-bold text-white hover:bg-orange-600 transition-colors"
+          >
+            进入正式蓝图 →
+          </Link>
+        </section>
+
         {/* The Original Image Attachment Area */}
         <div className="w-full max-w-7xl bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden flex flex-col">
           <div className="bg-gray-100 border-b border-gray-200 px-4 py-3 text-sm text-gray-700 font-semibold flex justify-between">
-            <span>📎 附件原图 (未做任何修改)</span>
-            <span className="text-xs font-normal text-gray-500">如图片未显示，请将图片命名为 blueprint-v3.png 并放入 public 文件夹中</span>
+            <span>📎 原图参考（历史展示）</span>
+            <span className="text-xs font-normal text-gray-500">正式页面已抽象为结构化蓝图，原图仅作为来源参考保留</span>
           </div>
           <div className="p-4 flex justify-center bg-gray-50 min-h-[150px] items-center">
-            <img 
-              src="/blueprint-v3.png" 
-              alt="全流程交付管理蓝图附件" 
+            <Image
+              src="/blueprint-v3.png"
+              alt="全流程交付管理蓝图附件"
+              width={4122}
+              height={1762}
               className="max-w-full h-auto rounded border border-gray-200 shadow-sm"
-              onError={(e) => {
-                const target = e.target as HTMLImageElement;
-                target.style.display = 'none';
-                target.nextElementSibling?.classList.remove('hidden');
-              }}
+              priority={false}
             />
-            <div className="hidden text-gray-400 text-center">
-              <p className="text-2xl mb-2">📸</p>
-              <p>[图片加载失败]</p>
-              <p className="text-xs mt-2">public/blueprint-v3.png</p>
-            </div>
           </div>
         </div>
 

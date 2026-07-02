@@ -47,6 +47,13 @@ import {
   ROLE_PERMISSION_MATRIX,
 } from '../src/features/security/authorization.ts';
 import { buildSecurityCsv, buildSecurityMarkdown } from '../src/features/security/export.ts';
+import {
+  deliveryControlPoints,
+  deliveryPhases,
+  getBlueprintSummary,
+  monitoringTracks,
+  salesStages,
+} from '../src/lib/delivery-blueprint.ts';
 import type { Risk } from '../src/lib/risk.ts';
 import type { DashboardData } from '../src/features/dashboard/types.ts';
 
@@ -58,6 +65,22 @@ test('operating system dependencies cover data ai knowledge and storage', () => 
   assert.equal(categories.has('knowledge'), true);
   assert.equal(categories.has('storage'), true);
   assert.equal(operatingDependencies.every(item => item.action.length > 0), true);
+});
+
+test('delivery management blueprint models sales project monitoring and cost dependencies', () => {
+  const summary = getBlueprintSummary();
+  assert.deepEqual(summary, {
+    salesStages: 7,
+    projectPhases: 4,
+    controlPoints: 10,
+    monitoringTracks: 3,
+    toolSupports: 5,
+  });
+  assert.deepEqual(salesStages.map(stage => stage.name), ['商机', '合同签约', '合同/订单', '回款计划', '应收', '核销', '售后服务']);
+  assert.deepEqual(deliveryPhases.map(phase => phase.name), ['项目立项', '项目规划', '项目执行', '项目收尾']);
+  assert.equal(deliveryPhases.every(phase => phase.costGate && phase.nodes.every(node => node.output && node.evidence)), true);
+  assert.equal(deliveryControlPoints.some(point => point.title.includes('里程碑') && point.output.includes('回款')), true);
+  assert.equal(monitoringTracks.every(track => track.purpose && track.evidence), true);
 });
 
 test('governance workflows define inputs outputs owners states and audit trail', () => {
