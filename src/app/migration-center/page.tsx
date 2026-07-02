@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type FormEvent } from "react";
+import type { MigrationAnalysisResult } from "@/features/migration/package";
 import {
   assessMigrationReadiness,
   migrationDataObjects,
@@ -17,12 +18,27 @@ const levelColor = {
   "migration-ready": "var(--green)",
 };
 
+type AnalyzeResponse =
+  | { status: "succeeded"; file_name: string; analysis: MigrationAnalysisResult; request_id: string }
+  | { status: "rejected" | "error"; code: string; detail?: string; request_id: string };
+
+function issueColor(severity: string) {
+  if (severity === "high") return "var(--red)";
+  if (severity === "medium") return "var(--amber)";
+  return "var(--accent2)";
+}
+
 export default function MigrationCenterPage() {
   const [selectedAreaIds, setSelectedAreaIds] = useState<MigrationAreaId[]>([
     "process-coverage",
     "data-portability",
     "security",
   ]);
+  const [objectName, setObjectName] = useState(migrationDataObjects[0]?.name ?? "项目台账");
+  const [file, setFile] = useState<File | null>(null);
+  const [analysis, setAnalysis] = useState<MigrationAnalysisResult | null>(null);
+  const [analyzeError, setAnalyzeError] = useState("");
+  const [analyzing, setAnalyzing] = useState(false);
 
   const result = useMemo(() => assessMigrationReadiness(selectedAreaIds), [selectedAreaIds]);
 
@@ -30,6 +46,33 @@ export default function MigrationCenterPage() {
     setSelectedAreaIds(current =>
       current.includes(id) ? current.filter(item => item !== id) : [...current, id]
     );
+  }
+
+  async function submitTrialMigration(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setAnalyzeError("");
+    setAnalysis(null);
+    if (!file) {
+      setAnalyzeError("请先选择一个 xlsx、xls 或 csv 文件。");
+      return;
+    }
+    setAnalyzing(true);
+    try {
+      const formData = new FormData();
+      formData.append("objectName", objectName);
+      formData.append("file", file);
+      const response = await fetch("/api/migration/analyze", { method: "POST", body: formData });
+      const payload = await response.json() as AnalyzeResponse;
+      if (payload.status !== "succeeded") {
+        setAnalyzeError(payload.detail || "试迁移分析失败，请检查文件格式和字段。");
+        return;
+      }
+      setAnalysis(payload.analysis);
+    } catch {
+      setAnalyzeError("试迁移分析失败，请稍后重试。");
+    } finally {
+      setAnalyzing(false);
+    }
   }
 
   return (
@@ -146,6 +189,145 @@ export default function MigrationCenterPage() {
               })}
             </div>
           </div>
+        </section>
+
+        <section className="card" style={{ marginBottom: 18 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", marginBottom: 14 }}>
+            <div>
+              <div className="section-title">试迁移作业台</div>
+              <p style={{ color: "var(--text2)", lineHeight: 1.7, fontSize: "0.84rem" }}>
+                用小批量竞品A导出数据做试跑：系统只读取文件并生成字段映射与质量报告，不写入数据库、不写入飞书。
+              </p>
+            </div>
+            <a href="/api/migration/template" className="btn-secondary" style={{ textDecoration: "none", whiteSpace: "nowrap" }}>
+              下载迁移模板
+            </a>
+          </div>
+
+          <form onSubmit={submitTrialMigration} style={{ display: "grid", gridTemplateColumns: "minmax(220px, 0.8fr) minmax(260px, 1fr) auto", gap: 12, alignItems: "end", marginBottom: 14 }}>
+            <label style={{ display: "grid", gap: 8, color: "var(--text2)", fontSize: "0.82rem" }}>
+              数据对象
+              <select className="input" value={objectName} onChange={event => setObjectName(event.target.value)} aria-label="选择迁移数据对象">
+                {migrationDataObjects.map(object => <option key={object.name} value={object.name}>{object.name}</option>)}
+              </select>
+            </label>
+            <label style={{ display: "grid", gap: 8, color: "var(--text2)", fontSize: "0.82rem" }}>
+              试迁移文件
+              <input className="input" type="file" accept=".xlsx,.xls,.csv" onChange={event => setFile(event.target.files?.[0] ?? null)} />
+            </label>
+            <button className="btn-primary" type="submit" disabled={analyzing} style={{ minHeight: 42 }}>
+              {analyzing ? "分析中..." : "生成质量报告"}
+            </button>
+          </form>
+
+          {analyzeError && (
+            <div style={{ border: "1px solid rgba(248,113,113,0.48)", background: "rgba(248,113,113,0.08)", color: "var(--red)", borderRadius: 12, padding: 12, marginBottom: 14 }}>
+              {analyzeError}
+            </div>
+          )}
+
+          {!analysis ? (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
+              {[
+                ["1", "下载模板", "按数据对象准备中文字段模板，或直接上传竞品A导出的 xlsx/csv。"],
+                ["2", "上传小样本", "建议先用 20-50 条真实数据试跑，不要一开始导入全量历史数据。"],
+                ["3", "修正质量问题", "根据字段覆盖、重复编号、金额/日期异常和高风险动作缺失修正数据。"],
+              ].map(([index, title, desc]) => (
+                <div key={index} style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 12, padding: 14 }}>
+                  <span className="tag tag-blue">步骤 {index}</span>
+                  <h2 style={{ fontSize: "0.95rem", marginTop: 10 }}>{title}</h2>
+                  <p style={{ color: "var(--text2)", lineHeight: 1.65, fontSize: "0.8rem", marginTop: 6 }}>{desc}</p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div style={{ display: "grid", gap: 14 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
+                <div style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 12, padding: 14 }}>
+                  <div style={{ color: "var(--text2)", fontSize: "0.78rem" }}>数据对象</div>
+                  <strong style={{ fontSize: "1.05rem" }}>{analysis.objectName}</strong>
+                </div>
+                <div style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 12, padding: 14 }}>
+                  <div style={{ color: "var(--text2)", fontSize: "0.78rem" }}>样本行数</div>
+                  <strong style={{ fontSize: "1.05rem" }}>{analysis.totalRows}</strong>
+                </div>
+                <div style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 12, padding: 14 }}>
+                  <div style={{ color: "var(--text2)", fontSize: "0.78rem" }}>字段覆盖率</div>
+                  <strong style={{ fontSize: "1.05rem", color: analysis.fieldCoverage.missing === 0 ? "var(--green)" : "var(--amber)" }}>
+                    {analysis.fieldCoverage.rate}%
+                  </strong>
+                  <p style={{ color: "var(--text2)", fontSize: "0.76rem", marginTop: 4 }}>
+                    {analysis.fieldCoverage.matched}/{analysis.fieldCoverage.required} 已匹配
+                  </p>
+                </div>
+                <div style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 12, padding: 14 }}>
+                  <div style={{ color: "var(--text2)", fontSize: "0.78rem" }}>试迁移状态</div>
+                  <strong style={{ fontSize: "1.05rem", color: analysis.canTrialImport ? "var(--green)" : "var(--red)" }}>
+                    {analysis.canTrialImport ? "可进入试迁移" : "需先修正"}
+                  </strong>
+                </div>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.2fr) minmax(280px, 0.8fr)", gap: 14, alignItems: "start" }}>
+                <div style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 12, padding: 14, overflowX: "auto" }}>
+                  <h2 style={{ fontSize: "0.95rem", marginBottom: 10 }}>字段映射结果</h2>
+                  <table style={{ width: "100%", minWidth: 620, borderCollapse: "collapse" }}>
+                    <thead>
+                      <tr style={{ textAlign: "left", color: "var(--text2)", fontSize: "0.76rem" }}>
+                        <th style={{ padding: "8px", borderBottom: "1px solid var(--border)" }}>目标字段</th>
+                        <th style={{ padding: "8px", borderBottom: "1px solid var(--border)" }}>来源字段</th>
+                        <th style={{ padding: "8px", borderBottom: "1px solid var(--border)" }}>状态</th>
+                        <th style={{ padding: "8px", borderBottom: "1px solid var(--border)" }}>说明</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {analysis.mappings.map(mapping => (
+                        <tr key={mapping.targetField}>
+                          <td style={{ padding: "9px 8px", borderBottom: "1px solid var(--border)", fontWeight: 800 }}>{mapping.targetField}</td>
+                          <td style={{ padding: "9px 8px", borderBottom: "1px solid var(--border)", color: "var(--text2)" }}>{mapping.sourceField || "-"}</td>
+                          <td style={{ padding: "9px 8px", borderBottom: "1px solid var(--border)" }}>
+                            <span className={mapping.status === "missing" ? "tag tag-amber" : mapping.status === "alias" ? "tag tag-blue" : "tag tag-green"}>
+                              {mapping.status === "missing" ? "缺失" : mapping.status === "alias" ? "别名匹配" : "直接匹配"}
+                            </span>
+                          </td>
+                          <td style={{ padding: "9px 8px", borderBottom: "1px solid var(--border)", color: "var(--text2)", fontSize: "0.78rem" }}>{mapping.note}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div style={{ display: "grid", gap: 12 }}>
+                  <div style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 12, padding: 14 }}>
+                    <h2 style={{ fontSize: "0.95rem", marginBottom: 10 }}>质量问题</h2>
+                    {analysis.qualityIssues.length === 0 ? (
+                      <p style={{ color: "var(--green)", lineHeight: 1.6, fontSize: "0.82rem" }}>未发现基础质量问题。</p>
+                    ) : (
+                      <div style={{ display: "grid", gap: 10 }}>
+                        {analysis.qualityIssues.map(item => (
+                          <div key={item.id} style={{ borderTop: "1px solid var(--border)", paddingTop: 10 }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                              <strong style={{ color: issueColor(item.severity) }}>{item.title}</strong>
+                              <span className="tag">{item.affectedCount}项</span>
+                            </div>
+                            {item.sampleRefs.length > 0 && <p style={{ color: "var(--text2)", fontSize: "0.78rem", lineHeight: 1.5, marginTop: 6 }}>样例：{item.sampleRefs.join("、")}</p>}
+                            <p style={{ color: "var(--accent2)", fontSize: "0.78rem", lineHeight: 1.5, marginTop: 6 }}>{item.recommendation}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 12, padding: 14 }}>
+                    <h2 style={{ fontSize: "0.95rem", marginBottom: 10 }}>下一步动作</h2>
+                    <ul style={{ margin: "0 0 0 18px", color: "var(--accent2)", lineHeight: 1.7, fontSize: "0.82rem" }}>
+                      {analysis.nextActions.map(action => <li key={action}>{action}</li>)}
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </section>
 
         <section className="card" style={{ marginBottom: 18 }}>

@@ -62,6 +62,12 @@ import {
   migrationReadinessAreas,
   migrationStages,
 } from '../src/features/migration/readiness.ts';
+import {
+  analyzeMigrationRows,
+  buildMigrationTemplateSheets,
+} from '../src/features/migration/package.ts';
+import { POST as analyzeMigrationPackage } from '../src/app/api/migration/analyze/route.ts';
+import { GET as downloadMigrationTemplate } from '../src/app/api/migration/template/route.ts';
 import type { Risk } from '../src/lib/risk.ts';
 import type { DashboardData } from '../src/features/dashboard/types.ts';
 
@@ -148,6 +154,43 @@ test('migration center models competitor migration conditions and data onboardin
   assert.equal(ready.score, 100);
 });
 
+test('migration package analyzer maps aliases and flags trial data quality issues', () => {
+  const analysis = analyzeMigrationRows('项目台账', [
+    { '项目ID': 'P-001', '项目名称': '迁移项目A', PM: '张三', 状态: '进行中', 计划开始: '2026-07-01', 计划完成: '2026-08-01', 合同额: '100000' },
+    { '项目ID': 'P-001', '项目名称': '迁移项目B', PM: '', 状态: '进行中', 计划开始: '错误日期', 计划完成: '2026-08-10', 合同额: 'abc' },
+  ], new Date('2026-07-02T00:00:00.000Z'));
+
+  assert.equal(analysis.fieldCoverage.rate, 100);
+  assert.equal(analysis.mappings.some(mapping => mapping.targetField === '项目经理' && mapping.status === 'alias' && mapping.sourceField === 'PM'), true);
+  assert.equal(analysis.qualityIssues.some(issue => issue.id === 'duplicate-项目编号' && issue.severity === 'high'), true);
+  assert.equal(analysis.qualityIssues.some(issue => issue.id === 'invalid-date-计划开始日期'), true);
+  assert.equal(analysis.qualityIssues.some(issue => issue.id === 'invalid-amount-合同金额'), true);
+  assert.equal(analysis.canTrialImport, false);
+
+  const templates = buildMigrationTemplateSheets();
+  assert.equal(templates.some(sheet => sheet.name === '项目台账' && sheet.headers.includes('项目经理')), true);
+});
+
+test('migration APIs provide template download and CSV trial analysis', async () => {
+  const templateResponse = await downloadMigrationTemplate();
+  assert.equal(templateResponse.status, 200);
+  assert.match(templateResponse.headers.get('Content-Disposition') ?? '', /ai-pmo-migration-template\.xlsx/);
+
+  const csv = [
+    '项目编号,项目名称,项目经理,项目状态,计划开始日期,计划完成日期,合同金额',
+    'P-001,试迁移项目,张三,进行中,2026-07-01,2026-08-01,100000',
+  ].join('\n');
+  const form = new FormData();
+  form.append('objectName', '项目台账');
+  form.append('file', new File([csv], 'migration.csv', { type: 'text/csv' }));
+  const response = await analyzeMigrationPackage(new Request('http://localhost/api/migration/analyze', { method: 'POST', body: form }));
+  assert.equal(response.status, 200);
+  const payload = await response.json() as { status: string; analysis: { canTrialImport: boolean; fieldCoverage: { rate: number } } };
+  assert.equal(payload.status, 'succeeded');
+  assert.equal(payload.analysis.canTrialImport, true);
+  assert.equal(payload.analysis.fieldCoverage.rate, 100);
+});
+
 test('migration center is discoverable from home and integration center', () => {
   const homeSource = readFileSync(new URL('../src/app/page.tsx', import.meta.url), 'utf8');
   const integrationSource = readFileSync(new URL('../src/app/integration-center/page.tsx', import.meta.url), 'utf8');
@@ -157,6 +200,8 @@ test('migration center is discoverable from home and integration center', () => 
   assert.match(integrationSource, /href="\/migration-center"/);
   assert.match(migrationPageSource, /迁移与数据接入中心/);
   assert.match(migrationPageSource, /字段均要求中文口径/);
+  assert.match(migrationPageSource, /\/api\/migration\/analyze/);
+  assert.match(migrationPageSource, /\/api\/migration\/template/);
 });
 
 test('workbench summary derives action priorities from dashboard facts', () => {
