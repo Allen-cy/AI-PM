@@ -44,6 +44,7 @@ const healthLabel: Record<string, string> = {
 const userScopeLabel: Record<string, string> = {
   "admin-all": "管理员全量视角",
   "matched-owner": "已按负责人匹配",
+  "authorized-project": "显式项目授权",
   "unmatched-owner": "未匹配到负责人",
   anonymous: "未登录",
 };

@@ -1,6 +1,7 @@
 import { getEffectiveFeishuConfig } from "@/features/feishu/user-config";
 import { writeIntegrationSyncLog } from "@/features/operating-system/sync-logs";
 import { buildOperationalWorkbench, loadOperationalWorkbenchFromFeishu } from "@/features/operating-system/workbench";
+import { loadProjectAccessGrantsForUser, writeOperationAudit } from "@/features/security/repository";
 
 export const runtime = "nodejs";
 
@@ -28,7 +29,8 @@ export async function GET(): Promise<Response> {
   }
 
   try {
-    const workbench = await loadOperationalWorkbenchFromFeishu(effective.config, effective.user);
+    const grants = await loadProjectAccessGrantsForUser(effective.user);
+    const workbench = await loadOperationalWorkbenchFromFeishu(effective.config, effective.user, grants);
     await writeIntegrationSyncLog({
       userId: effective.user?.id,
       source: "system",
@@ -42,10 +44,20 @@ export async function GET(): Promise<Response> {
       },
       requestId,
     });
+    await writeOperationAudit({
+      user: effective.user,
+      action: "workbench_read",
+      resourceType: "workbench",
+      status: "succeeded",
+      summary: `读取工作台：项目${workbench.myProjects.length}个，待办${workbench.todayTodos.length}个`,
+      detail: { evidence: workbench.evidence, explicit_grants: grants.length },
+      requestId,
+    });
     return Response.json({
       status: "succeeded",
       source: effective.source,
       generated_at: workbench.evidence.generatedAt,
+      explicit_grants: grants.length,
       workbench,
       request_id: requestId,
     }, {

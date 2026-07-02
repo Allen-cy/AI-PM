@@ -8,6 +8,7 @@ const PREFERRED_SHEETS = [
   '项目台账',
   '项目明细',
 ];
+const MAX_DASHBOARD_IMPORT_ROWS = 1000;
 
 function findMainSheet(workbook: XLSX.WorkBook): string {
   for (const sheetName of PREFERRED_SHEETS) {
@@ -32,12 +33,12 @@ function sheetRows(workbook: XLSX.WorkBook, sheetName: string): Record<string, u
   const sheet = workbook.Sheets[sheetName];
   const direct = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '', raw: false });
   const directHasProject = direct.some(row => row['项目名称'] || row['项目']);
-  if (directHasProject) return direct;
+  if (directHasProject) return direct.slice(0, MAX_DASHBOARD_IMPORT_ROWS);
   return XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
     defval: '',
     raw: false,
     range: 1,
-  });
+  }).slice(0, MAX_DASHBOARD_IMPORT_ROWS);
 }
 
 export function parseDashboardWorkbook(buffer: ArrayBuffer, fileName: string): DashboardData {

@@ -213,6 +213,9 @@ export function normalizeProjectRows(rows: RawRow[]): DashboardProjectRecord[] {
         项目等级: level,
         项目类型: text(row, ['项目类型'], '信息化'),
         产品类别: text(row, ['产品类别', '产品类型'], '未分类'),
+        项目负责人: text(row, ['项目负责人', '项目经理', '负责人', 'Owner', 'owner']),
+        项目经理: text(row, ['项目经理', '项目负责人', '负责人', 'Owner', 'owner']),
+        责任人: text(row, ['责任人', '项目负责人', '项目经理', '负责人', 'Owner', 'owner']),
         签约时间: dateText(row, ['签约时间', ' 签约时间', '签订日期']),
         计划开始: dateText(row, ['计划开始', '开始时间']),
         计划完成: dueDate,
@@ -302,8 +305,10 @@ function paymentAgingBucket(date?: string): number {
 export function buildDashboardData(
   records: DashboardProjectRecord[],
   source: { type: DashboardSourceType; name: string; note?: string },
+  options: { useTemplateFallback?: boolean } = {},
 ): DashboardData {
-  const safeRecords = records.length > 0 ? records : normalizeProjectRows(DEFAULT_TEMPLATE_ROWS);
+  const useTemplateFallback = options.useTemplateFallback ?? true;
+  const safeRecords = records.length > 0 ? records : useTemplateFallback ? normalizeProjectRows(DEFAULT_TEMPLATE_ROWS) : [];
   const totalContract = safeRecords.reduce((sum, item) => sum + item.合同金额, 0);
   const totalCollection = safeRecords.reduce((sum, item) => sum + item.已回款金额, 0);
   const receivable = safeRecords.reduce((sum, item) => sum + item.应收金额, 0);

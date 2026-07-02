@@ -3,6 +3,8 @@ import { loadDashboardFromFeishu } from "@/features/dashboard/feishu";
 import { getEffectiveFeishuConfig } from "@/features/feishu/user-config";
 import { buildFinanceCockpit } from "@/features/finance/cockpit";
 import { writeIntegrationSyncLog } from "@/features/operating-system/sync-logs";
+import { filterDashboardByProjectAccess, projectAccessMode } from "@/features/security/authorization";
+import { loadProjectAccessGrantsForUser, writeOperationAudit } from "@/features/security/repository";
 
 export const runtime = "nodejs";
 
@@ -38,7 +40,15 @@ export async function GET(): Promise<Response> {
   }
 
   try {
-    const dashboard = await loadDashboardFromFeishu(effective.config);
+    const rawDashboard = await loadDashboardFromFeishu(effective.config);
+    const grants = await loadProjectAccessGrantsForUser(effective.user);
+    const dashboard = filterDashboardByProjectAccess(rawDashboard, effective.user, grants);
+    const access = {
+      mode: projectAccessMode(effective.user, dashboard.records.length, rawDashboard.records.length),
+      visible_projects: dashboard.records.length,
+      total_projects: rawDashboard.records.length,
+      explicit_grants: grants.length,
+    };
     const cockpit = buildFinanceCockpit(dashboard);
     await writeIntegrationSyncLog({
       userId: effective.user?.id,
@@ -55,9 +65,19 @@ export async function GET(): Promise<Response> {
       },
       requestId,
     });
+    await writeOperationAudit({
+      user: effective.user,
+      action: "finance_cockpit_read",
+      resourceType: "finance",
+      status: "succeeded",
+      summary: `读取业财驾驶舱：可见${access.visible_projects}/${access.total_projects}个项目`,
+      detail: access,
+      requestId,
+    });
     return Response.json({
       status: "succeeded",
       source: effective.source,
+      access,
       cockpit,
       request_id: requestId,
     }, {

@@ -38,6 +38,14 @@ import {
   extractMeetingActionItems,
   fallbackReportContent,
 } from '../src/features/reports/factory.ts';
+import {
+  filterDashboardByProjectAccess,
+  hasPermission,
+  PERMISSION_DEFINITIONS,
+  projectAccessMode,
+  recordMatchesProjectGrant,
+  ROLE_PERMISSION_MATRIX,
+} from '../src/features/security/authorization.ts';
 import type { Risk } from '../src/lib/risk.ts';
 import type { DashboardData } from '../src/features/dashboard/types.ts';
 
@@ -486,6 +494,97 @@ test('report factory cites data sources and turns meeting minutes into actions',
   assert.equal(evidence.suggestedActions.length, 2);
   assert.match(markdown, /数据来源与生成边界/);
   assert.match(markdown, /补齐客户付款条件清单/);
+});
+
+test('enterprise security permissions and project access scope data', () => {
+  assert.equal(hasPermission({ role: 'admin' }, 'users:manage'), true);
+  assert.equal(hasPermission({ role: 'user' }, 'users:manage'), false);
+  assert.equal(hasPermission({ role: 'user' }, 'reports:generate'), true);
+  assert.equal(ROLE_PERMISSION_MATRIX.admin.length, PERMISSION_DEFINITIONS.length);
+
+  const dashboard: DashboardData = {
+    source: { type: 'feishu', name: '飞书项目台账', generatedAt: '2026-07-02T00:00:00.000Z' },
+    kpi: {
+      totalProjects: 2,
+      totalContract: 300,
+      totalCollection: 100,
+      collectionRate: 33.3,
+      receivable: 200,
+    },
+    statusDistribution: [],
+    monthlyTrend: [],
+    regionDistribution: [],
+    paymentGroups: [],
+    projectLevels: [],
+    healthMatrix: [],
+    keyProjects: [],
+    riskProjects: [],
+    upcomingPayments: [],
+    records: [
+      {
+        项目编号: 'P-SEC-1',
+        项目名称: '张三负责项目',
+        省份: '上海',
+        客户名称: '客户A',
+        项目状态: '执行中',
+        项目等级: 'A',
+        项目类型: '信息化',
+        产品类别: '平台',
+        项目负责人: '张三',
+        当前进度: 0.6,
+        合同金额: 100,
+        已回款金额: 40,
+        应收金额: 60,
+        回款率: 0.4,
+        成本健康度: 80,
+        进度偏差: -3,
+        风险类型: '综合风险',
+        风险等级: '中',
+        风险状态: '应对中',
+        风险趋势: '平稳',
+      },
+      {
+        项目编号: 'P-SEC-2',
+        项目名称: '授权项目',
+        省份: '浙江',
+        客户名称: '客户B',
+        项目状态: '执行中',
+        项目等级: 'B',
+        项目类型: '信息化',
+        产品类别: '平台',
+        项目负责人: '李四',
+        当前进度: 0.5,
+        合同金额: 200,
+        已回款金额: 60,
+        应收金额: 140,
+        回款率: 0.3,
+        成本健康度: 70,
+        进度偏差: -8,
+        风险类型: '回款风险',
+        风险等级: '高',
+        风险状态: '应对中',
+        风险趋势: '恶化',
+      },
+    ],
+  };
+
+  const user = { id: 'u-1', name: '张三', email: 'zhangsan@example.com', phone: '13800000000', role: 'user' as const, status: 'active' as const };
+  const ownerScoped = filterDashboardByProjectAccess(dashboard, user, []);
+  assert.equal(ownerScoped.records.length, 1);
+  assert.equal(ownerScoped.records[0].项目名称, '张三负责项目');
+  assert.equal(ownerScoped.kpi.totalProjects, 1);
+
+  const grant = { projectName: '授权项目', accessLevel: 'viewer' as const, status: 'active' as const };
+  assert.equal(recordMatchesProjectGrant(dashboard.records[1] as unknown as Record<string, unknown>, [grant]), true);
+  const grantScoped = filterDashboardByProjectAccess(dashboard, user, [grant]);
+  assert.equal(grantScoped.records.length, 2);
+  assert.equal(projectAccessMode(user, grantScoped.records.length, dashboard.records.length), 'scoped');
+
+  const otherUser = { ...user, name: '王五', email: 'wangwu@example.com', phone: '13900000000' };
+  const emptyScoped = filterDashboardByProjectAccess(dashboard, otherUser, []);
+  assert.equal(emptyScoped.records.length, 0);
+  assert.equal(emptyScoped.kpi.totalProjects, 0);
+  assert.equal(emptyScoped.source.note?.includes('可见项目 0/2 个'), true);
 });
 
 test('operational workbench shows all records for admin role', () => {

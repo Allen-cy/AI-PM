@@ -1,4 +1,5 @@
 import { parseDashboardWorkbook } from '../../../../features/dashboard/excel.ts';
+import { FileValidationError, validateSpreadsheetFile } from '../../../../features/security/file-validation.ts';
 
 export const runtime = 'nodejs';
 
@@ -15,13 +16,7 @@ export async function POST(request: Request): Promise<Response> {
       }, { status: 422, headers: { 'X-Request-Id': requestId } });
     }
     const name = file.name || '导入文件.xlsx';
-    if (!/\\.(xlsx|xls|csv)$/i.test(name)) {
-      return Response.json({
-        status: 'rejected',
-        code: 'DASHBOARD_IMPORT_UNSUPPORTED_FILE',
-        request_id: requestId,
-      }, { status: 422, headers: { 'X-Request-Id': requestId } });
-    }
+    validateSpreadsheetFile(file, { maxBytes: 5 * 1024 * 1024 });
     const data = parseDashboardWorkbook(await file.arrayBuffer(), name);
     return Response.json({
       status: 'succeeded',
@@ -32,6 +27,14 @@ export async function POST(request: Request): Promise<Response> {
       headers: { 'Cache-Control': 'no-store', 'X-Request-Id': requestId },
     });
   } catch (error) {
+    if (error instanceof FileValidationError) {
+      return Response.json({
+        status: 'rejected',
+        code: error.code,
+        detail: error.message,
+        request_id: requestId,
+      }, { status: error.status, headers: { 'X-Request-Id': requestId } });
+    }
     console.error(JSON.stringify({
       level: 'error',
       event: 'dashboard.import.failed',

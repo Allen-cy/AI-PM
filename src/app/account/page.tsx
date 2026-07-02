@@ -335,19 +335,32 @@ export default function AccountPage() {
           }}>
             <div>
               <div style={{ fontWeight: 800, color: "#5b36a3" }}>管理员入口</div>
-              <div style={{ color: "#6e617a", fontSize: "0.86rem", marginTop: 4 }}>审核注册申请，批准后系统发送一次性注册码。</div>
+              <div style={{ color: "#6e617a", fontSize: "0.86rem", marginTop: 4 }}>审核注册申请，维护权限、项目授权、审计日志和企业配置。</div>
             </div>
-            <Link href="/admin/registration-requests" style={{
-              textDecoration: "none",
-              borderRadius: 14,
-              padding: "10px 16px",
-              color: "#fff",
-              fontWeight: 800,
-              background: "linear-gradient(180deg, #8b5cf6, #5b36a3)",
-              boxShadow: "0 10px 20px rgba(91,54,163,0.24), inset 0 2px 2px rgba(255,255,255,0.32)",
-            }}>
-              去审核注册申请
-            </Link>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
+              <Link href="/admin/registration-requests" style={{
+                textDecoration: "none",
+                borderRadius: 14,
+                padding: "10px 16px",
+                color: "#fff",
+                fontWeight: 800,
+                background: "linear-gradient(180deg, #8b5cf6, #5b36a3)",
+                boxShadow: "0 10px 20px rgba(91,54,163,0.24), inset 0 2px 2px rgba(255,255,255,0.32)",
+              }}>
+                注册审核
+              </Link>
+              <Link href="/admin/security" style={{
+                textDecoration: "none",
+                borderRadius: 14,
+                padding: "10px 16px",
+                color: "#fff",
+                fontWeight: 800,
+                background: "linear-gradient(180deg, #10b981, #047857)",
+                boxShadow: "0 10px 20px rgba(4,120,87,0.22), inset 0 2px 2px rgba(255,255,255,0.32)",
+              }}>
+                安全配置中心
+              </Link>
+            </div>
           </section>
         )}
 

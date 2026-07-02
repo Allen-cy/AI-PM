@@ -3,6 +3,7 @@ import type { DashboardData } from "../dashboard/types.ts";
 import { FeishuBaseClient } from "../feishu/client.ts";
 import type { FeishuConfig } from "../feishu/config.ts";
 import { deriveWorkbenchSummary, type HealthStatus, type WorkbenchSummary } from "../pmo-operating-system.ts";
+import { recordMatchesProjectGrant, type ProjectAccessGrant } from "../security/authorization.ts";
 
 export interface WorkbenchUser {
   id?: string;
@@ -66,7 +67,7 @@ export interface MyBusinessReminder {
 export interface WorkbenchEvidence {
   source: "feishu" | "sample" | "missing";
   generatedAt: string;
-  userScope: "admin-all" | "matched-owner" | "unmatched-owner" | "anonymous";
+  userScope: "admin-all" | "matched-owner" | "authorized-project" | "unmatched-owner" | "anonymous";
   matchedBy: string[];
   scanned: {
     projects: number;
@@ -218,6 +219,10 @@ function recordMatchesUser(record: RawRecord, user?: WorkbenchUser | null): bool
   const tokens = userTokens(user);
   if (tokens.length === 0) return false;
   return includesAnyToken(ownerText(record), tokens);
+}
+
+function recordMatchesGrant(record: RawRecord, grants: ProjectAccessGrant[] = []): boolean {
+  return recordMatchesProjectGrant(record, grants);
 }
 
 function priorityByDue(daysLeft: number | null, fallback: "P0" | "P1" | "P2" = "P2"): "P0" | "P1" | "P2" {
@@ -505,6 +510,7 @@ export function buildOperationalWorkbench(input: {
   milestones: RawRecord[];
   payments: RawRecord[];
   dashboard?: DashboardData | null;
+  projectAccessGrants?: ProjectAccessGrant[];
 }): OperationalWorkbench {
   const dashboard = input.dashboard ?? buildDashboardFromRecords(input.projects);
   if (!dashboard && input.projects.length === 0 && input.risks.length === 0 && input.tasks.length === 0 && input.milestones.length === 0 && input.payments.length === 0) {
@@ -513,10 +519,10 @@ export function buildOperationalWorkbench(input: {
 
   const matchedProjects = input.user?.role === "admin"
     ? input.projects
-    : input.projects.filter(record => recordMatchesUser(record, input.user));
+    : input.projects.filter(record => recordMatchesUser(record, input.user) || recordMatchesGrant(record, input.projectAccessGrants));
   const matchedProjectNames = new Set(matchedProjects.map(record => projectName(record)).filter(Boolean));
   const includeByProject = (record: RawRecord) => matchedProjectNames.has(projectName(record));
-  const includeRecord = (record: RawRecord) => input.user?.role === "admin" || recordMatchesUser(record, input.user) || includeByProject(record);
+  const includeRecord = (record: RawRecord) => input.user?.role === "admin" || recordMatchesUser(record, input.user) || recordMatchesGrant(record, input.projectAccessGrants) || includeByProject(record);
 
   const myProjects = matchedProjects
     .map(mapProject)
@@ -564,7 +570,15 @@ export function buildOperationalWorkbench(input: {
   const evidence: WorkbenchEvidence = {
     source: "feishu",
     generatedAt: new Date().toISOString(),
-    userScope: input.user?.role === "admin" ? "admin-all" : myProjects.length + myRisks.length + todayTodos.length + businessReminders.length > 0 ? "matched-owner" : input.user ? "unmatched-owner" : "anonymous",
+    userScope: input.user?.role === "admin"
+      ? "admin-all"
+      : input.projectAccessGrants?.length
+        ? "authorized-project"
+        : myProjects.length + myRisks.length + todayTodos.length + businessReminders.length > 0
+          ? "matched-owner"
+          : input.user
+            ? "unmatched-owner"
+            : "anonymous",
     matchedBy: userTokens(input.user),
     scanned: {
       projects: input.projects.length,
@@ -599,7 +613,7 @@ export function buildOperationalWorkbench(input: {
   };
 }
 
-export async function loadOperationalWorkbenchFromFeishu(config: FeishuConfig, user?: WorkbenchUser | null): Promise<OperationalWorkbench> {
+export async function loadOperationalWorkbenchFromFeishu(config: FeishuConfig, user?: WorkbenchUser | null, projectAccessGrants: ProjectAccessGrant[] = []): Promise<OperationalWorkbench> {
   const client = new FeishuBaseClient(config);
   const [projects, risks, tasks, milestones, payments] = await Promise.all([
     config.tables.project ? client.listRecords("project", 500).catch(() => []) : Promise.resolve([]),
@@ -618,6 +632,7 @@ export async function loadOperationalWorkbenchFromFeishu(config: FeishuConfig, u
     milestones: milestones.map(item => normalizeWorkbenchFields(item.fields)),
     payments: payments.map(item => normalizeWorkbenchFields(item.fields)),
     dashboard: buildDashboardFromRecords(projectRows),
+    projectAccessGrants,
   });
 }
 

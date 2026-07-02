@@ -5,6 +5,8 @@ import { getEffectiveFeishuConfig } from "@/features/feishu/user-config";
 import { buildFinanceCockpit } from "@/features/finance/cockpit";
 import { persistAiEvidence } from "@/features/ai/evidence-repository";
 import { withAuditResult } from "@/features/ai/evidence";
+import { filterDashboardByProjectAccess, projectAccessMode } from "@/features/security/authorization";
+import { loadProjectAccessGrantsForUser, writeOperationAudit } from "@/features/security/repository";
 import {
   buildReportEvidence,
   buildReportFactoryPackage,
@@ -105,9 +107,17 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   const effective = await getEffectiveFeishuConfig();
-  const dashboard = effective.config
+  const rawDashboard = effective.config
     ? await loadDashboardFromFeishu(effective.config).catch(() => DEFAULT_DASHBOARD_DATA)
     : DEFAULT_DASHBOARD_DATA;
+  const grants = await loadProjectAccessGrantsForUser(effective.user);
+  const dashboard = filterDashboardByProjectAccess(rawDashboard, effective.user, grants);
+  const access = {
+    mode: projectAccessMode(effective.user, dashboard.records.length, rawDashboard.records.length),
+    visible_projects: dashboard.records.length,
+    total_projects: rawDashboard.records.length,
+    explicit_grants: grants.length,
+  };
   const finance = buildFinanceCockpit(dashboard);
   const context: ReportFactoryContext = {
     dashboard,
@@ -134,6 +144,17 @@ export async function POST(request: Request): Promise<Response> {
   let evidence = buildReportEvidence({ request: body, context, dataPackage, actionItems, status });
   const audit = await persistAiEvidence({ evidence, user, requestId, metadata: { route: "/api/reports", report_type: body.type } });
   evidence = withAuditResult(evidence, audit.status === "succeeded" ? { status: "succeeded", id: audit.id } : { status: audit.status, warning: audit.warning });
+  const operationAudit = await writeOperationAudit({
+    user,
+    action: "report_generate",
+    resourceType: "report",
+    resourceId: requestId,
+    status: "succeeded",
+    severity: body.type === "monthly" ? "medium" : "low",
+    summary: `生成${REPORT_TYPE_LABELS[body.type]}：${body.projectName}`,
+    detail: { report_type: body.type, access },
+    requestId,
+  });
   const report = createGeneratedReport({
     request: body,
     content,
@@ -148,6 +169,8 @@ export async function POST(request: Request): Promise<Response> {
     status,
     report,
     evidence,
+    access,
+    operation_audit: operationAudit,
     data_sources: dataPackage.dataSources,
     action_items: actionItems,
     request_id: requestId,

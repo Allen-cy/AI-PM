@@ -82,6 +82,9 @@ export interface DashboardProjectRecord {
   项目等级: string;
   项目类型: string;
   产品类别: string;
+  项目负责人?: string;
+  项目经理?: string;
+  责任人?: string;
   签约时间?: string;
   计划开始?: string;
   计划完成?: string;

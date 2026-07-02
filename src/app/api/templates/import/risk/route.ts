@@ -1,4 +1,5 @@
 import * as XLSX from "xlsx";
+import { FileValidationError, validateSpreadsheetFile } from "@/features/security/file-validation";
 import {
   calculateRiskPriority,
   calculateRiskScore,
@@ -17,6 +18,7 @@ const stages: RiskStage[] = ["立项", "规划", "执行", "监控", "验收", "
 const impactAreas: RiskImpactArea[] = ["范围", "费用", "工期", "质量", "组织", "技术", "合同", "回款", "客户", "供应商"];
 const strategies: RiskStrategy[] = ["规避", "缓解", "转移", "接受", "上报"];
 const modules: LinkedModule[] = ["项目组合看板", "立项", "规划", "执行", "监控", "收尾", "合同回款", "质量", "资源"];
+const MAX_IMPORT_ROWS = 1000;
 
 function text(row: Record<string, unknown>, ...keys: string[]) {
   for (const key of keys) {
@@ -91,15 +93,23 @@ export async function POST(request: Request) {
   if (!(file instanceof File)) {
     return Response.json({ error: "请上传风险模板文件" }, { status: 400 });
   }
-  const workbook = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: true });
-  const risks: Risk[] = [];
-  for (const sheetName of workbook.SheetNames) {
-    const sheet = workbook.Sheets[sheetName];
-    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" });
-    rows.forEach((row, index) => {
-      const risk = normalizeRisk(row, risks.length + index);
-      if (risk) risks.push(risk);
-    });
+  try {
+    validateSpreadsheetFile(file, { maxBytes: 5 * 1024 * 1024 });
+    const workbook = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: true });
+    const risks: Risk[] = [];
+    for (const sheetName of workbook.SheetNames) {
+      const sheet = workbook.Sheets[sheetName];
+      const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" }).slice(0, MAX_IMPORT_ROWS);
+      rows.forEach((row, index) => {
+        const risk = normalizeRisk(row, risks.length + index);
+        if (risk) risks.push(risk);
+      });
+    }
+    return Response.json({ risks, count: risks.length });
+  } catch (error) {
+    if (error instanceof FileValidationError) {
+      return Response.json({ error: error.message, code: error.code }, { status: error.status });
+    }
+    return Response.json({ error: "风险模板解析失败" }, { status: 422 });
   }
-  return Response.json({ risks, count: risks.length });
 }
