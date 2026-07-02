@@ -40,6 +40,9 @@ yarn-error.log*
 # vercel
 .vercel
 
+# local blueprint reference image, not a deployable public asset
+/public/项目管理交付蓝图设计.jpg
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

@@ -83,6 +83,13 @@ test('delivery management blueprint models sales project monitoring and cost dep
   assert.equal(deliveryPhases.every(phase => phase.costGate && phase.nodes.every(node => node.output && node.evidence)), true);
   assert.equal(deliveryControlPoints.some(point => point.title.includes('里程碑') && point.output.includes('回款')), true);
   assert.equal(monitoringTracks.every(track => track.purpose && track.evidence), true);
+  const nodeChildren = new Map(deliveryPhases.flatMap(phase => phase.nodes.map(node => [node.id, node.children ?? []])));
+  assert.deepEqual(nodeChildren.get('wbs'), ['任务管理', 'WBS物料管理']);
+  assert.deepEqual(nodeChildren.get('resource-plan'), ['人力资源计划', '采购计划', '物料计划', '外包计划']);
+  assert.deepEqual(nodeChildren.get('budget-approval'), ['拆解详细预算']);
+  assert.deepEqual(nodeChildren.get('progress'), ['周报汇报', '周报工时管理']);
+  assert.deepEqual(nodeChildren.get('resource'), ['人力资源管理', '采购管理', '物料管理']);
+  assert.deepEqual(nodeChildren.get('milestone'), ['里程碑验收']);
 });
 
 test('delivery management blueprint remains a separate BPM subpage with arrow flow links', () => {
@@ -94,6 +101,13 @@ test('delivery management blueprint remains a separate BPM subpage with arrow fl
   assert.match(deliveryPageSource, /BPM泳道流程图/);
   assert.match(deliveryPageSource, /flowLinks/);
   assert.match(deliveryPageSource, /markerEnd/);
+  assert.match(deliveryPageSource, /controlAnnotations/);
+  for (const label of ['①预立项申请', '⑤合同付款条件\\+SOW生成里程碑节点', '⑩项目移交到CSM']) {
+    assert.match(deliveryPageSource, new RegExp(label));
+  }
+  assert.match(deliveryPageSource, /node\.children/);
+  assert.match(deliveryPageSource, /ChildTaskNodeView/);
+  assert.doesNotMatch(deliveryPageSource, /这里需.*里程碑/);
 });
 
 test('governance workflows define inputs outputs owners states and audit trail', () => {

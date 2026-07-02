@@ -262,6 +262,7 @@ export const deliveryPhases: DeliveryPhase[] = [
         role: "资源经理 / 项目经理",
         output: "资源计划",
         evidence: "人力、采购、物料、外包需求",
+        children: ["人力资源计划", "采购计划", "物料计划", "外包计划"],
       },
       {
         id: "budget-approval",
@@ -270,6 +271,7 @@ export const deliveryPhases: DeliveryPhase[] = [
         role: "财务 / PMO",
         output: "项目预算基线",
         evidence: "拆解详细预算、毛利、现金流",
+        children: ["拆解详细预算"],
       },
       {
         id: "baseline",

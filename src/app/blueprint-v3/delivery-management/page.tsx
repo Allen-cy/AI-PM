@@ -14,6 +14,7 @@ type FlowNode = {
   lane: "sales" | "project" | "cost" | "tools";
   label: string;
   sub?: string;
+  children?: string[];
   href?: string;
   x: number;
   y: number;
@@ -25,53 +26,99 @@ type FlowNode = {
 type FlowLink = {
   from: string;
   to: string;
-  label?: string;
   tone?: "primary" | "control" | "cost";
   bend?: "straight" | "vertical" | "up";
 };
 
-const CANVAS = { width: 2520, height: 980 };
+type ChildTaskNode = {
+  parentId: string;
+  label: string;
+  xOffset?: number;
+  yOffset: number;
+  tone?: "normal" | "dashed";
+};
+
+type ControlAnnotation = {
+  id: number;
+  text: string;
+  x: number;
+  y: number;
+  w: number;
+};
+
+const CANVAS = { width: 3380, height: 1090 };
 
 const laneRows = [
-  { id: "sales", label: "销售管理", y: 72, h: 130, border: "rgba(245,158,11,0.32)" },
-  { id: "project", label: "项目管理", y: 224, h: 300, border: "rgba(96,165,250,0.28)" },
-  { id: "monitoring", label: "监控管理", y: 548, h: 160, border: "rgba(249,115,22,0.32)" },
-  { id: "cost", label: "成本管理", y: 734, h: 112, border: "rgba(16,185,129,0.28)" },
-  { id: "tools", label: "工具", y: 872, h: 80, border: "rgba(139,92,246,0.28)" },
+  { id: "sales", label: "销售管理", y: 72, h: 148, border: "rgba(245,158,11,0.32)" },
+  { id: "project", label: "项目管理", y: 246, h: 410, border: "rgba(96,165,250,0.28)" },
+  { id: "monitoring", label: "监控管理", y: 684, h: 150, border: "rgba(249,115,22,0.32)" },
+  { id: "cost", label: "成本管理", y: 860, h: 104, border: "rgba(16,185,129,0.28)" },
+  { id: "tools", label: "工具", y: 990, h: 78, border: "rgba(139,92,246,0.28)" },
 ];
 
 const salesNodes: FlowNode[] = [
-  { id: "s-opportunity", lane: "sales", label: "商机", sub: "线索进入项目化评估", x: 150, y: 104, w: 210, h: 64, kind: "sales" },
-  { id: "s-sign", lane: "sales", label: "合同签约", sub: "合同/SOW边界确认", x: 410, y: 104, w: 210, h: 64, kind: "sales" },
-  { id: "s-order", lane: "sales", label: "合同/订单", sub: "付款条件与订单口径", x: 670, y: 104, w: 250, h: 64, kind: "sales" },
-  { id: "s-payment-plan", lane: "sales", label: "回款计划", sub: "里程碑触发回款", x: 980, y: 104, w: 220, h: 64, kind: "sales" },
-  { id: "s-receivable", lane: "sales", label: "应收", sub: "验收后确认应收", x: 1260, y: 104, w: 210, h: 64, kind: "sales" },
-  { id: "s-writeoff", lane: "sales", label: "核销", sub: "到账核销与损益", x: 1530, y: 104, w: 210, h: 64, kind: "sales" },
-  { id: "s-service", lane: "sales", label: "售后服务", sub: "移交CSM持续服务", x: 1810, y: 104, w: 230, h: 64, kind: "sales" },
+  { id: "s-opportunity", lane: "sales", label: "商机", sub: "线索进入项目化评估", x: 170, y: 118, w: 210, h: 62, kind: "sales" },
+  { id: "s-sign", lane: "sales", label: "合同签约", sub: "合同/SOW边界确认", x: 500, y: 118, w: 210, h: 62, kind: "sales" },
+  { id: "s-order", lane: "sales", label: "合同/订单", sub: "付款条件与订单口径", x: 850, y: 118, w: 250, h: 62, kind: "sales" },
+  { id: "s-payment-plan", lane: "sales", label: "回款计划", sub: "里程碑触发回款", x: 1250, y: 118, w: 220, h: 62, kind: "sales" },
+  { id: "s-receivable", lane: "sales", label: "应收", sub: "验收后确认应收", x: 1810, y: 118, w: 210, h: 62, kind: "sales" },
+  { id: "s-writeoff", lane: "sales", label: "核销", sub: "到账核销与损益", x: 2490, y: 118, w: 210, h: 62, kind: "sales" },
+  { id: "s-service", lane: "sales", label: "售后服务", sub: "移交CSM持续服务", x: 3050, y: 118, w: 230, h: 62, kind: "sales" },
 ];
 
-const projectNodes: FlowNode[] = deliveryPhases.flatMap((phase, phaseIndex) => {
-  const starts = [150, 670, 1370, 1990];
-  const y = 332;
-  return phase.nodes.map((node, index) => ({
-    id: `p-${node.id}`,
-    lane: "project" as const,
-    label: node.name,
-    sub: node.output,
-    href: node.href,
-    x: starts[phaseIndex] + index * 128,
-    y,
-    w: 112,
-    h: 74,
-    kind: "project" as const,
-  }));
-});
+const projectNodeSource = new Map(deliveryPhases.flatMap(phase => phase.nodes).map(node => [node.id, node]));
+
+function projectNode(id: string, x: number): FlowNode {
+  const source = projectNodeSource.get(id);
+  if (!source) throw new Error(`missing project node source: ${id}`);
+  return {
+    id: `p-${source.id}`,
+    lane: "project",
+    label: source.name,
+    sub: source.output,
+    children: source.children,
+    href: source.href,
+    x,
+    y: 368,
+    w: 138,
+    h: 72,
+    kind: "project",
+  };
+}
+
+const projectNodes: FlowNode[] = [
+  projectNode("initiation-request", 170),
+  projectNode("initiation-approval", 360),
+  projectNode("team-setup", 550),
+  projectNode("sow-breakdown", 740),
+  projectNode("wbs", 960),
+  projectNode("milestone-plan", 1160),
+  projectNode("resource-plan", 1360),
+  projectNode("budget-approval", 1560),
+  projectNode("baseline", 1760),
+  projectNode("progress", 1980),
+  projectNode("resource", 2160),
+  projectNode("milestone", 2340),
+  projectNode("change", 2520),
+  projectNode("acceptance", 2720),
+  projectNode("settlement", 2880),
+  projectNode("handover", 3040),
+];
+
+const childTaskNodes: ChildTaskNode[] = projectNodes.flatMap(node =>
+  (node.children ?? []).map((label, index) => ({
+    parentId: node.id,
+    label,
+    yOffset: 104 + index * 40,
+    tone: node.id === "p-resource" ? "dashed" : "normal",
+  }))
+);
 
 const costNodes: FlowNode[] = [
-  { id: "c-estimate", lane: "cost", label: "项目概算", sub: "支撑报价/预立项", x: 300, y: 762, w: 260, h: 54, kind: "cost" },
-  { id: "c-budget", lane: "cost", label: "项目预算", sub: "预算审批后形成基线", x: 820, y: 762, w: 320, h: 54, kind: "cost" },
-  { id: "c-accounting", lane: "cost", label: "核算（预算执行）", sub: "人力/采购/物料实际成本", x: 1420, y: 762, w: 320, h: 54, kind: "cost" },
-  { id: "c-final", lane: "cost", label: "决算", sub: "计算项目损益", x: 2030, y: 762, w: 260, h: 54, kind: "cost" },
+  { id: "c-estimate", lane: "cost", label: "项目概算", sub: "支撑报价/预立项", x: 340, y: 888, w: 300, h: 52, kind: "cost" },
+  { id: "c-budget", lane: "cost", label: "项目预算", sub: "预算审批后形成基线", x: 1060, y: 888, w: 340, h: 52, kind: "cost" },
+  { id: "c-accounting", lane: "cost", label: "核算（预算执行）", sub: "人力/采购/物料实际成本", x: 1980, y: 888, w: 340, h: 52, kind: "cost" },
+  { id: "c-final", lane: "cost", label: "决算", sub: "计算项目损益", x: 2860, y: 888, w: 300, h: 52, kind: "cost" },
 ];
 
 const toolNodes: FlowNode[] = toolSupports.map((tool, index) => ({
@@ -80,9 +127,9 @@ const toolNodes: FlowNode[] = toolSupports.map((tool, index) => ({
   label: tool.name,
   sub: tool.purpose,
   href: tool.href,
-  x: 150 + index * 440,
-  y: 895,
-  w: 300,
+  x: 170 + index * 620,
+  y: 1010,
+  w: 360,
   h: 42,
   kind: "tool" as const,
 }));
@@ -90,10 +137,10 @@ const toolNodes: FlowNode[] = toolSupports.map((tool, index) => ({
 const allNodes = [...salesNodes, ...projectNodes, ...costNodes, ...toolNodes];
 
 const phaseBars = [
-  { name: "项目立项", x: 150, w: 500 },
-  { name: "项目规划", x: 670, w: 670 },
-  { name: "项目执行", x: 1370, w: 590 },
-  { name: "项目收尾", x: 1990, w: 390 },
+  { name: "项目立项", x: 170, w: 720 },
+  { name: "项目规划", x: 920, w: 920 },
+  { name: "项目执行", x: 1900, w: 810 },
+  { name: "项目收尾", x: 2720, w: 500 },
 ];
 
 const salesLinks: FlowLink[] = salesNodes.slice(0, -1).map((node, index) => ({
@@ -115,16 +162,29 @@ const costLinks: FlowLink[] = costNodes.slice(0, -1).map((node, index) => ({
 }));
 
 const controlLinks: FlowLink[] = [
-  { from: "s-opportunity", to: "p-initiation-request", label: "① 预立项申请", tone: "control", bend: "vertical" },
-  { from: "c-estimate", to: "s-sign", label: "② 概算指导销售报价", tone: "cost", bend: "up" },
-  { from: "p-sow-breakdown", to: "s-sign", label: "③ 工作计划作为合同附件", tone: "control", bend: "up" },
-  { from: "s-sign", to: "p-team-setup", label: "④ 正式立项", tone: "control", bend: "vertical" },
-  { from: "s-order", to: "p-milestone-plan", label: "⑤ 付款条件+SOW生成里程碑", tone: "control", bend: "vertical" },
-  { from: "p-milestone-plan", to: "s-payment-plan", label: "⑥ 里程碑关联回款计划", tone: "control", bend: "up" },
-  { from: "p-milestone", to: "s-payment-plan", label: "⑦ 里程碑验收触发回款", tone: "control", bend: "up" },
-  { from: "p-acceptance", to: "s-receivable", label: "⑧ 项目验收确认应收", tone: "control", bend: "up" },
-  { from: "s-writeoff", to: "c-final", label: "⑨ 核销回款，计算损益", tone: "cost", bend: "vertical" },
-  { from: "p-handover", to: "s-service", label: "⑩ 项目移交到CSM", tone: "control", bend: "up" },
+  { from: "s-opportunity", to: "p-initiation-request", tone: "control", bend: "vertical" },
+  { from: "c-estimate", to: "s-sign", tone: "cost", bend: "up" },
+  { from: "p-sow-breakdown", to: "s-sign", tone: "control", bend: "up" },
+  { from: "s-sign", to: "p-team-setup", tone: "control", bend: "vertical" },
+  { from: "s-order", to: "p-milestone-plan", tone: "control", bend: "vertical" },
+  { from: "p-milestone-plan", to: "s-payment-plan", tone: "control", bend: "up" },
+  { from: "p-milestone", to: "s-payment-plan", tone: "control", bend: "up" },
+  { from: "p-acceptance", to: "s-receivable", tone: "control", bend: "up" },
+  { from: "s-writeoff", to: "c-final", tone: "cost", bend: "vertical" },
+  { from: "p-handover", to: "s-service", tone: "control", bend: "up" },
+];
+
+const controlAnnotations: ControlAnnotation[] = [
+  { id: 1, text: "①预立项申请", x: 170, y: 190, w: 150 },
+  { id: 2, text: "②概算指导销售报价", x: 410, y: 190, w: 200 },
+  { id: 3, text: "③拆解工作计划作为合同签约附件", x: 650, y: 190, w: 260 },
+  { id: 4, text: "④正式立项", x: 510, y: 292, w: 160 },
+  { id: 5, text: "⑤合同付款条件+SOW生成里程碑节点", x: 935, y: 190, w: 310 },
+  { id: 6, text: "⑥里程碑关联回款计划", x: 1270, y: 190, w: 230 },
+  { id: 7, text: "⑦里程碑验收，触发回款计划，确立应收", x: 1540, y: 190, w: 330 },
+  { id: 8, text: "⑧项目验收完成，确立应收", x: 1910, y: 190, w: 250 },
+  { id: 9, text: "⑨核销回款，里程碑完成", x: 2470, y: 190, w: 240 },
+  { id: 10, text: "⑩项目移交到CSM", x: 3040, y: 190, w: 190 },
 ];
 
 const flowLinks = [...salesLinks, ...projectLinks, ...costLinks, ...controlLinks];
@@ -152,23 +212,11 @@ function linkPath(link: FlowLink) {
   const start = link.bend === "up" ? nodeCenter(from, "top") : link.bend === "vertical" ? nodeCenter(from, "bottom") : nodeCenter(from, "right");
   const end = link.bend === "up" ? nodeCenter(to, "bottom") : link.bend === "vertical" ? nodeCenter(to, "top") : nodeCenter(to, "left");
   if (link.bend === "vertical" || link.bend === "up") {
-    const midY = link.bend === "up" ? Math.min(start.y, end.y) - 24 : Math.max(start.y, end.y) + 22;
+    const midY = start.y + (end.y - start.y) / 2;
     return `M ${start.x} ${start.y} L ${start.x} ${midY} L ${end.x} ${midY} L ${end.x} ${end.y}`;
   }
   const midX = start.x + (end.x - start.x) / 2;
   return `M ${start.x} ${start.y} C ${midX} ${start.y}, ${midX} ${end.y}, ${end.x} ${end.y}`;
-}
-
-function labelPosition(link: FlowLink) {
-  const from = nodeMap.get(link.from);
-  const to = nodeMap.get(link.to);
-  if (!from || !to) return { x: 0, y: 0 };
-  const a = nodeCenter(from, "center");
-  const b = nodeCenter(to, "center");
-  return {
-    x: a.x + (b.x - a.x) / 2,
-    y: link.bend === "up" ? Math.min(a.y, b.y) - 48 : a.y + (b.y - a.y) / 2 - 10,
-  };
 }
 
 function FlowNodeView({ node }: { node: FlowNode }) {
@@ -208,6 +256,70 @@ function FlowNodeView({ node }: { node: FlowNode }) {
     <Link href={node.href} aria-label={`打开${node.label}`} style={{ textDecoration: "none" }}>
       {content}
     </Link>
+  );
+}
+
+function ChildTaskNodeView({ item }: { item: ChildTaskNode }) {
+  const parent = nodeMap.get(item.parentId);
+  if (!parent) return null;
+  const x = parent.x + (item.xOffset ?? 0);
+  const y = parent.y + item.yOffset;
+  const w = parent.w;
+  const dashed = item.tone === "dashed";
+  return (
+    <div
+      style={{
+        position: "absolute",
+        left: x,
+        top: y,
+        width: w,
+        minHeight: 30,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        textAlign: "center",
+        padding: "5px 8px",
+        borderRadius: 8,
+        background: dashed ? "rgba(15,23,42,0.74)" : "rgba(30,41,59,0.9)",
+        border: dashed ? "1px dashed rgba(148,163,184,0.58)" : "1px solid rgba(148,163,184,0.42)",
+        color: "var(--text)",
+        fontSize: "0.7rem",
+        lineHeight: 1.3,
+        zIndex: 3,
+      }}
+    >
+      {item.label}
+    </div>
+  );
+}
+
+function ControlAnnotationView({ item }: { item: ControlAnnotation }) {
+  return (
+    <div
+      style={{
+        position: "absolute",
+        left: item.x,
+        top: item.y,
+        width: item.w,
+        minHeight: 30,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "4px 8px",
+        borderRadius: 10,
+        border: "1px solid rgba(96,165,250,0.48)",
+        background: "linear-gradient(135deg, rgba(37,99,235,0.26), rgba(14,165,233,0.14))",
+        color: "#93c5fd",
+        fontSize: "0.68rem",
+        lineHeight: 1.28,
+        fontWeight: 850,
+        textAlign: "center",
+        boxShadow: "0 8px 18px rgba(15,23,42,0.2)",
+        zIndex: 4,
+      }}
+    >
+      {item.text}
+    </div>
   );
 }
 
@@ -340,7 +452,6 @@ export default function DeliveryManagementBlueprintPage() {
                   if (!path) return null;
                   const color = link.tone === "cost" ? "#10b981" : link.tone === "control" ? "#fbbf24" : "#60a5fa";
                   const marker = link.tone === "cost" ? "url(#arrow-cost)" : link.tone === "control" ? "url(#arrow-control)" : "url(#arrow-primary)";
-                  const position = labelPosition(link);
                   return (
                     <g key={`${link.from}-${link.to}-${index}`}>
                       <path
@@ -352,33 +463,34 @@ export default function DeliveryManagementBlueprintPage() {
                         markerEnd={marker}
                         opacity={link.tone === "primary" ? 0.88 : 0.78}
                       />
-                      {link.label ? (
-                        <foreignObject x={position.x - 86} y={position.y - 14} width={172} height={44}>
-                          <div
-                            style={{
-                              color,
-                              background: "rgba(10,14,23,0.92)",
-                              border: `1px solid ${color}55`,
-                              borderRadius: 999,
-                              padding: "4px 8px",
-                              textAlign: "center",
-                              fontSize: "0.66rem",
-                              lineHeight: 1.35,
-                              fontWeight: 850,
-                            }}
-                          >
-                            {link.label}
-                          </div>
-                        </foreignObject>
-                      ) : null}
                     </g>
+                  );
+                })}
+                {childTaskNodes.map((item, index) => {
+                  const parent = nodeMap.get(item.parentId);
+                  if (!parent) return null;
+                  const childX = parent.x + (item.xOffset ?? 0) + parent.w / 2;
+                  const childY = parent.y + item.yOffset;
+                  const parentBottom = parent.y + parent.h;
+                  const path = `M ${parent.x + parent.w / 2} ${parentBottom} L ${parent.x + parent.w / 2} ${childY - 8} L ${childX} ${childY - 8} L ${childX} ${childY}`;
+                  return (
+                    <path
+                      key={`${item.parentId}-${item.label}-${index}`}
+                      d={path}
+                      fill="none"
+                      stroke="rgba(148,163,184,0.58)"
+                      strokeWidth={1.2}
+                      strokeDasharray="5 4"
+                    />
                   );
                 })}
               </svg>
 
+              {controlAnnotations.map(item => <ControlAnnotationView key={item.id} item={item} />)}
               {allNodes.map(node => <FlowNodeView key={node.id} node={node} />)}
+              {childTaskNodes.map(item => <ChildTaskNodeView key={`${item.parentId}-${item.label}`} item={item} />)}
 
-              <div style={{ position: "absolute", left: 150, top: 570, width: 2240 }}>
+              <div style={{ position: "absolute", left: 170, top: 706, width: 3050 }}>
                 <div style={{ height: 34, background: "rgba(249,115,22,0.92)", color: "#111827", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 950, clipPath: "polygon(0 0, calc(100% - 24px) 0, 100% 50%, calc(100% - 24px) 100%, 0 100%)" }}>
                   监控管理贯穿全流程
                 </div>
