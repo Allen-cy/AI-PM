@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import type { MigrationAnalysisResult } from "@/features/migration/package";
+import type { MigrationBatchRecord } from "@/features/migration/repository";
 import {
   assessMigrationReadiness,
   migrationDataObjects,
@@ -22,10 +23,23 @@ type AnalyzeResponse =
   | { status: "succeeded"; file_name: string; analysis: MigrationAnalysisResult; request_id: string }
   | { status: "rejected" | "error"; code: string; detail?: string; request_id: string };
 
+type BatchListResponse =
+  | { status: "succeeded"; batches: MigrationBatchRecord[]; request_id: string }
+  | { status: "not_configured" | "failed" | "unauthorized"; batches?: MigrationBatchRecord[]; warning?: string; request_id: string };
+
+type BatchSaveResponse =
+  | { status: "succeeded"; batch: MigrationBatchRecord; request_id: string }
+  | { status: "not_configured" | "failed" | "unauthorized"; warning?: string; request_id: string };
+
 function issueColor(severity: string) {
   if (severity === "high") return "var(--red)";
   if (severity === "medium") return "var(--amber)";
   return "var(--accent2)";
+}
+
+function defaultBatchName(analysis: MigrationAnalysisResult) {
+  const stamp = analysis.generatedAt.replace(/\D/g, "").slice(0, 12);
+  return `${analysis.objectName}-试迁移批次-${stamp || "待命名"}`;
 }
 
 export default function MigrationCenterPage() {
@@ -39,8 +53,42 @@ export default function MigrationCenterPage() {
   const [analysis, setAnalysis] = useState<MigrationAnalysisResult | null>(null);
   const [analyzeError, setAnalyzeError] = useState("");
   const [analyzing, setAnalyzing] = useState(false);
+  const [batchName, setBatchName] = useState("");
+  const [batches, setBatches] = useState<MigrationBatchRecord[]>([]);
+  const [batchWarning, setBatchWarning] = useState("");
+  const [saveError, setSaveError] = useState("");
+  const [saveMessage, setSaveMessage] = useState("");
+  const [savingBatch, setSavingBatch] = useState(false);
+  const [loadingBatches, setLoadingBatches] = useState(true);
 
   const result = useMemo(() => assessMigrationReadiness(selectedAreaIds), [selectedAreaIds]);
+
+  useEffect(() => {
+    let active = true;
+    async function loadBatches() {
+      setLoadingBatches(true);
+      try {
+        const response = await fetch("/api/migration/batches", { cache: "no-store" });
+        const payload = await response.json() as BatchListResponse;
+        if (!active) return;
+        if (payload.status === "succeeded") {
+          setBatches(payload.batches);
+          setBatchWarning("");
+        } else {
+          setBatches(payload.batches ?? []);
+          setBatchWarning(payload.warning || "迁移批次历史暂不可用。");
+        }
+      } catch {
+        if (active) setBatchWarning("读取迁移批次历史失败。");
+      } finally {
+        if (active) setLoadingBatches(false);
+      }
+    }
+    void loadBatches();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   function toggleArea(id: MigrationAreaId) {
     setSelectedAreaIds(current =>
@@ -52,6 +100,8 @@ export default function MigrationCenterPage() {
     event.preventDefault();
     setAnalyzeError("");
     setAnalysis(null);
+    setSaveError("");
+    setSaveMessage("");
     if (!file) {
       setAnalyzeError("请先选择一个 xlsx、xls 或 csv 文件。");
       return;
@@ -68,10 +118,43 @@ export default function MigrationCenterPage() {
         return;
       }
       setAnalysis(payload.analysis);
+      setBatchName(defaultBatchName(payload.analysis));
     } catch {
       setAnalyzeError("试迁移分析失败，请稍后重试。");
     } finally {
       setAnalyzing(false);
+    }
+  }
+
+  async function saveCurrentBatch() {
+    if (!analysis) return;
+    setSavingBatch(true);
+    setSaveError("");
+    setSaveMessage("");
+    try {
+      const response = await fetch("/api/migration/batches", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          batchName: batchName.trim() || defaultBatchName(analysis),
+          fileName: file?.name ?? null,
+          analysis,
+        }),
+      });
+      const payload = await response.json() as BatchSaveResponse;
+      if (payload.status !== "succeeded") {
+        const warning = payload.warning || "保存迁移批次失败。";
+        if (payload.status === "not_configured") setBatchWarning(warning);
+        setSaveError(warning);
+        return;
+      }
+      setBatches(current => [payload.batch, ...current.filter(item => item.id !== payload.batch.id)].slice(0, 20));
+      setBatchWarning("");
+      setSaveMessage(`已保存迁移批次：${payload.batch.batchName}`);
+    } catch {
+      setSaveError("保存迁移批次失败，请稍后重试。");
+    } finally {
+      setSavingBatch(false);
     }
   }
 
@@ -196,7 +279,7 @@ export default function MigrationCenterPage() {
             <div>
               <div className="section-title">试迁移作业台</div>
               <p style={{ color: "var(--text2)", lineHeight: 1.7, fontSize: "0.84rem" }}>
-                用小批量竞品A导出数据做试跑：系统只读取文件并生成字段映射与质量报告，不写入数据库、不写入飞书。
+                用小批量竞品A导出数据做试跑：先生成字段映射与质量报告；确认后可保存为迁移批次历史，仍不会自动写入飞书业务表。
               </p>
             </div>
             <a href="/api/migration/template" className="btn-secondary" style={{ textDecoration: "none", whiteSpace: "nowrap" }}>
@@ -324,8 +407,108 @@ export default function MigrationCenterPage() {
                       {analysis.nextActions.map(action => <li key={action}>{action}</li>)}
                     </ul>
                   </div>
+
+                  <div style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 12, padding: 14 }}>
+                    <h2 style={{ fontSize: "0.95rem", marginBottom: 10 }}>保存迁移批次</h2>
+                    <label style={{ display: "grid", gap: 8, color: "var(--text2)", fontSize: "0.82rem" }}>
+                      批次名称
+                      <input
+                        className="input"
+                        value={batchName}
+                        onChange={event => setBatchName(event.target.value)}
+                        placeholder="例如：项目台账-第一轮试迁移"
+                        aria-label="迁移批次名称"
+                      />
+                    </label>
+                    <button
+                      className="btn-primary"
+                      type="button"
+                      onClick={saveCurrentBatch}
+                      disabled={savingBatch}
+                      style={{ width: "100%", marginTop: 10 }}
+                    >
+                      {savingBatch ? "保存中..." : "保存为迁移批次"}
+                    </button>
+                    {saveMessage && <p style={{ color: "var(--green)", lineHeight: 1.6, fontSize: "0.8rem", marginTop: 8 }}>{saveMessage}</p>}
+                    {saveError && <p style={{ color: "var(--red)", lineHeight: 1.6, fontSize: "0.8rem", marginTop: 8 }}>{saveError}</p>}
+                  </div>
                 </div>
               </div>
+            </div>
+          )}
+        </section>
+
+        <section className="card" style={{ marginBottom: 18 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", marginBottom: 12 }}>
+            <div>
+              <div className="section-title">历史迁移批次</div>
+              <p style={{ color: "var(--text2)", lineHeight: 1.6, fontSize: "0.84rem" }}>
+                保留每次试迁移的字段覆盖率、质量问题和准入结论，便于正式迁移前做复盘和审批。
+              </p>
+            </div>
+            <span className="tag tag-blue">{batches.length} 条记录</span>
+          </div>
+
+          {batchWarning && (
+            <div style={{ border: "1px solid rgba(245,158,11,0.48)", background: "rgba(245,158,11,0.08)", color: "var(--amber)", borderRadius: 12, padding: 12, marginBottom: 12, lineHeight: 1.6, fontSize: "0.84rem" }}>
+              {batchWarning}
+            </div>
+          )}
+
+          {loadingBatches ? (
+            <p style={{ color: "var(--text2)", fontSize: "0.84rem" }}>正在读取迁移批次历史...</p>
+          ) : batches.length === 0 ? (
+            <div style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 12, padding: 16 }}>
+              <strong>暂无历史批次</strong>
+              <p style={{ color: "var(--text2)", lineHeight: 1.6, fontSize: "0.82rem", marginTop: 6 }}>
+                上传试迁移文件并保存后，这里会展示批次结果。如果出现 SQL 未执行提示，请先在 Supabase 执行 supabase-v5313-migration-batches.sql。
+              </p>
+            </div>
+          ) : (
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 900 }}>
+                <thead>
+                  <tr style={{ color: "var(--text2)", textAlign: "left", fontSize: "0.78rem" }}>
+                    <th style={{ padding: "10px 8px", borderBottom: "1px solid var(--border)" }}>批次</th>
+                    <th style={{ padding: "10px 8px", borderBottom: "1px solid var(--border)" }}>对象</th>
+                    <th style={{ padding: "10px 8px", borderBottom: "1px solid var(--border)" }}>样本</th>
+                    <th style={{ padding: "10px 8px", borderBottom: "1px solid var(--border)" }}>字段覆盖</th>
+                    <th style={{ padding: "10px 8px", borderBottom: "1px solid var(--border)" }}>质量问题</th>
+                    <th style={{ padding: "10px 8px", borderBottom: "1px solid var(--border)" }}>结论</th>
+                    <th style={{ padding: "10px 8px", borderBottom: "1px solid var(--border)" }}>创建人/时间</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {batches.map(batch => (
+                    <tr key={batch.id}>
+                      <td style={{ padding: "12px 8px", borderBottom: "1px solid var(--border)", fontWeight: 800 }}>
+                        {batch.batchName}
+                        {batch.fileName && <div style={{ color: "var(--text2)", fontSize: "0.76rem", marginTop: 4 }}>{batch.fileName}</div>}
+                      </td>
+                      <td style={{ padding: "12px 8px", borderBottom: "1px solid var(--border)" }}><span className="tag">{batch.objectName}</span></td>
+                      <td style={{ padding: "12px 8px", borderBottom: "1px solid var(--border)", color: "var(--text2)" }}>{batch.totalRows} 行</td>
+                      <td style={{ padding: "12px 8px", borderBottom: "1px solid var(--border)", color: batch.missingRequiredFields === 0 ? "var(--green)" : "var(--amber)", fontWeight: 800 }}>
+                        {batch.fieldCoverageRate}%
+                        <div style={{ color: "var(--text2)", fontSize: "0.76rem", marginTop: 4 }}>缺失 {batch.missingRequiredFields} 项</div>
+                      </td>
+                      <td style={{ padding: "12px 8px", borderBottom: "1px solid var(--border)", color: batch.highIssueCount > 0 ? "var(--red)" : "var(--text2)" }}>
+                        {batch.qualityIssueCount} 项
+                        <div style={{ color: "var(--text2)", fontSize: "0.76rem", marginTop: 4 }}>高优先级 {batch.highIssueCount} 项</div>
+                      </td>
+                      <td style={{ padding: "12px 8px", borderBottom: "1px solid var(--border)" }}>
+                        <span className={batch.canTrialImport ? "tag tag-green" : "tag tag-amber"}>
+                          {batch.canTrialImport ? "可试迁移" : "需修正"}
+                        </span>
+                      </td>
+                      <td style={{ padding: "12px 8px", borderBottom: "1px solid var(--border)", color: "var(--text2)", fontSize: "0.8rem", lineHeight: 1.5 }}>
+                        {batch.createdByName || "系统"}
+                        <br />
+                        {batch.createdAt ? new Date(batch.createdAt).toLocaleString("zh-CN", { hour12: false }) : "-"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
         </section>

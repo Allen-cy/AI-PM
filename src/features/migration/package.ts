@@ -41,6 +41,16 @@ export interface MigrationTemplateSheet {
   sampleRow: Record<string, string | number>;
 }
 
+export interface MigrationBatchMetrics {
+  totalRows: number;
+  fieldCoverageRate: number;
+  missingRequiredFields: number;
+  qualityIssueCount: number;
+  highIssueCount: number;
+  canTrialImport: boolean;
+  nextActions: string[];
+}
+
 type RawRow = Record<string, unknown>;
 
 const FIELD_ALIASES: Record<string, string[]> = {
@@ -291,6 +301,18 @@ export function buildMigrationTemplateSheets(): MigrationTemplateSheet[] {
     headers: object.requiredFields,
     sampleRow: Object.fromEntries(object.requiredFields.map(field => [field, sampleValueForField(field)])),
   }));
+}
+
+export function summarizeMigrationBatch(analysis: MigrationAnalysisResult): MigrationBatchMetrics {
+  return {
+    totalRows: analysis.totalRows,
+    fieldCoverageRate: analysis.fieldCoverage.rate,
+    missingRequiredFields: analysis.fieldCoverage.missing,
+    qualityIssueCount: analysis.qualityIssues.length,
+    highIssueCount: analysis.qualityIssues.filter(item => item.severity === "high").length,
+    canTrialImport: analysis.canTrialImport,
+    nextActions: analysis.nextActions,
+  };
 }
 
 function sampleValueForField(field: string): string | number {

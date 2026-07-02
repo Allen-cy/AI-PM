@@ -65,6 +65,7 @@ import {
 import {
   analyzeMigrationRows,
   buildMigrationTemplateSheets,
+  summarizeMigrationBatch,
 } from '../src/features/migration/package.ts';
 import { POST as analyzeMigrationPackage } from '../src/app/api/migration/analyze/route.ts';
 import { GET as downloadMigrationTemplate } from '../src/app/api/migration/template/route.ts';
@@ -191,6 +192,24 @@ test('migration APIs provide template download and CSV trial analysis', async ()
   assert.equal(payload.analysis.fieldCoverage.rate, 100);
 });
 
+test('migration batch persistence keeps trial analysis metrics and audit hooks discoverable', () => {
+  const analysis = analyzeMigrationRows('风险/问题/变更', [
+    { 事项类型: '风险', 严重程度: '高', 应对动作: '', 责任人: '李四', 复核日期: '2026-07-31' },
+  ], new Date('2026-07-02T00:00:00.000Z'));
+  const metrics = summarizeMigrationBatch(analysis);
+  const batchRouteSource = readFileSync(new URL('../src/app/api/migration/batches/route.ts', import.meta.url), 'utf8');
+  const batchSql = readFileSync(new URL('../supabase-v5313-migration-batches.sql', import.meta.url), 'utf8');
+
+  assert.equal(metrics.totalRows, 1);
+  assert.equal(metrics.highIssueCount > 0, true);
+  assert.equal(metrics.canTrialImport, false);
+  assert.match(batchRouteSource, /migration_batch_save/);
+  assert.match(batchRouteSource, /writeOperationAudit/);
+  assert.match(batchSql, /create table if not exists migration_trial_batches/);
+  assert.match(batchSql, /analysis jsonb/);
+  assert.match(batchSql, /next_actions jsonb/);
+});
+
 test('migration center is discoverable from home and integration center', () => {
   const homeSource = readFileSync(new URL('../src/app/page.tsx', import.meta.url), 'utf8');
   const integrationSource = readFileSync(new URL('../src/app/integration-center/page.tsx', import.meta.url), 'utf8');
@@ -202,6 +221,9 @@ test('migration center is discoverable from home and integration center', () => 
   assert.match(migrationPageSource, /字段均要求中文口径/);
   assert.match(migrationPageSource, /\/api\/migration\/analyze/);
   assert.match(migrationPageSource, /\/api\/migration\/template/);
+  assert.match(migrationPageSource, /\/api\/migration\/batches/);
+  assert.match(migrationPageSource, /保存为迁移批次/);
+  assert.match(migrationPageSource, /历史迁移批次/);
 });
 
 test('workbench summary derives action priorities from dashboard facts', () => {
