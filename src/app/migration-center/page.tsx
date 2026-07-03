@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { buildMigrationRemediationActions, type MigrationAnalysisResult } from "@/features/migration/package";
+import type { MigrationRemediationActionRecord, MigrationRemediationStatus } from "@/features/migration/remediation-repository";
 import type { MigrationBatchRecord } from "@/features/migration/repository";
 import {
   assessMigrationReadiness,
@@ -30,6 +31,18 @@ type BatchListResponse =
 type BatchSaveResponse =
   | { status: "succeeded"; batch: MigrationBatchRecord; request_id: string }
   | { status: "not_configured" | "failed" | "unauthorized"; warning?: string; request_id: string };
+
+type RemediationListResponse =
+  | { status: "succeeded"; actions: MigrationRemediationActionRecord[]; request_id: string }
+  | { status: "not_configured" | "failed" | "unauthorized"; actions?: MigrationRemediationActionRecord[]; warning?: string; request_id: string };
+
+type RemediationSaveResponse =
+  | { status: "succeeded"; actions: MigrationRemediationActionRecord[]; request_id: string }
+  | { status: "not_configured" | "failed" | "unauthorized"; warning?: string; request_id: string };
+
+type RemediationTransitionResponse =
+  | { status: "succeeded"; action: MigrationRemediationActionRecord; request_id: string }
+  | { status: "not_configured" | "not_found" | "failed" | "unauthorized"; warning?: string; request_id: string };
 
 function issueColor(severity: string) {
   if (severity === "high") return "var(--red)";
@@ -62,17 +75,28 @@ export default function MigrationCenterPage() {
   const [loadingBatches, setLoadingBatches] = useState(true);
   const [reportError, setReportError] = useState("");
   const [downloadingReport, setDownloadingReport] = useState(false);
+  const [persistedActions, setPersistedActions] = useState<MigrationRemediationActionRecord[]>([]);
+  const [actionWarning, setActionWarning] = useState("");
+  const [actionMessage, setActionMessage] = useState("");
+  const [savingActions, setSavingActions] = useState(false);
+  const [transitioningActionId, setTransitioningActionId] = useState("");
+  const [loadingActions, setLoadingActions] = useState(true);
 
   const result = useMemo(() => assessMigrationReadiness(selectedAreaIds), [selectedAreaIds]);
   const remediationActions = useMemo(() => analysis ? buildMigrationRemediationActions(analysis) : [], [analysis]);
 
   useEffect(() => {
     let active = true;
-    async function loadBatches() {
+    async function loadInitialData() {
       setLoadingBatches(true);
+      setLoadingActions(true);
       try {
-        const response = await fetch("/api/migration/batches", { cache: "no-store" });
-        const payload = await response.json() as BatchListResponse;
+        const [batchResponse, actionResponse] = await Promise.all([
+          fetch("/api/migration/batches", { cache: "no-store" }),
+          fetch("/api/migration/remediation-actions", { cache: "no-store" }),
+        ]);
+        const payload = await batchResponse.json() as BatchListResponse;
+        const actionPayload = await actionResponse.json() as RemediationListResponse;
         if (!active) return;
         if (payload.status === "succeeded") {
           setBatches(payload.batches);
@@ -81,13 +105,26 @@ export default function MigrationCenterPage() {
           setBatches(payload.batches ?? []);
           setBatchWarning(payload.warning || "迁移批次历史暂不可用。");
         }
+        if (actionPayload.status === "succeeded") {
+          setPersistedActions(actionPayload.actions);
+          setActionWarning("");
+        } else {
+          setPersistedActions(actionPayload.actions ?? []);
+          setActionWarning(actionPayload.warning || "迁移整改行动项暂不可用。");
+        }
       } catch {
-        if (active) setBatchWarning("读取迁移批次历史失败。");
+        if (active) {
+          setBatchWarning("读取迁移批次历史失败。");
+          setActionWarning("读取迁移整改行动项失败。");
+        }
       } finally {
-        if (active) setLoadingBatches(false);
+        if (active) {
+          setLoadingBatches(false);
+          setLoadingActions(false);
+        }
       }
     }
-    void loadBatches();
+    void loadInitialData();
     return () => {
       active = false;
     };
@@ -106,6 +143,7 @@ export default function MigrationCenterPage() {
     setSaveError("");
     setSaveMessage("");
     setReportError("");
+    setActionMessage("");
     if (!file) {
       setAnalyzeError("请先选择一个 xlsx、xls 或 csv 文件。");
       return;
@@ -127,6 +165,64 @@ export default function MigrationCenterPage() {
       setAnalyzeError("试迁移分析失败，请稍后重试。");
     } finally {
       setAnalyzing(false);
+    }
+  }
+
+  async function saveCurrentRemediationActions() {
+    if (!analysis || remediationActions.length === 0) return;
+    setSavingActions(true);
+    setActionMessage("");
+    setActionWarning("");
+    try {
+      const response = await fetch("/api/migration/remediation-actions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          batchName: batchName.trim() || defaultBatchName(analysis),
+          objectName: analysis.objectName,
+          actions: remediationActions,
+        }),
+      });
+      const payload = await response.json() as RemediationSaveResponse;
+      if (payload.status !== "succeeded") {
+        setActionWarning(payload.warning || "保存迁移整改行动项失败。");
+        return;
+      }
+      setPersistedActions(current => [...payload.actions, ...current].slice(0, 50));
+      setActionMessage(`已保存${payload.actions.length}项迁移整改行动项。`);
+    } catch {
+      setActionWarning("保存迁移整改行动项失败，请稍后重试。");
+    } finally {
+      setSavingActions(false);
+    }
+  }
+
+  async function transitionRemediationAction(actionId: string, status: MigrationRemediationStatus) {
+    setTransitioningActionId(actionId);
+    setActionMessage("");
+    setActionWarning("");
+    try {
+      const response = await fetch("/api/migration/remediation-actions", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: actionId,
+          status,
+          closureNote: status === "已关闭" ? "已按验收标准完成整改并通过复检。" : null,
+          reviewResult: status === "已关闭" ? "复检通过" : null,
+        }),
+      });
+      const payload = await response.json() as RemediationTransitionResponse;
+      if (payload.status !== "succeeded") {
+        setActionWarning(payload.warning || "流转迁移整改行动项失败。");
+        return;
+      }
+      setPersistedActions(current => current.map(item => item.id === payload.action.id ? payload.action : item));
+      setActionMessage(`已流转：${payload.action.title} / ${payload.action.status}`);
+    } catch {
+      setActionWarning("流转迁移整改行动项失败，请稍后重试。");
+    } finally {
+      setTransitioningActionId("");
     }
   }
 
@@ -471,6 +567,17 @@ export default function MigrationCenterPage() {
                         </div>
                       ))}
                     </div>
+                    <button
+                      className="btn-secondary"
+                      type="button"
+                      onClick={saveCurrentRemediationActions}
+                      disabled={savingActions}
+                      style={{ width: "100%", marginTop: 12 }}
+                    >
+                      {savingActions ? "保存中..." : "保存整改行动项"}
+                    </button>
+                    {actionMessage && <p style={{ color: "var(--green)", lineHeight: 1.6, fontSize: "0.8rem", marginTop: 8 }}>{actionMessage}</p>}
+                    {actionWarning && <p style={{ color: "var(--amber)", lineHeight: 1.6, fontSize: "0.8rem", marginTop: 8 }}>{actionWarning}</p>}
                   </div>
 
                   <div style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 12, padding: 14 }}>
@@ -516,6 +623,93 @@ export default function MigrationCenterPage() {
                   </div>
                 </div>
               </div>
+            </div>
+          )}
+        </section>
+
+        <section className="card" style={{ marginBottom: 18 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", marginBottom: 12 }}>
+            <div>
+              <div className="section-title">整改行动项跟踪</div>
+              <p style={{ color: "var(--text2)", lineHeight: 1.6, fontSize: "0.84rem" }}>
+                对已保存的迁移整改项做状态流转：待处理、处理中、待复检、已关闭。后续版本再接入飞书任务写入确认队列。
+              </p>
+            </div>
+            <span className="tag tag-purple">{persistedActions.length} 项</span>
+          </div>
+
+          {actionWarning && (
+            <div style={{ border: "1px solid rgba(245,158,11,0.48)", background: "rgba(245,158,11,0.08)", color: "var(--amber)", borderRadius: 12, padding: 12, marginBottom: 12, lineHeight: 1.6, fontSize: "0.84rem" }}>
+              {actionWarning}
+            </div>
+          )}
+
+          {loadingActions ? (
+            <p style={{ color: "var(--text2)", fontSize: "0.84rem" }}>正在读取整改行动项...</p>
+          ) : persistedActions.length === 0 ? (
+            <div style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 12, padding: 16 }}>
+              <strong>暂无已保存整改项</strong>
+              <p style={{ color: "var(--text2)", lineHeight: 1.6, fontSize: "0.82rem", marginTop: 6 }}>
+                生成试迁移质量报告后点击“保存整改行动项”。如果出现 SQL 未执行提示，请先在 Supabase 执行 supabase-v5316-migration-remediation-actions.sql。
+              </p>
+            </div>
+          ) : (
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 980 }}>
+                <thead>
+                  <tr style={{ color: "var(--text2)", textAlign: "left", fontSize: "0.78rem" }}>
+                    <th style={{ padding: "10px 8px", borderBottom: "1px solid var(--border)" }}>行动项</th>
+                    <th style={{ padding: "10px 8px", borderBottom: "1px solid var(--border)" }}>批次/对象</th>
+                    <th style={{ padding: "10px 8px", borderBottom: "1px solid var(--border)" }}>责任与期限</th>
+                    <th style={{ padding: "10px 8px", borderBottom: "1px solid var(--border)" }}>状态</th>
+                    <th style={{ padding: "10px 8px", borderBottom: "1px solid var(--border)" }}>操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {persistedActions.map(action => (
+                    <tr key={action.id}>
+                      <td style={{ padding: "12px 8px", borderBottom: "1px solid var(--border)", fontWeight: 800 }}>
+                        {action.title}
+                        <div style={{ color: "var(--text2)", fontSize: "0.76rem", lineHeight: 1.5, marginTop: 4 }}>
+                          验收：{action.acceptanceCriteria}
+                        </div>
+                      </td>
+                      <td style={{ padding: "12px 8px", borderBottom: "1px solid var(--border)", color: "var(--text2)", fontSize: "0.8rem", lineHeight: 1.5 }}>
+                        <span className="tag">{action.objectName}</span>
+                        <br />
+                        {action.batchName || "未关联批次"}
+                      </td>
+                      <td style={{ padding: "12px 8px", borderBottom: "1px solid var(--border)", color: "var(--text2)", fontSize: "0.8rem", lineHeight: 1.5 }}>
+                        {action.ownerName || action.ownerRole}
+                        <br />
+                        {action.dueDate || "-"}
+                      </td>
+                      <td style={{ padding: "12px 8px", borderBottom: "1px solid var(--border)" }}>
+                        <span className={action.status === "已关闭" ? "tag tag-green" : action.status === "待复检" ? "tag tag-blue" : action.status === "处理中" ? "tag tag-amber" : "tag"}>
+                          {action.status}
+                        </span>
+                        <div style={{ marginTop: 6 }}>
+                          <span className={action.priority === "P0" ? "tag tag-red" : action.priority === "P1" ? "tag tag-amber" : "tag"}>{action.priority}</span>
+                        </div>
+                      </td>
+                      <td style={{ padding: "12px 8px", borderBottom: "1px solid var(--border)" }}>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          {action.status === "待处理" && (
+                            <button className="btn-secondary" type="button" disabled={transitioningActionId === action.id} onClick={() => transitionRemediationAction(action.id, "处理中")}>开始处理</button>
+                          )}
+                          {action.status === "处理中" && (
+                            <button className="btn-secondary" type="button" disabled={transitioningActionId === action.id} onClick={() => transitionRemediationAction(action.id, "待复检")}>提交复检</button>
+                          )}
+                          {action.status === "待复检" && (
+                            <button className="btn-primary" type="button" disabled={transitioningActionId === action.id} onClick={() => transitionRemediationAction(action.id, "已关闭")}>关闭</button>
+                          )}
+                          {action.status === "已关闭" && <span style={{ color: "var(--green)", fontSize: "0.8rem" }}>已完成闭环</span>}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
         </section>

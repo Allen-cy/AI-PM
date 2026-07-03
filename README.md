@@ -67,6 +67,10 @@ npm run build
 - 飞书端已建立8张业务表；公开项目记录API会等用户登录和授权模型完成后再开放。
 - 全仓历史 ESLint 基线仍有旧问题；V4新增/改动文件执行独立零错误门禁。
 
+## AI-PMO System V5.3.16
+
+V5.3.16 将迁移整改行动项从“可生成清单”升级为“可保存、可跟踪、可流转”：新增 `supabase-v5316-migration-remediation-actions.sql`、`/api/migration/remediation-actions` 和 `src/features/migration/remediation-repository.ts`，支持保存迁移整改项、读取历史整改项，并在系统内流转“待处理 → 处理中 → 待复检 → 已关闭”。`/migration-center` 新增“保存整改行动项”和“整改行动项跟踪”区域；当前仍不直接写飞书任务，下一阶段再进入飞书任务回写确认队列。
+
 ## AI-PMO System V5.3.15
 
 V5.3.15 将迁移中心的质量问题进一步转换为“整改行动项”：新增 `buildMigrationRemediationActions`，每个问题会形成标题、优先级、责任角色、建议截止日期、状态、来源问题、样例、修复建议和验收标准；`/migration-center` 在试迁移分析后展示整改行动项，迁移评审报告同步加入“整改行动项”章节。该版本仍不写入 Supabase 或飞书任务，先完成可执行整改清单的生成和评审输出，为后续持久化、状态流转和飞书任务回写打基础。

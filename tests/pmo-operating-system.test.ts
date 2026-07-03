@@ -242,12 +242,18 @@ test('migration quality issues become accountable remediation actions', () => {
   ], new Date('2026-07-03T00:00:00.000Z'));
   const actions = buildMigrationRemediationActions(analysis);
   const report = buildMigrationReviewReport({ analysis, batchName: '项目台账整改评审' });
+  const remediationRouteSource = readFileSync(new URL('../src/app/api/migration/remediation-actions/route.ts', import.meta.url), 'utf8');
+  const remediationSql = readFileSync(new URL('../supabase-v5316-migration-remediation-actions.sql', import.meta.url), 'utf8');
 
   assert.equal(actions.some(action => action.priority === 'P0' && action.ownerRole === '项目经理'), true);
   assert.equal(actions.every(action => action.status === '待处理' && action.dueDate >= '2026-07-04'), true);
   assert.equal(actions.some(action => action.acceptanceCriteria.includes('重新上传样本')), true);
   assert.match(report, /## 四、整改行动项/);
   assert.match(report, /责任角色/);
+  assert.match(remediationRouteSource, /migration_remediation_actions_save/);
+  assert.match(remediationRouteSource, /migration_remediation_action_transition/);
+  assert.match(remediationSql, /create table if not exists migration_remediation_actions/);
+  assert.match(remediationSql, /'待处理', '处理中', '待复检', '已关闭'/);
 });
 
 test('migration center is discoverable from home and integration center', () => {
@@ -267,6 +273,10 @@ test('migration center is discoverable from home and integration center', () => 
   assert.match(migrationPageSource, /历史迁移批次/);
   assert.match(migrationPageSource, /下载评审报告\/修复清单/);
   assert.match(migrationPageSource, /整改行动项/);
+  assert.match(migrationPageSource, /\/api\/migration\/remediation-actions/);
+  assert.match(migrationPageSource, /保存整改行动项/);
+  assert.match(migrationPageSource, /整改行动项跟踪/);
+  assert.match(migrationPageSource, /待处理、处理中、待复检、已关闭/);
 });
 
 test('workbench summary derives action priorities from dashboard facts', () => {
