@@ -2,7 +2,12 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { buildMigrationRemediationActions, type MigrationAnalysisResult } from "@/features/migration/package";
+import {
+  buildMigrationFieldMappingReuseCheck,
+  buildMigrationRemediationActions,
+  type MigrationAnalysisResult,
+} from "@/features/migration/package";
+import type { MigrationFieldMappingProfileRecord } from "@/features/migration/field-mapping-repository";
 import type { MigrationRemediationActionRecord, MigrationRemediationStatus } from "@/features/migration/remediation-repository";
 import type { MigrationBatchRecord } from "@/features/migration/repository";
 import {
@@ -48,6 +53,14 @@ type RemediationFeishuSyncResponse =
   | { status: "succeeded"; action: MigrationRemediationActionRecord; resource?: { taskGuid: string; url?: string }; request_id: string }
   | { status: "not_configured" | "not_found" | "failed" | "unauthorized"; action?: MigrationRemediationActionRecord; warning?: string; request_id: string; lark_cli_hint?: string };
 
+type FieldMappingProfileListResponse =
+  | { status: "succeeded"; profiles: MigrationFieldMappingProfileRecord[]; request_id: string }
+  | { status: "not_configured" | "failed" | "unauthorized"; profiles?: MigrationFieldMappingProfileRecord[]; warning?: string; request_id: string };
+
+type FieldMappingProfileSaveResponse =
+  | { status: "succeeded"; profile: MigrationFieldMappingProfileRecord; request_id: string }
+  | { status: "not_configured" | "failed" | "unauthorized"; warning?: string; request_id: string };
+
 function issueColor(severity: string) {
   if (severity === "high") return "var(--red)";
   if (severity === "medium") return "var(--amber)";
@@ -57,6 +70,11 @@ function issueColor(severity: string) {
 function defaultBatchName(analysis: MigrationAnalysisResult) {
   const stamp = analysis.generatedAt.replace(/\D/g, "").slice(0, 12);
   return `${analysis.objectName}-试迁移批次-${stamp || "待命名"}`;
+}
+
+function defaultMappingProfileName(analysis: MigrationAnalysisResult) {
+  const stamp = analysis.generatedAt.replace(/\D/g, "").slice(0, 12);
+  return `${analysis.objectName}-字段映射方案-${stamp || "待命名"}`;
 }
 
 export default function MigrationCenterPage() {
@@ -86,9 +104,25 @@ export default function MigrationCenterPage() {
   const [transitioningActionId, setTransitioningActionId] = useState("");
   const [syncingActionId, setSyncingActionId] = useState("");
   const [loadingActions, setLoadingActions] = useState(true);
+  const [mappingProfiles, setMappingProfiles] = useState<MigrationFieldMappingProfileRecord[]>([]);
+  const [mappingWarning, setMappingWarning] = useState("");
+  const [mappingMessage, setMappingMessage] = useState("");
+  const [mappingProfileName, setMappingProfileName] = useState("");
+  const [mappingProfileNotes, setMappingProfileNotes] = useState("");
+  const [savingMappingProfile, setSavingMappingProfile] = useState(false);
+  const [loadingMappings, setLoadingMappings] = useState(true);
+  const [selectedMappingProfileId, setSelectedMappingProfileId] = useState("");
 
   const result = useMemo(() => assessMigrationReadiness(selectedAreaIds), [selectedAreaIds]);
   const remediationActions = useMemo(() => analysis ? buildMigrationRemediationActions(analysis) : [], [analysis]);
+  const selectedMappingProfile = useMemo(
+    () => mappingProfiles.find(profile => profile.id === selectedMappingProfileId) ?? mappingProfiles[0] ?? null,
+    [mappingProfiles, selectedMappingProfileId],
+  );
+  const mappingReuseCheck = useMemo(
+    () => analysis && selectedMappingProfile ? buildMigrationFieldMappingReuseCheck(selectedMappingProfile, analysis) : null,
+    [analysis, selectedMappingProfile],
+  );
 
   useEffect(() => {
     let active = true;
@@ -135,6 +169,39 @@ export default function MigrationCenterPage() {
     };
   }, []);
 
+  useEffect(() => {
+    let active = true;
+    async function loadMappingProfiles() {
+      setLoadingMappings(true);
+      try {
+        const response = await fetch(`/api/migration/field-mappings?objectName=${encodeURIComponent(objectName)}`, { cache: "no-store" });
+        const payload = await response.json() as FieldMappingProfileListResponse;
+        if (!active) return;
+        if (payload.status === "succeeded") {
+          setMappingProfiles(payload.profiles);
+          setSelectedMappingProfileId(payload.profiles[0]?.id ?? "");
+          setMappingWarning("");
+        } else {
+          setMappingProfiles(payload.profiles ?? []);
+          setSelectedMappingProfileId("");
+          setMappingWarning(payload.warning || "字段映射方案库暂不可用。");
+        }
+      } catch {
+        if (active) {
+          setMappingProfiles([]);
+          setSelectedMappingProfileId("");
+          setMappingWarning("读取字段映射方案失败。");
+        }
+      } finally {
+        if (active) setLoadingMappings(false);
+      }
+    }
+    void loadMappingProfiles();
+    return () => {
+      active = false;
+    };
+  }, [objectName]);
+
   function toggleArea(id: MigrationAreaId) {
     setSelectedAreaIds(current =>
       current.includes(id) ? current.filter(item => item !== id) : [...current, id]
@@ -166,10 +233,42 @@ export default function MigrationCenterPage() {
       }
       setAnalysis(payload.analysis);
       setBatchName(defaultBatchName(payload.analysis));
+      setMappingProfileName(defaultMappingProfileName(payload.analysis));
+      setMappingProfileNotes("");
     } catch {
       setAnalyzeError("试迁移分析失败，请稍后重试。");
     } finally {
       setAnalyzing(false);
+    }
+  }
+
+  async function saveCurrentFieldMappingProfile() {
+    if (!analysis) return;
+    setSavingMappingProfile(true);
+    setMappingMessage("");
+    setMappingWarning("");
+    try {
+      const response = await fetch("/api/migration/field-mappings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          profileName: mappingProfileName.trim() || defaultMappingProfileName(analysis),
+          analysis,
+          notes: mappingProfileNotes,
+        }),
+      });
+      const payload = await response.json() as FieldMappingProfileSaveResponse;
+      if (payload.status !== "succeeded") {
+        setMappingWarning(payload.warning || "保存字段映射方案失败。");
+        return;
+      }
+      setMappingProfiles(current => [payload.profile, ...current.filter(item => item.id !== payload.profile.id)].slice(0, 30));
+      setSelectedMappingProfileId(payload.profile.id);
+      setMappingMessage(`已保存字段映射方案：${payload.profile.profileName}`);
+    } catch {
+      setMappingWarning("保存字段映射方案失败，请稍后重试。");
+    } finally {
+      setSavingMappingProfile(false);
     }
   }
 
@@ -456,7 +555,7 @@ export default function MigrationCenterPage() {
             <div>
               <div className="section-title">试迁移作业台</div>
               <p style={{ color: "var(--text2)", lineHeight: 1.7, fontSize: "0.84rem" }}>
-                用小批量竞品A导出数据做试跑：先生成字段映射与质量报告；确认后可保存为迁移批次历史，仍不会自动写入飞书业务表。
+                用小批量竞品A导出数据做试跑：先生成字段映射与质量报告；确认后可保存字段映射方案和迁移批次历史，仍不会自动写入飞书业务表。
               </p>
             </div>
             <a href="/api/migration/template" className="btn-secondary" style={{ textDecoration: "none", whiteSpace: "nowrap" }}>
@@ -555,6 +654,37 @@ export default function MigrationCenterPage() {
                       ))}
                     </tbody>
                   </table>
+                  <div style={{ marginTop: 14, display: "grid", gap: 10, borderTop: "1px solid var(--border)", paddingTop: 12 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                      <h3 style={{ fontSize: "0.9rem", margin: 0 }}>保存字段映射方案</h3>
+                      <span className="tag tag-blue">来源字段 {analysis.sourceFields?.length ?? 0} 个</span>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "minmax(180px, 1fr) minmax(220px, 1.2fr)", gap: 10 }}>
+                      <label style={{ display: "grid", gap: 6, color: "var(--text2)", fontSize: "0.78rem" }}>
+                        方案名称
+                        <input
+                          className="input"
+                          value={mappingProfileName}
+                          onChange={event => setMappingProfileName(event.target.value)}
+                          placeholder="例如：项目台账-竞品A导出字段方案"
+                        />
+                      </label>
+                      <label style={{ display: "grid", gap: 6, color: "var(--text2)", fontSize: "0.78rem" }}>
+                        备注
+                        <input
+                          className="input"
+                          value={mappingProfileNotes}
+                          onChange={event => setMappingProfileNotes(event.target.value)}
+                          placeholder="记录来源系统、适用范围或人工确认意见"
+                        />
+                      </label>
+                    </div>
+                    <button className="btn-secondary" type="button" onClick={saveCurrentFieldMappingProfile} disabled={savingMappingProfile} style={{ width: "100%" }}>
+                      {savingMappingProfile ? "保存中..." : "保存字段映射方案"}
+                    </button>
+                    {mappingMessage && <p style={{ color: "var(--green)", lineHeight: 1.6, fontSize: "0.8rem", margin: 0 }}>{mappingMessage}</p>}
+                    {mappingWarning && <p style={{ color: "var(--amber)", lineHeight: 1.6, fontSize: "0.8rem", margin: 0 }}>{mappingWarning}</p>}
+                  </div>
                 </div>
 
                 <div style={{ display: "grid", gap: 12 }}>
@@ -663,6 +793,111 @@ export default function MigrationCenterPage() {
                     {reportError && <p style={{ color: "var(--red)", lineHeight: 1.6, fontSize: "0.8rem", marginTop: 8 }}>{reportError}</p>}
                   </div>
                 </div>
+              </div>
+            </div>
+          )}
+        </section>
+
+        <section className="card" style={{ marginBottom: 18 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", marginBottom: 12 }}>
+            <div>
+              <div className="section-title">字段映射方案库</div>
+              <p style={{ color: "var(--text2)", lineHeight: 1.6, fontSize: "0.84rem" }}>
+                保存已确认的字段映射口径；后续上传同类迁移文件时，可选择历史方案作为复用基线，并先查看差异，不会静默套用。
+              </p>
+            </div>
+            <span className="tag tag-blue">{mappingProfiles.length} 个方案</span>
+          </div>
+
+          {mappingWarning && !analysis && (
+            <div style={{ border: "1px solid rgba(245,158,11,0.48)", background: "rgba(245,158,11,0.08)", color: "var(--amber)", borderRadius: 12, padding: 12, marginBottom: 12, lineHeight: 1.6, fontSize: "0.84rem" }}>
+              {mappingWarning}
+            </div>
+          )}
+
+          {loadingMappings ? (
+            <p style={{ color: "var(--text2)", fontSize: "0.84rem" }}>正在读取字段映射方案...</p>
+          ) : mappingProfiles.length === 0 ? (
+            <div style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 12, padding: 16 }}>
+              <strong>暂无字段映射方案</strong>
+              <p style={{ color: "var(--text2)", lineHeight: 1.6, fontSize: "0.82rem", marginTop: 6 }}>
+                上传试迁移文件并点击“保存字段映射方案”后，这里会展示可复用的历史口径。如果出现 SQL 未执行提示，请先在 Supabase 执行 supabase-v5318-migration-field-mapping-profiles.sql。
+              </p>
+            </div>
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(280px, 0.9fr) minmax(0, 1.1fr)", gap: 14, alignItems: "start" }}>
+              <div style={{ display: "grid", gap: 10 }}>
+                {mappingProfiles.map(profile => (
+                  <button
+                    key={profile.id}
+                    type="button"
+                    onClick={() => setSelectedMappingProfileId(profile.id)}
+                    style={{
+                      textAlign: "left",
+                      border: `1px solid ${selectedMappingProfile?.id === profile.id ? "rgba(56,189,248,0.62)" : "var(--border)"}`,
+                      background: selectedMappingProfile?.id === profile.id ? "rgba(56,189,248,0.08)" : "var(--surface2)",
+                      borderRadius: 12,
+                      padding: 12,
+                      color: "var(--text)",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+                      <strong>{profile.profileName}</strong>
+                      <span className={profile.missingFieldCount > 0 ? "tag tag-amber" : "tag tag-green"}>{profile.fieldCoverageRate}%</span>
+                    </div>
+                    <p style={{ color: "var(--text2)", fontSize: "0.78rem", lineHeight: 1.55, marginTop: 6 }}>
+                      {profile.objectName} · 匹配 {profile.matchedFieldCount}/{profile.requiredFields.length} · {profile.createdByName || "系统"} · {profile.createdAt.slice(0, 10)}
+                    </p>
+                    {profile.notes && <p style={{ color: "var(--accent2)", fontSize: "0.76rem", lineHeight: 1.5, marginTop: 6 }}>{profile.notes}</p>}
+                  </button>
+                ))}
+              </div>
+
+              <div style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 12, padding: 14 }}>
+                <h2 style={{ fontSize: "0.95rem", marginBottom: 10 }}>复用差异检查</h2>
+                {!analysis ? (
+                  <p style={{ color: "var(--text2)", lineHeight: 1.6, fontSize: "0.82rem" }}>
+                    请先上传当前迁移文件生成质量报告，再选择历史方案查看能否复用。
+                  </p>
+                ) : !mappingReuseCheck ? (
+                  <p style={{ color: "var(--text2)", lineHeight: 1.6, fontSize: "0.82rem" }}>请选择一个历史字段映射方案。</p>
+                ) : (
+                  <div style={{ display: "grid", gap: 10 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                      <strong>{mappingReuseCheck.profileName}</strong>
+                      <span className={mappingReuseCheck.canReuse ? "tag tag-green" : "tag tag-amber"}>
+                        匹配度 {mappingReuseCheck.compatibilityScore}%
+                      </span>
+                    </div>
+                    <p style={{ color: mappingReuseCheck.canReuse ? "var(--green)" : "var(--amber)", lineHeight: 1.6, fontSize: "0.82rem", margin: 0 }}>
+                      {mappingReuseCheck.summary}
+                    </p>
+                    {mappingReuseCheck.warnings.length > 0 && (
+                      <ul style={{ margin: "0 0 0 18px", color: "var(--text2)", lineHeight: 1.6, fontSize: "0.78rem" }}>
+                        {mappingReuseCheck.warnings.map(warning => <li key={warning}>{warning}</li>)}
+                      </ul>
+                    )}
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
+                      <span className="tag tag-green">一致 {mappingReuseCheck.sameCount}</span>
+                      <span className="tag tag-amber">变化 {mappingReuseCheck.changedCount}</span>
+                      <span className="tag tag-blue">新增源字段 {mappingReuseCheck.sourceFieldsAdded.length}</span>
+                    </div>
+                    <div style={{ maxHeight: 220, overflow: "auto", borderTop: "1px solid var(--border)", paddingTop: 8 }}>
+                      {mappingReuseCheck.differences.filter(item => item.impact !== "same").slice(0, 12).map(item => (
+                        <div key={item.targetField} style={{ display: "grid", gap: 4, padding: "8px 0", borderBottom: "1px solid var(--border)" }}>
+                          <strong style={{ fontSize: "0.8rem" }}>{item.targetField}</strong>
+                          <span style={{ color: "var(--text2)", fontSize: "0.76rem" }}>
+                            历史：{item.profileSourceField || "-"} → 当前：{item.currentSourceField || "-"}
+                          </span>
+                        </div>
+                      ))}
+                      {mappingReuseCheck.differences.every(item => item.impact === "same") && (
+                        <p style={{ color: "var(--green)", fontSize: "0.8rem", lineHeight: 1.6, margin: 0 }}>字段映射与历史方案一致。</p>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}

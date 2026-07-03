@@ -64,6 +64,7 @@ import {
 } from '../src/features/migration/readiness.ts';
 import {
   analyzeMigrationRows,
+  buildMigrationFieldMappingReuseCheck,
   buildMigrationRemediationActions,
   buildMigrationReviewReport,
   buildMigrationTemplateSheets,
@@ -165,6 +166,7 @@ test('migration package analyzer maps aliases and flags trial data quality issue
   ], new Date('2026-07-02T00:00:00.000Z'));
 
   assert.equal(analysis.fieldCoverage.rate, 100);
+  assert.deepEqual(analysis.sourceFields, ['项目ID', '项目名称', 'PM', '状态', '计划开始', '计划完成', '合同额']);
   assert.equal(analysis.mappings.some(mapping => mapping.targetField === '项目经理' && mapping.status === 'alias' && mapping.sourceField === 'PM'), true);
   assert.equal(analysis.qualityIssues.some(issue => issue.id === 'duplicate-项目编号' && issue.severity === 'high'), true);
   assert.equal(analysis.qualityIssues.some(issue => issue.id === 'invalid-date-计划开始日期'), true);
@@ -173,6 +175,31 @@ test('migration package analyzer maps aliases and flags trial data quality issue
 
   const templates = buildMigrationTemplateSheets();
   assert.equal(templates.some(sheet => sheet.name === '项目台账' && sheet.headers.includes('项目经理')), true);
+});
+
+test('migration field mapping profile reuse check surfaces differences before reuse', () => {
+  const first = analyzeMigrationRows('项目台账', [
+    { 项目编号: 'P-001', 项目名称: '项目A', 项目经理: '张三', 项目状态: '进行中', 计划开始日期: '2026-07-01', 计划完成日期: '2026-08-01', 合同金额: '100000' },
+  ], new Date('2026-07-03T00:00:00.000Z'));
+  const current = analyzeMigrationRows('项目台账', [
+    { 项目ID: 'P-002', 项目名称: '项目B', PM: '李四', 状态: '进行中', 计划开始: '2026-07-01', 计划完成: '2026-08-01', 合同额: '200000', 额外字段: '新增' },
+  ], new Date('2026-07-03T00:00:00.000Z'));
+
+  const reuse = buildMigrationFieldMappingReuseCheck({
+    id: 'profile-1',
+    profileName: '项目台账标准字段方案',
+    objectName: '项目台账',
+    mappings: first.mappings,
+    sourceFields: first.sourceFields,
+    requiredFields: first.mappings.map(mapping => mapping.targetField),
+    fieldCoverageRate: first.fieldCoverage.rate,
+  }, current);
+
+  assert.equal(reuse.objectName, '项目台账');
+  assert.equal(reuse.changedCount > 0, true);
+  assert.equal(reuse.sourceFieldsAdded.includes('额外字段'), true);
+  assert.equal(reuse.warnings.some(warning => warning.includes('字段映射与当前文件不一致')), true);
+  assert.equal(reuse.differences.some(item => item.targetField === '项目经理' && item.profileSourceField === '项目经理' && item.currentSourceField === 'PM'), true);
 });
 
 test('migration APIs provide template download and CSV trial analysis', async () => {
@@ -246,6 +273,8 @@ test('migration quality issues become accountable remediation actions', () => {
   const remediationSql = readFileSync(new URL('../supabase-v5316-migration-remediation-actions.sql', import.meta.url), 'utf8');
   const feishuSyncRouteSource = readFileSync(new URL('../src/app/api/migration/remediation-actions/feishu-sync/route.ts', import.meta.url), 'utf8');
   const feishuSyncSql = readFileSync(new URL('../supabase-v5317-migration-remediation-feishu-sync.sql', import.meta.url), 'utf8');
+  const mappingRouteSource = readFileSync(new URL('../src/app/api/migration/field-mappings/route.ts', import.meta.url), 'utf8');
+  const mappingSql = readFileSync(new URL('../supabase-v5318-migration-field-mapping-profiles.sql', import.meta.url), 'utf8');
 
   assert.equal(actions.some(action => action.priority === 'P0' && action.ownerRole === '项目经理'), true);
   assert.equal(actions.every(action => action.status === '待处理' && action.dueDate >= '2026-07-04'), true);
@@ -262,6 +291,9 @@ test('migration quality issues become accountable remediation actions', () => {
   assert.match(feishuSyncRouteSource, /migration_remediation_feishu_task_prepare/);
   assert.match(feishuSyncRouteSource, /migration_remediation_feishu_task_sync/);
   assert.match(feishuSyncRouteSource, /createTask/);
+  assert.match(mappingRouteSource, /migration_field_mapping_profile_save/);
+  assert.match(mappingSql, /create table if not exists migration_field_mapping_profiles/);
+  assert.match(mappingSql, /source_fields jsonb/);
 });
 
 test('migration center is discoverable from home and integration center', () => {
@@ -288,6 +320,10 @@ test('migration center is discoverable from home and integration center', () => 
   assert.match(migrationPageSource, /\/api\/migration\/remediation-actions\/feishu-sync/);
   assert.match(migrationPageSource, /准备同步飞书/);
   assert.match(migrationPageSource, /确认写入飞书任务/);
+  assert.match(migrationPageSource, /\/api\/migration\/field-mappings/);
+  assert.match(migrationPageSource, /保存字段映射方案/);
+  assert.match(migrationPageSource, /字段映射方案库/);
+  assert.match(migrationPageSource, /复用差异检查/);
 });
 
 test('workbench summary derives action priorities from dashboard facts', () => {

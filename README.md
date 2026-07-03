@@ -67,6 +67,10 @@ npm run build
 - 飞书端已建立8张业务表；公开项目记录API会等用户登录和授权模型完成后再开放。
 - 全仓历史 ESLint 基线仍有旧问题；V4新增/改动文件执行独立零错误门禁。
 
+## AI-PMO System V5.3.18
+
+V5.3.18 将迁移中心的字段映射从“单次分析结果”升级为“可保存、可复用、可差异检查”的方案库：新增 `supabase-v5318-migration-field-mapping-profiles.sql`、`/api/migration/field-mappings` 和 `src/features/migration/field-mapping-repository.ts`，支持保存字段映射方案、来源字段、覆盖率、缺失字段数和人工备注。`/migration-center` 新增“保存字段映射方案”和“字段映射方案库”，用户选择历史方案后会先看到匹配度、变化字段、新增/缺失来源字段和未映射字段，不会静默套用历史映射。
+
 ## AI-PMO System V5.3.17
 
 V5.3.17 将迁移整改行动项接入“飞书任务回写确认队列”：新增 `supabase-v5317-migration-remediation-feishu-sync.sql` 与 `/api/migration/remediation-actions/feishu-sync`，为已保存整改项增加飞书同步状态、任务 GUID/链接、同步错误和请求 ID。`/migration-center` 的整改行动项跟踪表新增“飞书任务”列，支持“准备同步飞书 → 待确认 → 确认写入飞书任务 → 已同步/同步失败”的显式确认流程；写入时复用个人飞书配置优先、全局飞书兜底的任务创建能力，并写入操作审计。系统内整改项仍是主记录，飞书任务只作为协同执行通道。

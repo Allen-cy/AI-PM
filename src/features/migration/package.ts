@@ -23,6 +23,7 @@ export interface MigrationAnalysisResult {
   objectName: string;
   generatedAt: string;
   totalRows: number;
+  sourceFields: string[];
   fieldCoverage: {
     required: number;
     matched: number;
@@ -69,6 +70,42 @@ export interface MigrationRemediationAction {
   sampleRefs: string[];
   recommendation: string;
   acceptanceCriteria: string;
+}
+
+export interface MigrationFieldMappingProfileSnapshot {
+  id?: string;
+  profileName: string;
+  objectName: string;
+  mappings: MigrationFieldMapping[];
+  sourceFields?: string[];
+  requiredFields?: string[];
+  fieldCoverageRate?: number;
+}
+
+export interface MigrationFieldMappingDifference {
+  targetField: string;
+  profileSourceField: string | null;
+  currentSourceField: string | null;
+  profileStatus: MigrationMappingStatus | "missing_in_profile";
+  currentStatus: MigrationMappingStatus | "missing_in_current";
+  impact: "same" | "changed" | "new_required_field" | "missing_in_current";
+}
+
+export interface MigrationFieldMappingReuseCheck {
+  profileName: string;
+  objectName: string;
+  compatibilityScore: number;
+  canReuse: boolean;
+  summary: string;
+  sameCount: number;
+  changedCount: number;
+  newRequiredFields: string[];
+  missingInCurrent: string[];
+  sourceFieldsAdded: string[];
+  sourceFieldsRemoved: string[];
+  unmappedCurrentFields: string[];
+  warnings: string[];
+  differences: MigrationFieldMappingDifference[];
 }
 
 type RawRow = Record<string, unknown>;
@@ -302,6 +339,7 @@ export function analyzeMigrationRows(objectName: string, rows: RawRow[], now = n
     objectName: object.name,
     generatedAt: now.toISOString(),
     totalRows: rows.length,
+    sourceFields,
     fieldCoverage: {
       required: mappings.length,
       matched,
@@ -312,6 +350,97 @@ export function analyzeMigrationRows(objectName: string, rows: RawRow[], now = n
     qualityIssues,
     nextActions,
     canTrialImport: rows.length > 0 && highIssueCount === 0 && missingMappings.length === 0,
+  };
+}
+
+function fieldsFromProfile(profile: MigrationFieldMappingProfileSnapshot): string[] {
+  if (profile.sourceFields?.length) return profile.sourceFields;
+  return profile.mappings
+    .map(mapping => mapping.sourceField)
+    .filter((field): field is string => Boolean(field));
+}
+
+function sourceFieldsFromAnalysis(analysis: MigrationAnalysisResult): string[] {
+  if (analysis.sourceFields?.length) return analysis.sourceFields;
+  return analysis.mappings
+    .map(mapping => mapping.sourceField)
+    .filter((field): field is string => Boolean(field));
+}
+
+function uniqueSorted(values: string[]): string[] {
+  return Array.from(new Set(values.filter(Boolean))).sort((a, b) => a.localeCompare(b, "zh-Hans-CN"));
+}
+
+export function buildMigrationFieldMappingReuseCheck(
+  profile: MigrationFieldMappingProfileSnapshot,
+  analysis: MigrationAnalysisResult,
+): MigrationFieldMappingReuseCheck {
+  const profileMappings = new Map(profile.mappings.map(mapping => [mapping.targetField, mapping]));
+  const currentMappings = new Map(analysis.mappings.map(mapping => [mapping.targetField, mapping]));
+  const targetFields = uniqueSorted([...profileMappings.keys(), ...currentMappings.keys()]);
+  const differences: MigrationFieldMappingDifference[] = targetFields.map(targetField => {
+    const profileMapping = profileMappings.get(targetField);
+    const currentMapping = currentMappings.get(targetField);
+    let impact: MigrationFieldMappingDifference["impact"] = "same";
+    if (!profileMapping && currentMapping) impact = "new_required_field";
+    else if (profileMapping && !currentMapping) impact = "missing_in_current";
+    else if (
+      profileMapping
+      && currentMapping
+      && (profileMapping.sourceField !== currentMapping.sourceField || profileMapping.status !== currentMapping.status)
+    ) impact = "changed";
+    return {
+      targetField,
+      profileSourceField: profileMapping?.sourceField ?? null,
+      currentSourceField: currentMapping?.sourceField ?? null,
+      profileStatus: profileMapping?.status ?? "missing_in_profile",
+      currentStatus: currentMapping?.status ?? "missing_in_current",
+      impact,
+    };
+  });
+  const sameCount = differences.filter(item => item.impact === "same").length;
+  const changed = differences.filter(item => item.impact === "changed");
+  const newRequiredFields = differences.filter(item => item.impact === "new_required_field").map(item => item.targetField);
+  const missingInCurrent = differences.filter(item => item.impact === "missing_in_current").map(item => item.targetField);
+  const profileSourceFields = new Set(fieldsFromProfile(profile));
+  const currentSourceFields = new Set(sourceFieldsFromAnalysis(analysis));
+  const sourceFieldsAdded = uniqueSorted([...currentSourceFields].filter(field => !profileSourceFields.has(field)));
+  const sourceFieldsRemoved = uniqueSorted([...profileSourceFields].filter(field => !currentSourceFields.has(field)));
+  const unmappedCurrentFields = analysis.mappings
+    .filter(mapping => mapping.status === "missing")
+    .map(mapping => mapping.targetField);
+  const denominator = Math.max(analysis.mappings.length, profile.mappings.length, 1);
+  const compatibilityScore = Math.max(0, Math.round((sameCount / denominator) * 100));
+  const warnings: string[] = [];
+
+  if (profile.objectName !== analysis.objectName) warnings.push(`方案对象为「${profile.objectName}」，当前对象为「${analysis.objectName}」。`);
+  if (changed.length > 0) warnings.push(`有${changed.length}个字段映射与当前文件不一致，复用前需要人工确认。`);
+  if (newRequiredFields.length > 0) warnings.push(`当前对象新增${newRequiredFields.length}个必填字段：${newRequiredFields.join("、")}。`);
+  if (missingInCurrent.length > 0) warnings.push(`历史方案中的${missingInCurrent.length}个字段在当前对象中不存在：${missingInCurrent.join("、")}。`);
+  if (sourceFieldsAdded.length > 0) warnings.push(`当前文件新增来源字段：${sourceFieldsAdded.slice(0, 8).join("、")}${sourceFieldsAdded.length > 8 ? "等" : ""}。`);
+  if (sourceFieldsRemoved.length > 0) warnings.push(`当前文件缺少历史来源字段：${sourceFieldsRemoved.slice(0, 8).join("、")}${sourceFieldsRemoved.length > 8 ? "等" : ""}。`);
+  if (unmappedCurrentFields.length > 0) warnings.push(`当前仍有${unmappedCurrentFields.length}个目标字段未映射：${unmappedCurrentFields.join("、")}。`);
+
+  const canReuse = profile.objectName === analysis.objectName && compatibilityScore >= 70 && unmappedCurrentFields.length === 0;
+  const summary = canReuse
+    ? `可复用，但需确认${changed.length}个差异项和${sourceFieldsAdded.length + sourceFieldsRemoved.length}个来源字段变化。`
+    : `不建议直接复用：匹配度${compatibilityScore}%，需先处理字段差异或缺失映射。`;
+
+  return {
+    profileName: profile.profileName,
+    objectName: analysis.objectName,
+    compatibilityScore,
+    canReuse,
+    summary,
+    sameCount,
+    changedCount: changed.length,
+    newRequiredFields,
+    missingInCurrent,
+    sourceFieldsAdded,
+    sourceFieldsRemoved,
+    unmappedCurrentFields,
+    warnings,
+    differences,
   };
 }
 
