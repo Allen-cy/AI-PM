@@ -153,14 +153,38 @@ export function buildGovernanceReport(input: {
   instance: GovernanceInstanceRecord;
   events: GovernanceEventRecord[];
   actions: GovernanceActionRecord[];
+  businessImpact?: {
+    summary: string;
+    nextAction: string;
+    writebackMode: string;
+    updates: Array<{
+      targetType: string;
+      targetName: string;
+      field: string;
+      suggestedValue: string;
+      reason: string;
+      requiresConfirmation: boolean;
+    }>;
+    reportFacts: string[];
+  };
 }): string {
-  const { instance, events, actions } = input;
+  const { instance, events, actions, businessImpact } = input;
   const eventRows = events.length === 0
     ? "- 暂无审计事件"
     : events.map(event => `- ${event.createdAt}｜${event.actorName || "系统"}｜${event.eventType}｜${event.fromState || "-"} → ${event.toState}｜${event.comment || event.decision || "无备注"}`).join("\n");
   const actionRows = actions.length === 0
     ? "- 暂无行动项"
     : actions.map(action => `- [${action.status}] ${action.title}｜责任人：${action.owner || "未指定"}｜deadline：${action.dueDate || "未设定"}｜证据：${action.closeEvidence || "待补充"}`).join("\n");
+  const impactRows = businessImpact
+    ? [
+      `- 联动结论：${businessImpact.summary}`,
+      `- 写回模式：${businessImpact.writebackMode === "manual_confirmation_required" ? "需人工确认" : "仅审计记录"}`,
+      `- 下一步：${businessImpact.nextAction}`,
+      ...(businessImpact.updates.length > 0
+        ? businessImpact.updates.map(update => `- 写回建议：${update.targetType === "risk" ? "风险" : "项目"}｜${update.targetName}｜${update.field} → ${update.suggestedValue}｜依据：${update.reason}｜${update.requiresConfirmation ? "需确认" : "可自动"}`)
+        : ["- 暂无项目/风险写回建议"]),
+    ].join("\n")
+    : "- 暂无业务联动建议";
 
   return [
     `# ${instance.workflowName}治理流程输出`,
@@ -183,6 +207,9 @@ export function buildGovernanceReport(input: {
     "",
     "## 输出成果",
     instance.outputSummary || "待审批或待补充",
+    "",
+    "## 业务联动建议",
+    impactRows,
     "",
     "## 行动项",
     actionRows,

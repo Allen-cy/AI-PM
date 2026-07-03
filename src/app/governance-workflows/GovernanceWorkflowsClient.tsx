@@ -41,6 +41,21 @@ type Instance = {
     label: string;
     nextAction: string;
   };
+  businessImpact?: {
+    severity: "high" | "medium" | "low";
+    writebackMode: "manual_confirmation_required" | "audit_only";
+    summary: string;
+    updates: Array<{
+      targetType: "project" | "risk" | "report";
+      targetName: string;
+      field: string;
+      suggestedValue: string;
+      reason: string;
+      requiresConfirmation: boolean;
+    }>;
+    reportFacts: string[];
+    nextAction: string;
+  };
 };
 
 type GovernanceWorkItem = {
@@ -72,6 +87,16 @@ type GovernanceResponse = {
       myPending: number;
     };
     workItems: GovernanceWorkItem[];
+  };
+  governance_impact?: {
+    summary: {
+      totalImpacts: number;
+      projectWritebacks: number;
+      riskWritebacks: number;
+      reportFacts: number;
+      pendingConfirmation: number;
+      highSeverity: number;
+    };
   };
   warning?: string;
 };
@@ -130,6 +155,12 @@ function slaColor(severity?: string): string {
   if (severity === "critical") return "var(--red)";
   if (severity === "warning") return "var(--amber)";
   if (severity === "done") return "var(--green)";
+  return "var(--accent2)";
+}
+
+function impactColor(severity?: string): string {
+  if (severity === "high") return "var(--red)";
+  if (severity === "medium") return "var(--amber)";
   return "var(--accent2)";
 }
 
@@ -233,7 +264,7 @@ export default function GovernanceWorkflowsClient() {
       if (!response.ok || body.status !== "succeeded") {
         setMessage(body.warning || "状态流转失败。");
       } else {
-        setMessage(`已流转到：${body.instance.state}；飞书回写：${body.feishu_sync?.status || "skipped"}`);
+        setMessage(`已流转到：${body.instance.state}；业务联动：${body.businessImpact?.summary || "已生成审计记录"}；飞书回写：${body.feishu_sync?.status || "skipped"}`);
         setTransitionNote(current => ({ ...current, [instance.id]: "" }));
         setTransitionOutput(current => ({ ...current, [instance.id]: "" }));
         setTransitionActions(current => ({ ...current, [instance.id]: "" }));
@@ -322,6 +353,33 @@ export default function GovernanceWorkflowsClient() {
                   ))}
                 </div>
               )}
+            </section>
+
+            <section className="card" style={{ marginBottom: 18 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", marginBottom: 12 }}>
+                <div>
+                  <div className="section-title">🔗 治理结果业务联动</div>
+                  <p style={{ color: "var(--text2)", lineHeight: 1.6, fontSize: "0.84rem" }}>
+                    审批结果会生成项目台账、风险登记册和报告工厂可引用的联动建议；所有写回建议默认需要人工确认，避免静默改写业务主数据。
+                  </p>
+                </div>
+                <span className="tag tag-amber">待确认 {data.governance_impact?.summary.pendingConfirmation ?? 0}</span>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10 }}>
+                {[
+                  ["联动包", data.governance_impact?.summary.totalImpacts ?? 0, "治理实例口径"],
+                  ["项目写回建议", data.governance_impact?.summary.projectWritebacks ?? 0, "项目/阶段状态"],
+                  ["风险写回建议", data.governance_impact?.summary.riskWritebacks ?? 0, "风险状态/升级"],
+                  ["报告事实", data.governance_impact?.summary.reportFacts ?? 0, "月报/例外报告"],
+                  ["高优先级", data.governance_impact?.summary.highSeverity ?? 0, "需PMO关注"],
+                ].map(([label, value, hint]) => (
+                  <div key={label} style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 10, padding: 14 }}>
+                    <div style={{ color: "var(--text2)", fontSize: "0.76rem" }}>{label}</div>
+                    <strong style={{ fontSize: "1.1rem" }}>{value}</strong>
+                    <p style={{ color: "var(--text2)", fontSize: "0.74rem", marginTop: 4 }}>{hint}</p>
+                  </div>
+                ))}
+              </div>
             </section>
 
             <section className="card" style={{ marginBottom: 18 }}>
@@ -416,6 +474,23 @@ export default function GovernanceWorkflowsClient() {
                             <p style={{ color: slaColor(instance.sla.severity), fontSize: "0.8rem", lineHeight: 1.6, marginTop: 4 }}>
                               SLA：{instance.sla.status}；建议动作：{instance.sla.nextAction}
                             </p>
+                          )}
+                          {instance.businessImpact && (
+                            <div style={{ background: "var(--surface)", border: `1px solid ${impactColor(instance.businessImpact.severity)}55`, borderRadius: 10, padding: 12, marginTop: 10 }}>
+                              <strong style={{ color: impactColor(instance.businessImpact.severity), fontSize: "0.84rem" }}>业务联动：{instance.businessImpact.summary}</strong>
+                              <p style={{ color: "var(--text2)", fontSize: "0.78rem", lineHeight: 1.6, marginTop: 6 }}>
+                                下一步：{instance.businessImpact.nextAction} · 写回模式：{instance.businessImpact.writebackMode === "manual_confirmation_required" ? "需人工确认" : "仅审计记录"}
+                              </p>
+                              {instance.businessImpact.updates.length > 0 && (
+                                <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
+                                  {instance.businessImpact.updates.slice(0, 3).map(update => (
+                                    <div key={`${update.targetType}-${update.field}-${update.suggestedValue}`} style={{ color: "var(--text2)", fontSize: "0.76rem", lineHeight: 1.5 }}>
+                                      {update.targetType === "risk" ? "风险" : "项目"}：{update.targetName} · {update.field} → <strong style={{ color: "var(--text)" }}>{update.suggestedValue}</strong>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
                           )}
                         </div>
                         <a href={`/api/governance/workflows/${instance.id}/report`} className="btn-secondary" style={{ textDecoration: "none", alignSelf: "start" }}>下载输出</a>

@@ -67,6 +67,10 @@ npm run build
 - 飞书端已建立8张业务表；公开项目记录API会等用户登录和授权模型完成后再开放。
 - 全仓历史 ESLint 基线仍有旧问题；V4新增/改动文件执行独立零错误门禁。
 
+## AI-PMO System V5.3.22
+
+V5.3.22 将治理审批结果从“流程内部状态”推进到“跨模块可追溯联动”：新增 `src/features/governance/impact.ts`，将立项、阶段门、变更、风险升级、收尾验收等治理状态转换为项目台账、风险登记册和报告工厂可引用的业务影响包。`/api/governance/workflows` 现在返回 `governance_impact` 和实例级 `businessImpact`；`/governance-workflows` 新增“治理结果业务联动”区域，每个流程卡片展示建议写回字段、下一步动作和“需人工确认”的写回模式。治理流转会把业务影响包写入事件输出和集成审计日志，避免静默改写业务主数据。报告工厂会引用治理流程结果、SLA、逾期和写回建议，生成含治理依据的周报/月报/项目例外报告。本版本不新增数据库脚本，复用 V5.2.9 治理流程表与 V5.2.7 集成日志表。
+
 ## AI-PMO System V5.3.21
 
 V5.3.21 将治理工作流从“可创建、可流转”推进到“可运营待办”：新增 `src/features/governance/sla.ts`，基于治理流程实例的状态、责任人、审批人、创建人和 `deadline` 计算 SLA 状态、逾期、今日到期、即将到期、未设 SLA 和“待我处理”事项。`/api/governance/workflows` 现在返回 `governance_workbench` 和实例级 `sla`；`/governance-workflows` 新增“治理 SLA 与待我处理”区域，每个流程卡片显示 SLA 建议动作；`/workbench` 新增“待我处理治理事项”区块，将治理流程拉入 PM/PMO 每日工作台。本版本不新增数据库脚本，复用 V5.2.9 治理流程表的 `deadline/owner/approver/state`。

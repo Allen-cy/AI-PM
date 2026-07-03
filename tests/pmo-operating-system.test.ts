@@ -25,6 +25,10 @@ import {
   deriveGovernanceSla,
 } from '../src/features/governance/sla.ts';
 import {
+  buildGovernanceImpactDashboard,
+  buildGovernanceImpactPackage,
+} from '../src/features/governance/impact.ts';
+import {
   buildIssueChangeChainReport,
   deriveChangeNextStatus,
   deriveIssueNextStatus,
@@ -157,7 +161,9 @@ test('governance workflows define inputs outputs owners states and audit trail',
     assert.ok(workflow.auditTrail);
   }
   assert.match(governanceRouteSource, /buildGovernanceSlaDashboard/);
+  assert.match(governanceRouteSource, /buildGovernanceImpactDashboard/);
   assert.match(governancePageSource, /治理 SLA 与待我处理/);
+  assert.match(governancePageSource, /治理结果业务联动/);
   assert.match(governancePageSource, /未设 SLA/);
   assert.match(workbenchPageSource, /待我处理治理事项/);
   assert.match(workbenchPageSource, /\/api\/governance\/workflows/);
@@ -931,6 +937,23 @@ test('report factory cites data sources and turns meeting minutes into actions',
     sourceLabel: '飞书项目台账',
     sourceStatus: 'live' as const,
     model: 'MiniMax-M3',
+    governanceImpact: buildGovernanceImpactDashboard([{
+      id: 'gov-rpt-1',
+      workflowId: 'project-closure',
+      workflowName: '项目收尾验收',
+      stage: '收尾阶段',
+      projectName: '智慧校园一期',
+      title: '智慧校园一期验收评审',
+      owner: '项目经理',
+      approver: 'PMO',
+      state: '需整改',
+      priority: 'high',
+      deadline: '2026-07-05',
+      source: 'ai-pmo',
+      createdByName: '管理员',
+      createdAt: '2026-07-01T00:00:00.000Z',
+      updatedAt: '2026-07-01T00:00:00.000Z',
+    } as never]),
   };
 
   const dataPackage = buildReportFactoryPackage(request, context);
@@ -939,11 +962,14 @@ test('report factory cites data sources and turns meeting minutes into actions',
   const markdown = fallbackReportContent(request, dataPackage, actionItems);
 
   assert.equal(dataPackage.dataSources.some(source => source.source === 'feishu'), true);
+  assert.equal(dataPackage.dataSources.some(source => source.label === '治理工作流与审批联动'), true);
   assert.equal(dataPackage.financeFacts.some(item => item.includes('验收阻塞回款')), true);
+  assert.equal(dataPackage.riskFacts.some(item => item.includes('治理联动')), true);
   assert.equal(actionItems.length, 2);
   assert.equal(actionItems[1].priority, 'P0');
   assert.equal(evidence.scene, 'report');
   assert.equal(evidence.citations.includes('飞书项目台账'), true);
+  assert.equal(evidence.citations.includes('治理工作流与审批联动'), true);
   assert.equal(evidence.suggestedActions.length, 2);
   assert.match(markdown, /数据来源与生成边界/);
   assert.match(markdown, /补齐客户付款条件清单/);
@@ -1181,6 +1207,44 @@ test('governance SLA dashboard highlights overdue and my pending workflow items'
   assert.deepEqual(dashboard.workItems.map(item => item.role), ['责任人', '审批人']);
 });
 
+test('governance impact packages connect approvals to project risk and report facts', () => {
+  const stageGate = {
+    id: 'gov-impact-1',
+    workflowId: 'stage-gate-review',
+    workflowName: '阶段门评审',
+    stage: '全生命周期',
+    projectName: '重点项目A',
+    title: '重点项目A阶段门评审',
+    owner: '张三',
+    approver: 'PMO',
+    state: '已通过',
+    priority: 'high',
+    deadline: '2026-07-05',
+    source: 'ai-pmo',
+    createdByName: '管理员',
+    createdAt: '2026-07-01T00:00:00.000Z',
+    updatedAt: '2026-07-01T00:00:00.000Z',
+  } as never;
+  const riskEscalation = {
+    ...stageGate,
+    id: 'gov-impact-2',
+    workflowId: 'risk-escalation',
+    workflowName: '风险升级评审',
+    title: '重点项目A风险升级',
+    state: '已升级',
+  } as never;
+  const gateImpact = buildGovernanceImpactPackage({ instance: stageGate });
+  const riskImpact = buildGovernanceImpactPackage({ instance: riskEscalation });
+  const dashboard = buildGovernanceImpactDashboard([stageGate, riskEscalation]);
+
+  assert.equal(gateImpact.writebackMode, 'manual_confirmation_required');
+  assert.equal(gateImpact.updates.some(update => update.targetType === 'project' && update.field === '下一阶段授权'), true);
+  assert.equal(riskImpact.updates.some(update => update.targetType === 'risk' && update.suggestedValue === '应对实施中'), true);
+  assert.equal(dashboard.summary.projectWritebacks > 0, true);
+  assert.equal(dashboard.summary.riskWritebacks > 0, true);
+  assert.equal(dashboard.reportFacts.some(item => item.includes('治理联动') || item.includes('阶段门已通过')), true);
+});
+
 test('governance action item parser supports text rows and structured rows', () => {
   const textRows = parseGovernanceActionItems('补充商业论证 | 项目经理 | 2026-07-05\n确认回款条件 | 商务 | 2026-07-06');
   assert.equal(textRows.length, 2);
@@ -1240,9 +1304,25 @@ test('governance report includes outputs actions and audit trail', () => {
         updatedAt: '2026-07-01T01:00:00.000Z',
       },
     ],
+    businessImpact: {
+      summary: '阶段门已通过，建议同步项目阶段状态。',
+      nextAction: 'PMO确认后写回项目台账。',
+      writebackMode: 'manual_confirmation_required',
+      updates: [{
+        targetType: 'project',
+        targetName: '项目A',
+        field: '阶段门状态',
+        suggestedValue: '已通过',
+        reason: '阶段门评审通过。',
+        requiresConfirmation: true,
+      }],
+      reportFacts: ['阶段门评审｜项目A｜状态：已通过'],
+    },
   });
 
   assert.match(markdown, /阶段门评审治理流程输出/);
+  assert.match(markdown, /业务联动建议/);
+  assert.match(markdown, /阶段门状态 → 已通过/);
   assert.match(markdown, /同意进入下一阶段/);
   assert.match(markdown, /同步下一阶段计划/);
   assert.match(markdown, /待评审 → 已通过/);

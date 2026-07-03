@@ -1,5 +1,6 @@
 import { getAuthSupabase, isAuthStorageConfigured, type AppUser } from "../auth/server.ts";
 import { governanceWorkflows } from "../pmo-operating-system.ts";
+import { buildGovernanceImpactPackage, type GovernanceImpactPackage } from "./impact.ts";
 import {
   buildGovernanceReport,
   deriveGovernanceNextState,
@@ -224,6 +225,7 @@ async function createActionItems(instanceId: string, actionItems: unknown, fallb
 export async function createGovernanceInstance(input: GovernanceCreateInput, user: AppUser | null): Promise<{
   status: "succeeded" | "not_configured" | "failed";
   instance?: GovernanceInstanceRecord;
+  businessImpact?: GovernanceImpactPackage;
   warning?: string;
 }> {
   if (!isAuthStorageConfigured()) return missingStorageResult();
@@ -266,6 +268,7 @@ export async function createGovernanceInstance(input: GovernanceCreateInput, use
     }
 
     const instance = mapInstance(data as Record<string, unknown>);
+    const businessImpact = buildGovernanceImpactPackage({ instance });
     const eventInsert = await supabase
       .from("governance_process_events")
       .insert({
@@ -278,13 +281,13 @@ export async function createGovernanceInstance(input: GovernanceCreateInput, use
         actor_name: user?.name || user?.email || "系统",
         actor_role: user?.role || "system",
         decision: "created",
-        outputs: {},
+        outputs: { business_impact: businessImpact },
       })
       .select("id")
       .maybeSingle();
     if (eventInsert.error) throw eventInsert.error;
     await createActionItems(instance.id, input.actionItems, instance.owner, eventInsert.data?.id);
-    return { status: "succeeded", instance };
+    return { status: "succeeded", instance, businessImpact };
   } catch (error) {
     return {
       status: "failed",
@@ -297,6 +300,7 @@ export async function transitionGovernanceInstance(input: GovernanceTransitionIn
   status: "succeeded" | "not_found" | "not_configured" | "failed";
   instance?: GovernanceInstanceRecord;
   event?: GovernanceEventRecord;
+  businessImpact?: GovernanceImpactPackage;
   warning?: string;
 }> {
   if (!isAuthStorageConfigured()) return missingStorageResult();
@@ -327,6 +331,23 @@ export async function transitionGovernanceInstance(input: GovernanceTransitionIn
       };
     }
 
+    const updatedInstance = mapInstance(data as Record<string, unknown>);
+    const businessImpact = buildGovernanceImpactPackage({
+      instance: updatedInstance,
+      event: {
+        id: "pending",
+        instanceId: current.id,
+        eventType: input.action,
+        fromState: current.state,
+        toState: nextState,
+        comment: input.comment?.trim() || null,
+        actorName: user?.name || user?.email || "系统",
+        actorRole: user?.role || "system",
+        decision: input.action,
+        outputs: {},
+        createdAt: now,
+      },
+    });
     const eventInsert = await supabase
       .from("governance_process_events")
       .insert({
@@ -339,7 +360,7 @@ export async function transitionGovernanceInstance(input: GovernanceTransitionIn
         actor_name: user?.name || user?.email || "系统",
         actor_role: user?.role || "system",
         decision: input.action,
-        outputs: { output_summary: input.outputSummary?.trim() || "" },
+        outputs: { output_summary: input.outputSummary?.trim() || "", business_impact: businessImpact },
       })
       .select("*")
       .maybeSingle();
@@ -348,8 +369,9 @@ export async function transitionGovernanceInstance(input: GovernanceTransitionIn
 
     return {
       status: "succeeded",
-      instance: mapInstance(data as Record<string, unknown>),
+      instance: updatedInstance,
       event: mapEvent(eventInsert.data as Record<string, unknown>),
+      businessImpact,
     };
   } catch (error) {
     return {
@@ -370,9 +392,10 @@ export async function governanceReportMarkdown(id: string): Promise<{
     return { status: bundle.status, warning: bundle.warning };
   }
   const instance = bundle.instance;
+  const businessImpact = buildGovernanceImpactPackage({ instance, actions: bundle.actions });
   return {
     status: "succeeded",
-    markdown: buildGovernanceReport({ instance, events: bundle.events, actions: bundle.actions }),
+    markdown: buildGovernanceReport({ instance, events: bundle.events, actions: bundle.actions, businessImpact }),
     filename: `${instance.workflowName}-${instance.projectName}-${instance.id.slice(0, 8)}.md`,
   };
 }

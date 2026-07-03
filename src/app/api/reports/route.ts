@@ -7,6 +7,8 @@ import { persistAiEvidence } from "@/features/ai/evidence-repository";
 import { withAuditResult } from "@/features/ai/evidence";
 import { filterDashboardByProjectAccess, projectAccessMode } from "@/features/security/authorization";
 import { loadProjectAccessGrantsForUser, writeOperationAudit } from "@/features/security/repository";
+import { buildGovernanceImpactDashboard } from "@/features/governance/impact";
+import { listGovernanceInstances } from "@/features/governance/repository";
 import {
   buildReportEvidence,
   buildReportFactoryPackage,
@@ -119,12 +121,17 @@ export async function POST(request: Request): Promise<Response> {
     explicit_grants: grants.length,
   };
   const finance = buildFinanceCockpit(dashboard);
+  const governanceResult = await listGovernanceInstances(50);
+  const governanceImpact = governanceResult.status === "succeeded"
+    ? buildGovernanceImpactDashboard(governanceResult.instances)
+    : undefined;
   const context: ReportFactoryContext = {
     dashboard,
     finance,
     sourceLabel: effective.config ? "飞书项目台账" : "样例数据源",
     sourceStatus: effective.config ? "live" : "fallback",
     model: "configured-llm",
+    governanceImpact,
   };
   const dataPackage = buildReportFactoryPackage(body, context);
   const actionItems = actionItemsFor(body, context);

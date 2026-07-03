@@ -1,5 +1,6 @@
 import { getCurrentUser } from "@/features/auth/server";
 import { syncGovernanceEventToFeishu } from "@/features/governance/feishu-sync";
+import { buildGovernanceImpactDashboard, buildGovernanceImpactPackage } from "@/features/governance/impact";
 import {
   createGovernanceInstance,
   listGovernanceInstances,
@@ -24,11 +25,13 @@ export async function GET(): Promise<Response> {
   const user = await getCurrentUser();
   const result = await listGovernanceInstances();
   const governance_workbench = buildGovernanceSlaDashboard(result.instances, user);
+  const governance_impact = buildGovernanceImpactDashboard(result.instances);
   return jsonResponse({
     request_id: requestId,
     ...result,
-    instances: result.instances.map(instance => ({ ...instance, sla: deriveGovernanceSla(instance) })),
+    instances: result.instances.map(instance => ({ ...instance, sla: deriveGovernanceSla(instance), businessImpact: buildGovernanceImpactPackage({ instance }) })),
     governance_workbench,
+    governance_impact,
   }, 200, requestId);
 }
 
@@ -57,7 +60,7 @@ export async function POST(request: Request): Promise<Response> {
       status: "succeeded",
       severity: result.instance.priority === "high" ? "medium" : "low",
       summary: `治理流程已创建：${result.instance.workflowName} / ${result.instance.projectName} / ${result.instance.state}`,
-      detail: { instance_id: result.instance.id, feishu_sync },
+      detail: { instance_id: result.instance.id, feishu_sync, business_impact: result.businessImpact },
       requestId,
     });
   }
@@ -94,7 +97,18 @@ export async function PATCH(request: Request): Promise<Response> {
       status: "succeeded",
       severity: body.action === "reject" || body.action === "return" ? "medium" : "low",
       summary: `治理流程已流转：${result.instance.workflowName} / ${result.instance.projectName} / ${result.instance.state}`,
-      detail: { instance_id: result.instance.id, action: body.action, feishu_sync },
+      detail: { instance_id: result.instance.id, action: body.action, feishu_sync, business_impact: result.businessImpact },
+      requestId,
+    });
+    await writeIntegrationSyncLog({
+      userId: user?.id,
+      source: "system",
+      eventType: "governance_business_impact_generated",
+      status: result.businessImpact?.writebackMode === "manual_confirmation_required" ? "warning" : "succeeded",
+      severity: result.businessImpact?.severity || "low",
+      summary: `治理业务联动建议：${result.businessImpact?.summary || result.instance.title}`,
+      detail: { instance_id: result.instance.id, action: body.action, business_impact: result.businessImpact },
+      remediation: result.businessImpact?.writebackMode === "manual_confirmation_required" ? "需要责任人确认后再写回项目台账或风险登记册，避免静默改写业务主数据。" : undefined,
       requestId,
     });
   }

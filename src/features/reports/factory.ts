@@ -1,6 +1,7 @@
 import { createAiEvidence, type AiEvidence } from "../ai/evidence.ts";
 import type { DashboardData } from "../dashboard/types.ts";
 import type { FinanceCockpit } from "../finance/cockpit.ts";
+import type { GovernanceImpactDashboard } from "../governance/impact.ts";
 import {
   generateReportId,
   REPORT_TYPE_LABELS,
@@ -16,6 +17,7 @@ export interface ReportFactoryContext {
   sourceLabel: string;
   sourceStatus: "live" | "fallback";
   model: string;
+  governanceImpact?: GovernanceImpactDashboard;
 }
 
 export interface ReportFactoryPackage {
@@ -97,6 +99,7 @@ export function buildReportFactoryPackage(request: ReportRequest, context: Repor
   const riskFacts = [
     ...dashboard.riskProjects.slice(0, 5).map(item => `${item.name}：${item.severity} · ${item.riskType} · ${item.trend}`),
     ...finance.alerts.slice(0, 5).map(item => `${item.priority} · ${item.projectName}：${item.title}`),
+    ...(context.governanceImpact?.reportFacts.slice(0, 6).map(item => `治理联动：${item}`) ?? []),
   ];
 
   const dataSources: ReportDataSource[] = [
@@ -113,6 +116,13 @@ export function buildReportFactoryPackage(request: ReportRequest, context: Repor
     {
       label: "业财经营驾驶舱",
       detail: `合同、成本、回款、应收、毛利、验收阻塞和经营预警；成本口径=${finance.source.costBasis}。`,
+      source: "system",
+    },
+    {
+      label: "治理工作流与审批联动",
+      detail: context.governanceImpact
+        ? `治理联动包${context.governanceImpact.summary.totalImpacts}个，项目写回建议${context.governanceImpact.summary.projectWritebacks}条，风险写回建议${context.governanceImpact.summary.riskWritebacks}条，待确认${context.governanceImpact.summary.pendingConfirmation}项。`
+        : "未读取到治理工作流数据；报告不引用治理审批结果。",
       source: "system",
     },
     {
@@ -190,6 +200,7 @@ export function buildReportEvidence(input: {
       { label: "用户录入", detail: "报告对象、周期、完成事项、计划、风险问题和资源需求。", source: "user_input" },
       { label: "业务数据", detail: input.dataPackage.executiveSummary, source: input.context.sourceStatus === "live" ? "feishu" : "system_template" },
       { label: "业财口径", detail: input.dataPackage.financeFacts.slice(0, 4).join("；"), source: "rule" },
+      { label: "治理审批依据", detail: input.context.governanceImpact?.reportFacts.slice(0, 4).join("；") || "当前无治理审批联动事实。", source: "rule" },
       { label: "生成边界", detail: "报告不编造财务结果；估算项必须保留口径说明，正式报告提交前需人工复核。", source: "rule" },
     ],
     sourceRefs: [
