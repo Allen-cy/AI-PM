@@ -7,6 +7,13 @@ import {
   type MigrationBatchComparison,
 } from "@/features/migration/batch-comparison";
 import {
+  buildMigrationCutoverDecision,
+  defaultMigrationCutoverManualChecks,
+  migrationCutoverManualCheckDefinitions,
+  type MigrationCutoverDecisionPackage,
+  type MigrationCutoverManualCheckId,
+} from "@/features/migration/cutover-decision";
+import {
   buildMigrationFieldMappingReuseCheck,
   buildMigrationRemediationActions,
   type MigrationAnalysisResult,
@@ -69,6 +76,10 @@ type BatchComparisonReportResponse =
   | Blob
   | { status: "failed"; warning?: string; request_id: string };
 
+type CutoverDecisionReportResponse =
+  | Blob
+  | { status: "failed"; warning?: string; request_id: string };
+
 function issueColor(severity: string) {
   if (severity === "high") return "var(--red)";
   if (severity === "medium") return "var(--amber)";
@@ -122,6 +133,9 @@ export default function MigrationCenterPage() {
   const [selectedMappingProfileId, setSelectedMappingProfileId] = useState("");
   const [downloadingComparisonReport, setDownloadingComparisonReport] = useState(false);
   const [comparisonReportError, setComparisonReportError] = useState("");
+  const [manualCutoverChecks, setManualCutoverChecks] = useState(defaultMigrationCutoverManualChecks);
+  const [downloadingCutoverPackage, setDownloadingCutoverPackage] = useState(false);
+  const [cutoverPackageError, setCutoverPackageError] = useState("");
 
   const result = useMemo(() => assessMigrationReadiness(selectedAreaIds), [selectedAreaIds]);
   const remediationActions = useMemo(() => analysis ? buildMigrationRemediationActions(analysis) : [], [analysis]);
@@ -136,6 +150,18 @@ export default function MigrationCenterPage() {
   const batchComparison = useMemo(
     () => buildMigrationBatchComparison({ objectName, batches, remediationActions: persistedActions }),
     [objectName, batches, persistedActions],
+  );
+  const cutoverDecisionPackage = useMemo(
+    () => buildMigrationCutoverDecision({
+      objectName,
+      readinessResult: result,
+      selectedAreaIds,
+      batchComparison,
+      fieldMappingProfile: selectedMappingProfile,
+      remediationActions: persistedActions,
+      manualChecks: manualCutoverChecks,
+    }),
+    [objectName, result, selectedAreaIds, batchComparison, selectedMappingProfile, persistedActions, manualCutoverChecks],
   );
 
   useEffect(() => {
@@ -475,6 +501,41 @@ export default function MigrationCenterPage() {
       setComparisonReportError("下载批次对比报告失败，请稍后重试。");
     } finally {
       setDownloadingComparisonReport(false);
+    }
+  }
+
+  function toggleManualCutoverCheck(id: MigrationCutoverManualCheckId) {
+    setManualCutoverChecks(prev => ({ ...prev, [id]: !prev[id] }));
+    setCutoverPackageError("");
+  }
+
+  async function downloadCutoverDecisionPackage(decisionPackage: MigrationCutoverDecisionPackage) {
+    setDownloadingCutoverPackage(true);
+    setCutoverPackageError("");
+    try {
+      const response = await fetch("/api/migration/cutover-decision/report", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ decisionPackage }),
+      });
+      if (!response.ok) {
+        const payload = await response.json() as Exclude<CutoverDecisionReportResponse, Blob>;
+        setCutoverPackageError(payload.warning || "下载正式迁移决策包失败。");
+        return;
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${decisionPackage.objectName}-正式迁移Go-NoGo决策包.md`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      setCutoverPackageError("下载正式迁移决策包失败，请稍后重试。");
+    } finally {
+      setDownloadingCutoverPackage(false);
     }
   }
 
@@ -840,6 +901,140 @@ export default function MigrationCenterPage() {
               </div>
             </div>
           )}
+        </section>
+
+        <section className="card" style={{ marginBottom: 18 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", marginBottom: 12 }}>
+            <div>
+              <div className="section-title">正式迁移前检查清单与 Go/No-Go 决策包</div>
+              <p style={{ color: "var(--text2)", lineHeight: 1.6, fontSize: "0.84rem" }}>
+                汇总迁移成熟度、字段映射方案、多轮试迁移批次、整改关闭率、飞书写入配置、权限安全、回滚预案和业务签字，生成正式迁移评审材料。
+              </p>
+            </div>
+            <span className={cutoverDecisionPackage.decision === "Go" ? "tag tag-green" : cutoverDecisionPackage.decision === "Conditional Go" ? "tag tag-blue" : cutoverDecisionPackage.decision === "No-Go" ? "tag tag-red" : "tag"}>
+              {cutoverDecisionPackage.decision}
+            </span>
+          </div>
+
+          <div style={{ display: "grid", gap: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 10 }}>
+              {[
+                ["成熟度", `${cutoverDecisionPackage.evidenceSummary.readinessScore}分`, cutoverDecisionPackage.evidenceSummary.readinessLevel],
+                ["字段映射", `${cutoverDecisionPackage.evidenceSummary.fieldCoverageRate}%`, `${cutoverDecisionPackage.evidenceSummary.missingFieldCount}项缺失`],
+                ["试迁移批次", `${cutoverDecisionPackage.evidenceSummary.batchCount}轮`, cutoverDecisionPackage.evidenceSummary.latestBatchName],
+                ["整改关闭率", `${cutoverDecisionPackage.evidenceSummary.remediationClosureRate}%`, `未关闭P0 ${cutoverDecisionPackage.evidenceSummary.openP0RemediationCount}项`],
+                ["飞书同步", `${cutoverDecisionPackage.evidenceSummary.feishuSyncedActionCount}/${cutoverDecisionPackage.evidenceSummary.feishuActionCount}`, "整改任务同步证据"],
+              ].map(([label, value, hint]) => (
+                <div key={label} style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 12, padding: 14 }}>
+                  <div style={{ color: "var(--text2)", fontSize: "0.76rem" }}>{label}</div>
+                  <strong style={{ fontSize: "1.05rem" }}>{value}</strong>
+                  <p style={{ color: "var(--text2)", fontSize: "0.74rem", marginTop: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{hint}</p>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 12 }}>
+              <div style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 12, padding: 14 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", marginBottom: 10 }}>
+                  <strong>人工确认项</strong>
+                  <span className="tag">当前页面确认</span>
+                </div>
+                <div style={{ display: "grid", gap: 8 }}>
+                  {migrationCutoverManualCheckDefinitions.map(definition => (
+                    <label
+                      key={definition.id}
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "18px 1fr",
+                        gap: 10,
+                        alignItems: "start",
+                        border: "1px solid var(--border)",
+                        borderRadius: 10,
+                        padding: 10,
+                        cursor: "pointer",
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={manualCutoverChecks[definition.id]}
+                        onChange={() => toggleManualCutoverCheck(definition.id)}
+                        aria-label={definition.title}
+                      />
+                      <span>
+                        <span style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+                          <strong style={{ fontSize: "0.82rem" }}>{definition.title}</strong>
+                          <span className={definition.blocker ? "tag tag-red" : "tag tag-amber"}>{definition.blocker ? "必须" : "建议"}</span>
+                        </span>
+                        <span style={{ display: "block", color: "var(--text2)", lineHeight: 1.55, fontSize: "0.76rem", marginTop: 4 }}>
+                          {definition.owner} · {manualCutoverChecks[definition.id] ? definition.evidence : definition.nextAction}
+                        </span>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 12, padding: 14 }}>
+                <strong>决策摘要</strong>
+                <p style={{ color: "var(--text2)", lineHeight: 1.65, fontSize: "0.82rem", marginTop: 8 }}>
+                  {cutoverDecisionPackage.summary}
+                </p>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10, marginTop: 10 }}>
+                  <div style={{ border: "1px solid rgba(239,68,68,0.35)", borderRadius: 10, padding: 10 }}>
+                    <div style={{ color: "var(--red)", fontSize: "0.76rem" }}>阻断项</div>
+                    <strong>{cutoverDecisionPackage.blockers.length}</strong>
+                  </div>
+                  <div style={{ border: "1px solid rgba(245,158,11,0.35)", borderRadius: 10, padding: 10 }}>
+                    <div style={{ color: "var(--amber)", fontSize: "0.76rem" }}>待补充</div>
+                    <strong>{cutoverDecisionPackage.warnings.length}</strong>
+                  </div>
+                </div>
+                <ul style={{ margin: "10px 0 0 18px", color: "var(--accent2)", lineHeight: 1.65, fontSize: "0.8rem" }}>
+                  {(cutoverDecisionPackage.nextActions.length > 0 ? cutoverDecisionPackage.nextActions : ["进入正式迁移评审会，完成签字归档。"]).slice(0, 5).map(action => (
+                    <li key={action}>{action}</li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1100 }}>
+                <thead>
+                  <tr style={{ color: "var(--text2)", textAlign: "left", fontSize: "0.78rem" }}>
+                    <th style={{ padding: "10px 8px", borderBottom: "1px solid var(--border)" }}>分类</th>
+                    <th style={{ padding: "10px 8px", borderBottom: "1px solid var(--border)" }}>检查项</th>
+                    <th style={{ padding: "10px 8px", borderBottom: "1px solid var(--border)" }}>状态</th>
+                    <th style={{ padding: "10px 8px", borderBottom: "1px solid var(--border)" }}>责任人</th>
+                    <th style={{ padding: "10px 8px", borderBottom: "1px solid var(--border)" }}>证据/动作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {cutoverDecisionPackage.checklist.map(item => (
+                    <tr key={item.id}>
+                      <td style={{ padding: "12px 8px", borderBottom: "1px solid var(--border)" }}><span className="tag">{item.category}</span></td>
+                      <td style={{ padding: "12px 8px", borderBottom: "1px solid var(--border)", fontWeight: 800 }}>
+                        {item.title}
+                        <div style={{ color: "var(--text2)", fontSize: "0.74rem", marginTop: 4 }}>{item.source}</div>
+                      </td>
+                      <td style={{ padding: "12px 8px", borderBottom: "1px solid var(--border)" }}>
+                        <span className={item.status === "通过" ? "tag tag-green" : item.status === "待补充" ? "tag tag-amber" : "tag tag-red"}>{item.status}</span>
+                      </td>
+                      <td style={{ padding: "12px 8px", borderBottom: "1px solid var(--border)", color: "var(--text2)" }}>{item.owner}</td>
+                      <td style={{ padding: "12px 8px", borderBottom: "1px solid var(--border)", color: "var(--text2)", fontSize: "0.78rem", lineHeight: 1.6 }}>
+                        {item.evidence}
+                        <div style={{ color: item.status === "通过" ? "var(--green)" : "var(--accent2)", marginTop: 4 }}>{item.nextAction}</div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <button className="btn-primary" type="button" onClick={() => downloadCutoverDecisionPackage(cutoverDecisionPackage)} disabled={downloadingCutoverPackage} style={{ width: "100%" }}>
+              {downloadingCutoverPackage ? "生成决策包中..." : "下载正式迁移 Go/No-Go 决策包"}
+            </button>
+            {cutoverPackageError && <p style={{ color: "var(--red)", lineHeight: 1.6, fontSize: "0.8rem", margin: 0 }}>{cutoverPackageError}</p>}
+          </div>
         </section>
 
         <section className="card" style={{ marginBottom: 18 }}>

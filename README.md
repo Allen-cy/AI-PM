@@ -67,6 +67,10 @@ npm run build
 - 飞书端已建立8张业务表；公开项目记录API会等用户登录和授权模型完成后再开放。
 - 全仓历史 ESLint 基线仍有旧问题；V4新增/改动文件执行独立零错误门禁。
 
+## AI-PMO System V5.3.20
+
+V5.3.20 将迁移中心补齐“正式切换前最后一公里”：新增 `src/features/migration/cutover-decision.ts` 和 `/api/migration/cutover-decision/report`，基于迁移成熟度、字段映射方案、多轮试迁移批次、整改关闭率、飞书写入配置、权限安全、回滚预案和业务签字生成 Go/No-Go 决策包。`/migration-center` 新增“正式迁移前检查清单与 Go/No-Go 决策包”区域，区分系统证据和人工确认项，展示阻断项、待补充项、下一步动作，并可下载带签字栏的 Markdown 决策材料。本版本不新增数据库脚本，复用 V5.3.13、V5.3.16、V5.3.18 已有迁移证据。
+
 ## AI-PMO System V5.3.19
 
 V5.3.19 将迁移中心的历史批次从“列表查看”升级为“多轮趋势对比与 Go/No-Go 决策辅助”：新增 `src/features/migration/batch-comparison.ts` 和 `/api/migration/batch-comparison/report`，复用 V5.3.13 试迁移批次与 V5.3.16 整改行动项数据，计算字段覆盖率变化、质量问题变化、高优先级问题变化、整改关闭率和 Go/No-Go 建议。`/migration-center` 新增“试迁移批次对比与问题关闭率”区域，可查看最近轮次改善/退化、最新批次指标、下一步动作，并下载多轮试迁移对比报告。本版本不新增数据库脚本。

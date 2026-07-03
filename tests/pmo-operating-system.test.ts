@@ -74,8 +74,14 @@ import {
   buildMigrationBatchComparison,
   buildMigrationBatchComparisonReport,
 } from '../src/features/migration/batch-comparison.ts';
+import {
+  buildMigrationCutoverDecision,
+  buildMigrationCutoverDecisionReport,
+  defaultMigrationCutoverManualChecks,
+} from '../src/features/migration/cutover-decision.ts';
 import { POST as analyzeMigrationPackage } from '../src/app/api/migration/analyze/route.ts';
 import { POST as downloadMigrationBatchComparisonReport } from '../src/app/api/migration/batch-comparison/report/route.ts';
+import { POST as downloadMigrationCutoverDecisionReport } from '../src/app/api/migration/cutover-decision/report/route.ts';
 import { POST as downloadMigrationReport } from '../src/app/api/migration/report/route.ts';
 import { GET as downloadMigrationTemplate } from '../src/app/api/migration/template/route.ts';
 import type { Risk } from '../src/lib/risk.ts';
@@ -313,6 +319,106 @@ test('migration batch comparison reports trend and remediation closure rate', as
   assert.match(await response.text(), /相邻批次变化/);
 });
 
+test('migration cutover decision package combines saved evidence and manual signoff checks', async () => {
+  const batches = [
+    {
+      id: 'batch-1',
+      batchName: '项目台账第一轮',
+      objectName: '项目台账',
+      fileName: 'round1.xlsx',
+      totalRows: 20,
+      fieldCoverageRate: 90,
+      missingRequiredFields: 1,
+      qualityIssueCount: 3,
+      highIssueCount: 1,
+      canTrialImport: false,
+      analysis: {} as never,
+      nextActions: [],
+      createdByName: 'PMO',
+      createdAt: '2026-07-01T00:00:00.000Z',
+      updatedAt: '2026-07-01T00:00:00.000Z',
+    },
+    {
+      id: 'batch-2',
+      batchName: '项目台账第二轮',
+      objectName: '项目台账',
+      fileName: 'round2.xlsx',
+      totalRows: 20,
+      fieldCoverageRate: 100,
+      missingRequiredFields: 0,
+      qualityIssueCount: 0,
+      highIssueCount: 0,
+      canTrialImport: true,
+      analysis: {} as never,
+      nextActions: [],
+      createdByName: 'PMO',
+      createdAt: '2026-07-02T00:00:00.000Z',
+      updatedAt: '2026-07-02T00:00:00.000Z',
+    },
+  ];
+  const actions = [
+    {
+      id: 'a1',
+      batchId: 'batch-2',
+      batchName: '项目台账第二轮',
+      objectName: '项目台账',
+      priority: 'P0',
+      status: '已关闭',
+      feishuSyncStatus: '已同步',
+    },
+  ] as never;
+  const selectedAreaIds = migrationReadinessAreas.map(area => area.id);
+  const comparison = buildMigrationBatchComparison({
+    objectName: '项目台账',
+    batches,
+    remediationActions: actions,
+    now: new Date('2026-07-03T00:00:00.000Z'),
+  });
+  const manualChecks = Object.fromEntries(
+    Object.keys(defaultMigrationCutoverManualChecks).map(key => [key, true]),
+  ) as typeof defaultMigrationCutoverManualChecks;
+  const decisionPackage = buildMigrationCutoverDecision({
+    objectName: '项目台账',
+    readinessResult: assessMigrationReadiness(selectedAreaIds),
+    selectedAreaIds,
+    batchComparison: comparison,
+    fieldMappingProfile: {
+      id: 'profile-1',
+      profileName: '项目台账正式字段映射',
+      objectName: '项目台账',
+      mappings: [],
+      sourceFields: ['项目编号', '项目名称'],
+      requiredFields: ['项目编号', '项目名称'],
+      fieldCoverageRate: 100,
+      matchedFieldCount: 2,
+      missingFieldCount: 0,
+      notes: null,
+      createdByName: 'PMO',
+      createdAt: '2026-07-02T00:00:00.000Z',
+      updatedAt: '2026-07-02T00:00:00.000Z',
+    },
+    remediationActions: actions,
+    manualChecks,
+    now: new Date('2026-07-03T00:00:00.000Z'),
+  });
+  const markdown = buildMigrationCutoverDecisionReport(decisionPackage);
+
+  assert.equal(decisionPackage.decision, 'Go');
+  assert.equal(decisionPackage.blockers.length, 0);
+  assert.match(markdown, /正式迁移 Go\/No-Go 决策包/);
+  assert.match(markdown, /签字栏/);
+  assert.match(markdown, /字段映射方案：项目台账正式字段映射/);
+
+  const response = await downloadMigrationCutoverDecisionReport(new Request('http://localhost/api/migration/cutover-decision/report', {
+    method: 'POST',
+    body: JSON.stringify({ decisionPackage }),
+    headers: { 'Content-Type': 'application/json' },
+  }));
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get('Content-Disposition') ?? '', /Go-NoGo/);
+  assert.match(await response.text(), /正式迁移检查清单/);
+});
+
 test('migration review report exports field mapping and fix checklist as markdown', async () => {
   const analysis = analyzeMigrationRows('项目台账', [
     { 项目编号: 'P-001', 项目名称: '迁移项目A', 项目经理: '', 项目状态: '进行中', 计划开始日期: '2026-07-01', 计划完成日期: '2026-08-01', 合同金额: '100000' },
@@ -374,6 +480,7 @@ test('migration center is discoverable from home and integration center', () => 
   const integrationSource = readFileSync(new URL('../src/app/integration-center/page.tsx', import.meta.url), 'utf8');
   const migrationPageSource = readFileSync(new URL('../src/app/migration-center/page.tsx', import.meta.url), 'utf8');
   const comparisonReportRouteSource = readFileSync(new URL('../src/app/api/migration/batch-comparison/report/route.ts', import.meta.url), 'utf8');
+  const cutoverDecisionRouteSource = readFileSync(new URL('../src/app/api/migration/cutover-decision/report/route.ts', import.meta.url), 'utf8');
 
   assert.match(homeSource, /href: "\/migration-center"/);
   assert.match(integrationSource, /href="\/migration-center"/);
@@ -402,6 +509,10 @@ test('migration center is discoverable from home and integration center', () => 
   assert.match(migrationPageSource, /下载多轮试迁移对比报告/);
   assert.match(migrationPageSource, /\/api\/migration\/batch-comparison\/report/);
   assert.match(comparisonReportRouteSource, /buildMigrationBatchComparisonReport/);
+  assert.match(migrationPageSource, /正式迁移前检查清单与 Go\/No-Go 决策包/);
+  assert.match(migrationPageSource, /下载正式迁移 Go\/No-Go 决策包/);
+  assert.match(migrationPageSource, /\/api\/migration\/cutover-decision\/report/);
+  assert.match(cutoverDecisionRouteSource, /buildMigrationCutoverDecisionReport/);
 });
 
 test('workbench summary derives action priorities from dashboard facts', () => {
