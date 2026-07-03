@@ -60,6 +60,8 @@ export default function MigrationCenterPage() {
   const [saveMessage, setSaveMessage] = useState("");
   const [savingBatch, setSavingBatch] = useState(false);
   const [loadingBatches, setLoadingBatches] = useState(true);
+  const [reportError, setReportError] = useState("");
+  const [downloadingReport, setDownloadingReport] = useState(false);
 
   const result = useMemo(() => assessMigrationReadiness(selectedAreaIds), [selectedAreaIds]);
 
@@ -102,6 +104,7 @@ export default function MigrationCenterPage() {
     setAnalysis(null);
     setSaveError("");
     setSaveMessage("");
+    setReportError("");
     if (!file) {
       setAnalyzeError("请先选择一个 xlsx、xls 或 csv 文件。");
       return;
@@ -155,6 +158,42 @@ export default function MigrationCenterPage() {
       setSaveError("保存迁移批次失败，请稍后重试。");
     } finally {
       setSavingBatch(false);
+    }
+  }
+
+  async function downloadReviewReport() {
+    if (!analysis) return;
+    setDownloadingReport(true);
+    setReportError("");
+    try {
+      const reportTitle = batchName.trim() || defaultBatchName(analysis);
+      const response = await fetch("/api/migration/report", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          batchName: reportTitle,
+          fileName: file?.name ?? null,
+          analysis,
+        }),
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null) as { warning?: string } | null;
+        setReportError(payload?.warning || "下载迁移评审报告失败。");
+        return;
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${reportTitle.replace(/[\\/:*?"<>|\r\n]/g, "-")}.md`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      setReportError("下载迁移评审报告失败，请稍后重试。");
+    } finally {
+      setDownloadingReport(false);
     }
   }
 
@@ -431,6 +470,23 @@ export default function MigrationCenterPage() {
                     </button>
                     {saveMessage && <p style={{ color: "var(--green)", lineHeight: 1.6, fontSize: "0.8rem", marginTop: 8 }}>{saveMessage}</p>}
                     {saveError && <p style={{ color: "var(--red)", lineHeight: 1.6, fontSize: "0.8rem", marginTop: 8 }}>{saveError}</p>}
+                  </div>
+
+                  <div style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 12, padding: 14 }}>
+                    <h2 style={{ fontSize: "0.95rem", marginBottom: 10 }}>输出评审成果</h2>
+                    <p style={{ color: "var(--text2)", lineHeight: 1.6, fontSize: "0.8rem", marginBottom: 10 }}>
+                      下载 Markdown 评审报告，包含字段映射确认表、质量问题修复清单、阶段门结论和签字栏，可直接进入迁移评审会议。
+                    </p>
+                    <button
+                      className="btn-secondary"
+                      type="button"
+                      onClick={downloadReviewReport}
+                      disabled={downloadingReport}
+                      style={{ width: "100%" }}
+                    >
+                      {downloadingReport ? "生成报告中..." : "下载评审报告/修复清单"}
+                    </button>
+                    {reportError && <p style={{ color: "var(--red)", lineHeight: 1.6, fontSize: "0.8rem", marginTop: 8 }}>{reportError}</p>}
                   </div>
                 </div>
               </div>

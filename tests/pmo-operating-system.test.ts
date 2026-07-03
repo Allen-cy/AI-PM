@@ -64,10 +64,12 @@ import {
 } from '../src/features/migration/readiness.ts';
 import {
   analyzeMigrationRows,
+  buildMigrationReviewReport,
   buildMigrationTemplateSheets,
   summarizeMigrationBatch,
 } from '../src/features/migration/package.ts';
 import { POST as analyzeMigrationPackage } from '../src/app/api/migration/analyze/route.ts';
+import { POST as downloadMigrationReport } from '../src/app/api/migration/report/route.ts';
 import { GET as downloadMigrationTemplate } from '../src/app/api/migration/template/route.ts';
 import type { Risk } from '../src/lib/risk.ts';
 import type { DashboardData } from '../src/features/dashboard/types.ts';
@@ -210,6 +212,29 @@ test('migration batch persistence keeps trial analysis metrics and audit hooks d
   assert.match(batchSql, /next_actions jsonb/);
 });
 
+test('migration review report exports field mapping and fix checklist as markdown', async () => {
+  const analysis = analyzeMigrationRows('项目台账', [
+    { 项目编号: 'P-001', 项目名称: '迁移项目A', 项目经理: '', 项目状态: '进行中', 计划开始日期: '2026-07-01', 计划完成日期: '2026-08-01', 合同金额: '100000' },
+  ], new Date('2026-07-02T00:00:00.000Z'));
+  const markdown = buildMigrationReviewReport({ analysis, batchName: '项目台账第一轮试迁移', fileName: 'sample.csv' });
+
+  assert.match(markdown, /# 项目台账第一轮试迁移/);
+  assert.match(markdown, /字段映射确认表/);
+  assert.match(markdown, /数据质量问题与修复清单/);
+  assert.match(markdown, /项目经理存在空值/);
+  assert.match(markdown, /迁移评审签字/);
+
+  const response = await downloadMigrationReport(new Request('http://localhost/api/migration/report', {
+    method: 'POST',
+    body: JSON.stringify({ analysis, batchName: '项目台账第一轮试迁移', fileName: 'sample.csv' }),
+    headers: { 'Content-Type': 'application/json' },
+  }));
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get('Content-Type') ?? '', /text\/markdown/);
+  assert.match(response.headers.get('Content-Disposition') ?? '', /filename\*=UTF-8''/);
+  assert.match(await response.text(), /阶段门结论/);
+});
+
 test('migration center is discoverable from home and integration center', () => {
   const homeSource = readFileSync(new URL('../src/app/page.tsx', import.meta.url), 'utf8');
   const integrationSource = readFileSync(new URL('../src/app/integration-center/page.tsx', import.meta.url), 'utf8');
@@ -222,8 +247,10 @@ test('migration center is discoverable from home and integration center', () => 
   assert.match(migrationPageSource, /\/api\/migration\/analyze/);
   assert.match(migrationPageSource, /\/api\/migration\/template/);
   assert.match(migrationPageSource, /\/api\/migration\/batches/);
+  assert.match(migrationPageSource, /\/api\/migration\/report/);
   assert.match(migrationPageSource, /保存为迁移批次/);
   assert.match(migrationPageSource, /历史迁移批次/);
+  assert.match(migrationPageSource, /下载评审报告\/修复清单/);
 });
 
 test('workbench summary derives action priorities from dashboard facts', () => {

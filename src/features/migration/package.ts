@@ -51,6 +51,13 @@ export interface MigrationBatchMetrics {
   nextActions: string[];
 }
 
+export interface MigrationReviewReportInput {
+  analysis: MigrationAnalysisResult;
+  batchName?: string;
+  fileName?: string | null;
+  generatedBy?: string | null;
+}
+
 type RawRow = Record<string, unknown>;
 
 const FIELD_ALIASES: Record<string, string[]> = {
@@ -313,6 +320,93 @@ export function summarizeMigrationBatch(analysis: MigrationAnalysisResult): Migr
     canTrialImport: analysis.canTrialImport,
     nextActions: analysis.nextActions,
   };
+}
+
+function escapeMarkdownCell(value: unknown): string {
+  return String(value ?? "-").replace(/\|/g, "\\|").replace(/\n/g, " ");
+}
+
+function reportConclusion(analysis: MigrationAnalysisResult): string {
+  if (analysis.canTrialImport) return "可进入试迁移阶段门";
+  const highIssueCount = analysis.qualityIssues.filter(item => item.severity === "high").length;
+  if (highIssueCount > 0) return "暂不建议试迁移，需先关闭高优先级问题";
+  return "可有条件试迁移，需在试点前完成中低优先级修正";
+}
+
+function severityLabel(severity: MigrationIssueSeverity): string {
+  if (severity === "high") return "高";
+  if (severity === "medium") return "中";
+  return "低";
+}
+
+export function buildMigrationReviewReport(input: MigrationReviewReportInput): string {
+  const analysis = input.analysis;
+  const metrics = summarizeMigrationBatch(analysis);
+  const batchName = input.batchName?.trim() || `${analysis.objectName}-试迁移评审`;
+  const issueRows = analysis.qualityIssues.length > 0
+    ? analysis.qualityIssues.map(issue => [
+      escapeMarkdownCell(issue.title),
+      escapeMarkdownCell(severityLabel(issue.severity)),
+      escapeMarkdownCell(issue.affectedCount),
+      escapeMarkdownCell(issue.sampleRefs.join("、") || "-"),
+      escapeMarkdownCell(issue.recommendation),
+      issue.severity === "high" ? "导入前必须关闭" : "试点前修正",
+    ].join(" | "))
+    : ["无基础质量问题 | - | 0 | - | 保持当前字段口径，进入试迁移复核。 | 进入试迁移前复核"];
+
+  const mappingRows = analysis.mappings.map(mapping => [
+    escapeMarkdownCell(mapping.targetField),
+    escapeMarkdownCell(mapping.sourceField || "-"),
+    escapeMarkdownCell(mapping.status === "matched" ? "直接匹配" : mapping.status === "alias" ? "别名匹配" : "缺失"),
+    escapeMarkdownCell(mapping.note),
+  ].join(" | "));
+
+  return [
+    `# ${batchName}`,
+    "",
+    "## 一、评审结论",
+    "",
+    `- 数据对象：${analysis.objectName}`,
+    `- 来源文件：${input.fileName || "未记录"}`,
+    `- 生成时间：${analysis.generatedAt}`,
+    `- 生成人：${input.generatedBy || "系统/当前用户"}`,
+    `- 样本行数：${metrics.totalRows}`,
+    `- 字段覆盖率：${metrics.fieldCoverageRate}%`,
+    `- 缺失必填字段：${metrics.missingRequiredFields}项`,
+    `- 质量问题：${metrics.qualityIssueCount}项，其中高优先级${metrics.highIssueCount}项`,
+    `- 阶段门结论：${reportConclusion(analysis)}`,
+    "",
+    "## 二、字段映射确认表",
+    "",
+    "| 目标字段 | 来源字段 | 匹配状态 | 说明 |",
+    "| --- | --- | --- | --- |",
+    ...mappingRows,
+    "",
+    "## 三、数据质量问题与修复清单",
+    "",
+    "| 问题 | 优先级 | 影响数量 | 样例 | 修复建议 | 阶段门要求 |",
+    "| --- | --- | ---: | --- | --- | --- |",
+    ...issueRows,
+    "",
+    "## 四、下一步动作",
+    "",
+    ...analysis.nextActions.map(action => `- ${action}`),
+    "",
+    "## 五、迁移评审签字",
+    "",
+    "| 角色 | 姓名 | 意见 | 日期 |",
+    "| --- | --- | --- | --- |",
+    "| 项目经理 |  |  |  |",
+    "| PMO |  |  |  |",
+    "| 业务负责人 |  |  |  |",
+    "| 数据负责人 |  |  |  |",
+    "",
+    "## 六、生成边界",
+    "",
+    "- 本报告基于上传样本文件的字段和基础质量规则自动生成，不代表正式全量迁移结果。",
+    "- 系统不会在生成本报告时写入飞书业务表；正式迁移前仍需人工复核字段口径、权限范围、历史数据完整性和试点反馈。",
+    "- 若需要保留历史追踪，请在迁移中心保存为迁移批次，并确保已执行 Supabase 迁移批次 SQL。",
+  ].join("\n");
 }
 
 function sampleValueForField(field: string): string | number {

@@ -67,6 +67,10 @@ npm run build
 - 飞书端已建立8张业务表；公开项目记录API会等用户登录和授权模型完成后再开放。
 - 全仓历史 ESLint 基线仍有旧问题；V4新增/改动文件执行独立零错误门禁。
 
+## AI-PMO System V5.3.14
+
+V5.3.14 将迁移中心补齐“评审输出物”：新增 `/api/migration/report` 和 `buildMigrationReviewReport`，可基于当前试迁移分析下载 Markdown 评审报告/修复清单，内容包括评审结论、字段映射确认表、数据质量问题与修复清单、下一步动作、迁移评审签字栏和生成边界。该能力不依赖 Supabase SQL，适合在迁移批次保存前先输出会议材料；如果已执行 V5.3.13 SQL，仍可先保存批次再下载同一批次名称的报告。
+
 ## AI-PMO System V5.3.13
 
 V5.3.13 将 `/migration-center` 的试迁移结果从一次性页面报告升级为“迁移批次管理”：新增 `supabase-v5313-migration-batches.sql`、`/api/migration/batches` 和迁移批次仓储模型，支持保存每次试迁移的字段覆盖率、质量问题、高优先级问题、准入结论、原始分析 JSON 和下一步动作；页面新增“保存为迁移批次”和“历史迁移批次”，SQL 未执行时仍可继续分析文件，并明确提示需要在 Supabase SQL Editor 执行脚本后才能保存历史记录。保存成功会写入操作审计，便于正式迁移前复盘和评审。
