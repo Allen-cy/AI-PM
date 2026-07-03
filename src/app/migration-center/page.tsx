@@ -3,6 +3,10 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import {
+  buildMigrationBatchComparison,
+  type MigrationBatchComparison,
+} from "@/features/migration/batch-comparison";
+import {
   buildMigrationFieldMappingReuseCheck,
   buildMigrationRemediationActions,
   type MigrationAnalysisResult,
@@ -61,6 +65,10 @@ type FieldMappingProfileSaveResponse =
   | { status: "succeeded"; profile: MigrationFieldMappingProfileRecord; request_id: string }
   | { status: "not_configured" | "failed" | "unauthorized"; warning?: string; request_id: string };
 
+type BatchComparisonReportResponse =
+  | Blob
+  | { status: "failed"; warning?: string; request_id: string };
+
 function issueColor(severity: string) {
   if (severity === "high") return "var(--red)";
   if (severity === "medium") return "var(--amber)";
@@ -112,6 +120,8 @@ export default function MigrationCenterPage() {
   const [savingMappingProfile, setSavingMappingProfile] = useState(false);
   const [loadingMappings, setLoadingMappings] = useState(true);
   const [selectedMappingProfileId, setSelectedMappingProfileId] = useState("");
+  const [downloadingComparisonReport, setDownloadingComparisonReport] = useState(false);
+  const [comparisonReportError, setComparisonReportError] = useState("");
 
   const result = useMemo(() => assessMigrationReadiness(selectedAreaIds), [selectedAreaIds]);
   const remediationActions = useMemo(() => analysis ? buildMigrationRemediationActions(analysis) : [], [analysis]);
@@ -122,6 +132,10 @@ export default function MigrationCenterPage() {
   const mappingReuseCheck = useMemo(
     () => analysis && selectedMappingProfile ? buildMigrationFieldMappingReuseCheck(selectedMappingProfile, analysis) : null,
     [analysis, selectedMappingProfile],
+  );
+  const batchComparison = useMemo(
+    () => buildMigrationBatchComparison({ objectName, batches, remediationActions: persistedActions }),
+    [objectName, batches, persistedActions],
   );
 
   useEffect(() => {
@@ -431,6 +445,36 @@ export default function MigrationCenterPage() {
       setReportError("下载迁移评审报告失败，请稍后重试。");
     } finally {
       setDownloadingReport(false);
+    }
+  }
+
+  async function downloadBatchComparisonReport(comparison: MigrationBatchComparison) {
+    setDownloadingComparisonReport(true);
+    setComparisonReportError("");
+    try {
+      const response = await fetch("/api/migration/batch-comparison/report", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ comparison }),
+      });
+      if (!response.ok) {
+        const payload = await response.json() as Exclude<BatchComparisonReportResponse, Blob>;
+        setComparisonReportError(payload.warning || "下载批次对比报告失败。");
+        return;
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${comparison.objectName}-试迁移批次对比报告.md`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      setComparisonReportError("下载批次对比报告失败，请稍后重试。");
+    } finally {
+      setDownloadingComparisonReport(false);
     }
   }
 
@@ -794,6 +838,111 @@ export default function MigrationCenterPage() {
                   </div>
                 </div>
               </div>
+            </div>
+          )}
+        </section>
+
+        <section className="card" style={{ marginBottom: 18 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", marginBottom: 12 }}>
+            <div>
+              <div className="section-title">试迁移批次对比与问题关闭率</div>
+              <p style={{ color: "var(--text2)", lineHeight: 1.6, fontSize: "0.84rem" }}>
+                对当前数据对象的多轮试迁移批次做趋势判断：字段覆盖率是否提升、质量问题是否减少、高优先级问题是否关闭，以及整改行动项关闭率是否达到正式迁移条件。
+              </p>
+            </div>
+            <span className={batchComparison.goNoGo === "Go" ? "tag tag-green" : batchComparison.goNoGo === "Conditional Go" ? "tag tag-blue" : batchComparison.goNoGo === "No-Go" ? "tag tag-red" : "tag"}>
+              {batchComparison.goNoGo}
+            </span>
+          </div>
+
+          {batchComparison.snapshots.length === 0 ? (
+            <div style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 12, padding: 16 }}>
+              <strong>暂无可对比批次</strong>
+              <p style={{ color: "var(--text2)", lineHeight: 1.6, fontSize: "0.82rem", marginTop: 6 }}>
+                当前数据对象「{objectName}」还没有历史试迁移批次。先上传样本并保存为迁移批次后，系统会自动生成趋势对比。
+              </p>
+            </div>
+          ) : (
+            <div style={{ display: "grid", gap: 12 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10 }}>
+                {[
+                  ["批次数", `${batchComparison.snapshots.length}`, "同一数据对象历史轮次"],
+                  ["最新覆盖率", `${batchComparison.snapshots.at(-1)?.fieldCoverageRate ?? 0}%`, "目标至少95%"],
+                  ["高优先级问题", `${batchComparison.snapshots.at(-1)?.highIssueCount ?? 0}`, "正式迁移前应为0"],
+                  ["整改关闭率", `${batchComparison.snapshots.at(-1)?.remediationClosureRate ?? 0}%`, "目标至少80%"],
+                ].map(([label, value, hint]) => (
+                  <div key={label} style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 12, padding: 14 }}>
+                    <div style={{ color: "var(--text2)", fontSize: "0.76rem" }}>{label}</div>
+                    <strong style={{ fontSize: "1.1rem" }}>{value}</strong>
+                    <p style={{ color: "var(--text2)", fontSize: "0.74rem", marginTop: 4 }}>{hint}</p>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 12, padding: 14 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                  <strong>趋势摘要</strong>
+                  {batchComparison.deltas.at(-1) && (
+                    <span className={batchComparison.deltas.at(-1)?.verdict === "改善" ? "tag tag-green" : batchComparison.deltas.at(-1)?.verdict === "退化" ? "tag tag-red" : "tag"}>
+                      最近一轮：{batchComparison.deltas.at(-1)?.verdict}
+                    </span>
+                  )}
+                </div>
+                <p style={{ color: "var(--text2)", lineHeight: 1.65, fontSize: "0.82rem", marginTop: 8 }}>{batchComparison.summary}</p>
+                <ul style={{ margin: "8px 0 0 18px", color: "var(--accent2)", lineHeight: 1.65, fontSize: "0.8rem" }}>
+                  {batchComparison.nextActions.map(action => <li key={action}>{action}</li>)}
+                </ul>
+              </div>
+
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 980 }}>
+                  <thead>
+                    <tr style={{ color: "var(--text2)", textAlign: "left", fontSize: "0.78rem" }}>
+                      <th style={{ padding: "10px 8px", borderBottom: "1px solid var(--border)" }}>批次</th>
+                      <th style={{ padding: "10px 8px", borderBottom: "1px solid var(--border)" }}>覆盖率</th>
+                      <th style={{ padding: "10px 8px", borderBottom: "1px solid var(--border)" }}>质量问题</th>
+                      <th style={{ padding: "10px 8px", borderBottom: "1px solid var(--border)" }}>高优先级</th>
+                      <th style={{ padding: "10px 8px", borderBottom: "1px solid var(--border)" }}>整改关闭率</th>
+                      <th style={{ padding: "10px 8px", borderBottom: "1px solid var(--border)" }}>相对上一轮</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {batchComparison.snapshots.map(snapshot => {
+                      const delta = batchComparison.deltas.find(item => item.batchId === snapshot.batchId);
+                      return (
+                        <tr key={snapshot.batchId}>
+                          <td style={{ padding: "12px 8px", borderBottom: "1px solid var(--border)", fontWeight: 800 }}>
+                            {snapshot.batchName}
+                            <div style={{ color: "var(--text2)", fontSize: "0.74rem", marginTop: 4 }}>{snapshot.createdAt.slice(0, 10)} · {snapshot.totalRows}行</div>
+                          </td>
+                          <td style={{ padding: "12px 8px", borderBottom: "1px solid var(--border)" }}>{snapshot.fieldCoverageRate}%</td>
+                          <td style={{ padding: "12px 8px", borderBottom: "1px solid var(--border)" }}>{snapshot.qualityIssueCount}</td>
+                          <td style={{ padding: "12px 8px", borderBottom: "1px solid var(--border)" }}>
+                            <span className={snapshot.highIssueCount > 0 ? "tag tag-red" : "tag tag-green"}>{snapshot.highIssueCount}</span>
+                          </td>
+                          <td style={{ padding: "12px 8px", borderBottom: "1px solid var(--border)" }}>
+                            {snapshot.remediationClosed}/{snapshot.remediationTotal} · {snapshot.remediationClosureRate}%
+                          </td>
+                          <td style={{ padding: "12px 8px", borderBottom: "1px solid var(--border)", color: "var(--text2)", fontSize: "0.78rem" }}>
+                            {delta ? (
+                              <span>
+                                <span className={delta.verdict === "改善" ? "tag tag-green" : delta.verdict === "退化" ? "tag tag-red" : "tag"}>{delta.verdict}</span>
+                                <br />
+                                覆盖{delta.coverageDelta >= 0 ? "+" : ""}{delta.coverageDelta}pp / 问题{delta.qualityIssueDelta >= 0 ? "+" : ""}{delta.qualityIssueDelta}
+                              </span>
+                            ) : "基线轮次"}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              <button className="btn-secondary" type="button" onClick={() => downloadBatchComparisonReport(batchComparison)} disabled={downloadingComparisonReport} style={{ width: "100%" }}>
+                {downloadingComparisonReport ? "生成报告中..." : "下载多轮试迁移对比报告"}
+              </button>
+              {comparisonReportError && <p style={{ color: "var(--red)", lineHeight: 1.6, fontSize: "0.8rem", margin: 0 }}>{comparisonReportError}</p>}
             </div>
           )}
         </section>

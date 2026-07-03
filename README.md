@@ -67,6 +67,10 @@ npm run build
 - 飞书端已建立8张业务表；公开项目记录API会等用户登录和授权模型完成后再开放。
 - 全仓历史 ESLint 基线仍有旧问题；V4新增/改动文件执行独立零错误门禁。
 
+## AI-PMO System V5.3.19
+
+V5.3.19 将迁移中心的历史批次从“列表查看”升级为“多轮趋势对比与 Go/No-Go 决策辅助”：新增 `src/features/migration/batch-comparison.ts` 和 `/api/migration/batch-comparison/report`，复用 V5.3.13 试迁移批次与 V5.3.16 整改行动项数据，计算字段覆盖率变化、质量问题变化、高优先级问题变化、整改关闭率和 Go/No-Go 建议。`/migration-center` 新增“试迁移批次对比与问题关闭率”区域，可查看最近轮次改善/退化、最新批次指标、下一步动作，并下载多轮试迁移对比报告。本版本不新增数据库脚本。
+
 ## AI-PMO System V5.3.18
 
 V5.3.18 将迁移中心的字段映射从“单次分析结果”升级为“可保存、可复用、可差异检查”的方案库：新增 `supabase-v5318-migration-field-mapping-profiles.sql`、`/api/migration/field-mappings` 和 `src/features/migration/field-mapping-repository.ts`，支持保存字段映射方案、来源字段、覆盖率、缺失字段数和人工备注。`/migration-center` 新增“保存字段映射方案”和“字段映射方案库”，用户选择历史方案后会先看到匹配度、变化字段、新增/缺失来源字段和未映射字段，不会静默套用历史映射。

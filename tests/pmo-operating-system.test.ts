@@ -70,7 +70,12 @@ import {
   buildMigrationTemplateSheets,
   summarizeMigrationBatch,
 } from '../src/features/migration/package.ts';
+import {
+  buildMigrationBatchComparison,
+  buildMigrationBatchComparisonReport,
+} from '../src/features/migration/batch-comparison.ts';
 import { POST as analyzeMigrationPackage } from '../src/app/api/migration/analyze/route.ts';
+import { POST as downloadMigrationBatchComparisonReport } from '../src/app/api/migration/batch-comparison/report/route.ts';
 import { POST as downloadMigrationReport } from '../src/app/api/migration/report/route.ts';
 import { GET as downloadMigrationTemplate } from '../src/app/api/migration/template/route.ts';
 import type { Risk } from '../src/lib/risk.ts';
@@ -240,6 +245,74 @@ test('migration batch persistence keeps trial analysis metrics and audit hooks d
   assert.match(batchSql, /next_actions jsonb/);
 });
 
+test('migration batch comparison reports trend and remediation closure rate', async () => {
+  const batches = [
+    {
+      id: 'batch-1',
+      batchName: '项目台账第一轮',
+      objectName: '项目台账',
+      fileName: 'round1.xlsx',
+      totalRows: 20,
+      fieldCoverageRate: 80,
+      missingRequiredFields: 2,
+      qualityIssueCount: 6,
+      highIssueCount: 2,
+      canTrialImport: false,
+      analysis: {} as never,
+      nextActions: [],
+      createdByName: 'PMO',
+      createdAt: '2026-07-01T00:00:00.000Z',
+      updatedAt: '2026-07-01T00:00:00.000Z',
+    },
+    {
+      id: 'batch-2',
+      batchName: '项目台账第二轮',
+      objectName: '项目台账',
+      fileName: 'round2.xlsx',
+      totalRows: 20,
+      fieldCoverageRate: 100,
+      missingRequiredFields: 0,
+      qualityIssueCount: 1,
+      highIssueCount: 0,
+      canTrialImport: true,
+      analysis: {} as never,
+      nextActions: [],
+      createdByName: 'PMO',
+      createdAt: '2026-07-02T00:00:00.000Z',
+      updatedAt: '2026-07-02T00:00:00.000Z',
+    },
+  ];
+  const actions = [
+    { id: 'a1', batchId: 'batch-2', batchName: '项目台账第二轮', objectName: '项目台账', status: '已关闭' },
+    { id: 'a2', batchId: 'batch-2', batchName: '项目台账第二轮', objectName: '项目台账', status: '已关闭' },
+  ] as never;
+
+  const comparison = buildMigrationBatchComparison({
+    objectName: '项目台账',
+    batches,
+    remediationActions: actions,
+    now: new Date('2026-07-03T00:00:00.000Z'),
+  });
+  const markdown = buildMigrationBatchComparisonReport(comparison);
+
+  assert.equal(comparison.snapshots.length, 2);
+  assert.equal(comparison.deltas[0].verdict, '改善');
+  assert.equal(comparison.deltas[0].coverageDelta, 20);
+  assert.equal(comparison.snapshots[1].remediationClosureRate, 100);
+  assert.equal(comparison.goNoGo, 'Go');
+  assert.match(markdown, /试迁移批次对比报告/);
+  assert.match(markdown, /Go\/No-Go 建议：Go/);
+
+  const response = await downloadMigrationBatchComparisonReport(new Request('http://localhost/api/migration/batch-comparison/report', {
+    method: 'POST',
+    body: JSON.stringify({ comparison }),
+    headers: { 'Content-Type': 'application/json' },
+  }));
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get('Content-Disposition') ?? '', /filename\*=UTF-8''/);
+  assert.match(await response.text(), /相邻批次变化/);
+});
+
 test('migration review report exports field mapping and fix checklist as markdown', async () => {
   const analysis = analyzeMigrationRows('项目台账', [
     { 项目编号: 'P-001', 项目名称: '迁移项目A', 项目经理: '', 项目状态: '进行中', 计划开始日期: '2026-07-01', 计划完成日期: '2026-08-01', 合同金额: '100000' },
@@ -300,6 +373,7 @@ test('migration center is discoverable from home and integration center', () => 
   const homeSource = readFileSync(new URL('../src/app/page.tsx', import.meta.url), 'utf8');
   const integrationSource = readFileSync(new URL('../src/app/integration-center/page.tsx', import.meta.url), 'utf8');
   const migrationPageSource = readFileSync(new URL('../src/app/migration-center/page.tsx', import.meta.url), 'utf8');
+  const comparisonReportRouteSource = readFileSync(new URL('../src/app/api/migration/batch-comparison/report/route.ts', import.meta.url), 'utf8');
 
   assert.match(homeSource, /href: "\/migration-center"/);
   assert.match(integrationSource, /href="\/migration-center"/);
@@ -324,6 +398,10 @@ test('migration center is discoverable from home and integration center', () => 
   assert.match(migrationPageSource, /保存字段映射方案/);
   assert.match(migrationPageSource, /字段映射方案库/);
   assert.match(migrationPageSource, /复用差异检查/);
+  assert.match(migrationPageSource, /试迁移批次对比与问题关闭率/);
+  assert.match(migrationPageSource, /下载多轮试迁移对比报告/);
+  assert.match(migrationPageSource, /\/api\/migration\/batch-comparison\/report/);
+  assert.match(comparisonReportRouteSource, /buildMigrationBatchComparisonReport/);
 });
 
 test('workbench summary derives action priorities from dashboard facts', () => {
