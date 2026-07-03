@@ -244,6 +244,8 @@ test('migration quality issues become accountable remediation actions', () => {
   const report = buildMigrationReviewReport({ analysis, batchName: '项目台账整改评审' });
   const remediationRouteSource = readFileSync(new URL('../src/app/api/migration/remediation-actions/route.ts', import.meta.url), 'utf8');
   const remediationSql = readFileSync(new URL('../supabase-v5316-migration-remediation-actions.sql', import.meta.url), 'utf8');
+  const feishuSyncRouteSource = readFileSync(new URL('../src/app/api/migration/remediation-actions/feishu-sync/route.ts', import.meta.url), 'utf8');
+  const feishuSyncSql = readFileSync(new URL('../supabase-v5317-migration-remediation-feishu-sync.sql', import.meta.url), 'utf8');
 
   assert.equal(actions.some(action => action.priority === 'P0' && action.ownerRole === '项目经理'), true);
   assert.equal(actions.every(action => action.status === '待处理' && action.dueDate >= '2026-07-04'), true);
@@ -254,6 +256,12 @@ test('migration quality issues become accountable remediation actions', () => {
   assert.match(remediationRouteSource, /migration_remediation_action_transition/);
   assert.match(remediationSql, /create table if not exists migration_remediation_actions/);
   assert.match(remediationSql, /'待处理', '处理中', '待复检', '已关闭'/);
+  assert.match(feishuSyncSql, /feishu_sync_status/);
+  assert.match(feishuSyncSql, /'未同步', '待确认', '同步中', '已同步', '同步失败'/);
+  assert.match(feishuSyncRouteSource, /confirm/);
+  assert.match(feishuSyncRouteSource, /migration_remediation_feishu_task_prepare/);
+  assert.match(feishuSyncRouteSource, /migration_remediation_feishu_task_sync/);
+  assert.match(feishuSyncRouteSource, /createTask/);
 });
 
 test('migration center is discoverable from home and integration center', () => {
@@ -277,6 +285,9 @@ test('migration center is discoverable from home and integration center', () => 
   assert.match(migrationPageSource, /保存整改行动项/);
   assert.match(migrationPageSource, /整改行动项跟踪/);
   assert.match(migrationPageSource, /待处理、处理中、待复检、已关闭/);
+  assert.match(migrationPageSource, /\/api\/migration\/remediation-actions\/feishu-sync/);
+  assert.match(migrationPageSource, /准备同步飞书/);
+  assert.match(migrationPageSource, /确认写入飞书任务/);
 });
 
 test('workbench summary derives action priorities from dashboard facts', () => {

@@ -447,6 +447,7 @@ V5.3.6 落地说明：
 - P12-T4：迁移评审报告与质量修复清单导出。（已在 V5.3.14 落地）
 - P12-T5：迁移质量问题自动生成整改行动项。（已在 V5.3.15 落地）
 - P12-T6：迁移整改行动项持久化与状态流转。（已在 V5.3.16 落地）
+- P12-T7：迁移整改项飞书任务回写确认队列。（已在 V5.3.17 落地）
 
 V5.3.11 落地说明：
 
@@ -486,6 +487,13 @@ V5.3.16 落地说明：
 - 新增 `supabase-v5316-migration-remediation-actions.sql`，创建 `migration_remediation_actions` 表，保存迁移整改项、批次关联、优先级、责任角色、建议截止日期、状态、来源问题、样例、验收标准、关闭说明和复检结果。
 - 新增 `src/features/migration/remediation-repository.ts` 与 `/api/migration/remediation-actions`，支持读取、保存和状态流转；如果 SQL 未执行，页面会明确提示，不影响本地试迁移分析和报告导出。
 - `/migration-center` 新增“保存整改行动项”和“整改行动项跟踪”，支持在系统内流转“待处理 → 处理中 → 待复检 → 已关闭”；本版本仍不直接写飞书任务，避免未经确认写入外部系统。
+
+V5.3.17 落地说明：
+
+- 新增 `supabase-v5317-migration-remediation-feishu-sync.sql`，为 `migration_remediation_actions` 增加飞书同步状态、飞书任务 GUID/链接、失败原因、同步时间和请求 ID。
+- 新增 `/api/migration/remediation-actions/feishu-sync`，支持“准备同步飞书”和“确认写入飞书任务”两个动作；确认写入时复用个人飞书优先、全局飞书兜底的任务创建能力。
+- `/migration-center` 的整改行动项跟踪表新增“飞书任务”列，展示未同步、待确认、同步中、已同步、同步失败，并提供准备同步、确认写入和失败重试入口。
+- 每次准备同步和确认写入都会写入操作审计；系统内整改项仍是主记录，飞书任务只作为协同执行通道。
 
 V5.3.7 落地说明：
 

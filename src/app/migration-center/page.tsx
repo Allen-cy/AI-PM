@@ -44,6 +44,10 @@ type RemediationTransitionResponse =
   | { status: "succeeded"; action: MigrationRemediationActionRecord; request_id: string }
   | { status: "not_configured" | "not_found" | "failed" | "unauthorized"; warning?: string; request_id: string };
 
+type RemediationFeishuSyncResponse =
+  | { status: "succeeded"; action: MigrationRemediationActionRecord; resource?: { taskGuid: string; url?: string }; request_id: string }
+  | { status: "not_configured" | "not_found" | "failed" | "unauthorized"; action?: MigrationRemediationActionRecord; warning?: string; request_id: string; lark_cli_hint?: string };
+
 function issueColor(severity: string) {
   if (severity === "high") return "var(--red)";
   if (severity === "medium") return "var(--amber)";
@@ -80,6 +84,7 @@ export default function MigrationCenterPage() {
   const [actionMessage, setActionMessage] = useState("");
   const [savingActions, setSavingActions] = useState(false);
   const [transitioningActionId, setTransitioningActionId] = useState("");
+  const [syncingActionId, setSyncingActionId] = useState("");
   const [loadingActions, setLoadingActions] = useState(true);
 
   const result = useMemo(() => assessMigrationReadiness(selectedAreaIds), [selectedAreaIds]);
@@ -223,6 +228,42 @@ export default function MigrationCenterPage() {
       setActionWarning("流转迁移整改行动项失败，请稍后重试。");
     } finally {
       setTransitioningActionId("");
+    }
+  }
+
+  async function syncRemediationActionToFeishu(action: MigrationRemediationActionRecord, mode: "prepare" | "confirm") {
+    if (mode === "confirm") {
+      const confirmed = window.confirm(`确认将整改项写入飞书任务？\n\n${action.title}\n责任：${action.ownerName || action.ownerRole}\n截止：${action.dueDate || "未设置"}`);
+      if (!confirmed) return;
+    }
+    setSyncingActionId(action.id);
+    setActionMessage("");
+    setActionWarning("");
+    try {
+      const response = await fetch("/api/migration/remediation-actions/feishu-sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: action.id,
+          mode,
+          confirm: mode === "confirm",
+        }),
+      });
+      const payload = await response.json() as RemediationFeishuSyncResponse;
+      if (payload.action) {
+        setPersistedActions(current => current.map(item => item.id === payload.action?.id ? payload.action : item));
+      }
+      if (payload.status !== "succeeded") {
+        setActionWarning([payload.warning || "飞书任务同步失败。", payload.lark_cli_hint].filter(Boolean).join(" "));
+        return;
+      }
+      setActionMessage(mode === "prepare"
+        ? `已进入待确认队列：${payload.action.title}`
+        : `已写入飞书任务：${payload.action.feishuTaskGuid || payload.resource?.taskGuid || payload.action.title}`);
+    } catch {
+      setActionWarning("飞书任务同步失败，请稍后重试。");
+    } finally {
+      setSyncingActionId("");
     }
   }
 
@@ -632,7 +673,7 @@ export default function MigrationCenterPage() {
             <div>
               <div className="section-title">整改行动项跟踪</div>
               <p style={{ color: "var(--text2)", lineHeight: 1.6, fontSize: "0.84rem" }}>
-                对已保存的迁移整改项做状态流转：待处理、处理中、待复检、已关闭。后续版本再接入飞书任务写入确认队列。
+                对已保存的迁移整改项做状态流转：待处理、处理中、待复检、已关闭；需要协同执行时，先进入飞书任务待确认队列，确认后再写入飞书任务。
               </p>
             </div>
             <span className="tag tag-purple">{persistedActions.length} 项</span>
@@ -662,6 +703,7 @@ export default function MigrationCenterPage() {
                     <th style={{ padding: "10px 8px", borderBottom: "1px solid var(--border)" }}>批次/对象</th>
                     <th style={{ padding: "10px 8px", borderBottom: "1px solid var(--border)" }}>责任与期限</th>
                     <th style={{ padding: "10px 8px", borderBottom: "1px solid var(--border)" }}>状态</th>
+                    <th style={{ padding: "10px 8px", borderBottom: "1px solid var(--border)" }}>飞书任务</th>
                     <th style={{ padding: "10px 8px", borderBottom: "1px solid var(--border)" }}>操作</th>
                   </tr>
                 </thead>
@@ -692,6 +734,21 @@ export default function MigrationCenterPage() {
                           <span className={action.priority === "P0" ? "tag tag-red" : action.priority === "P1" ? "tag tag-amber" : "tag"}>{action.priority}</span>
                         </div>
                       </td>
+                      <td style={{ padding: "12px 8px", borderBottom: "1px solid var(--border)", color: "var(--text2)", fontSize: "0.78rem", lineHeight: 1.55 }}>
+                        <span className={action.feishuSyncStatus === "已同步" ? "tag tag-green" : action.feishuSyncStatus === "同步失败" ? "tag tag-red" : action.feishuSyncStatus === "待确认" ? "tag tag-blue" : "tag"}>
+                          {action.feishuSyncStatus || "未同步"}
+                        </span>
+                        {action.feishuTaskUrl ? (
+                          <div style={{ marginTop: 6 }}>
+                            <a href={action.feishuTaskUrl} target="_blank" rel="noreferrer" style={{ color: "var(--accent2)" }}>打开飞书任务</a>
+                          </div>
+                        ) : action.feishuTaskGuid ? (
+                          <div style={{ marginTop: 6 }}>任务ID：{action.feishuTaskGuid}</div>
+                        ) : null}
+                        {action.feishuSyncError && (
+                          <div style={{ color: "var(--amber)", marginTop: 6 }}>原因：{action.feishuSyncError}</div>
+                        )}
+                      </td>
                       <td style={{ padding: "12px 8px", borderBottom: "1px solid var(--border)" }}>
                         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                           {action.status === "待处理" && (
@@ -704,6 +761,21 @@ export default function MigrationCenterPage() {
                             <button className="btn-primary" type="button" disabled={transitioningActionId === action.id} onClick={() => transitionRemediationAction(action.id, "已关闭")}>关闭</button>
                           )}
                           {action.status === "已关闭" && <span style={{ color: "var(--green)", fontSize: "0.8rem" }}>已完成闭环</span>}
+                          {action.feishuSyncStatus === "未同步" && (
+                            <button className="btn-secondary" type="button" disabled={syncingActionId === action.id} onClick={() => syncRemediationActionToFeishu(action, "prepare")}>
+                              {syncingActionId === action.id ? "处理中..." : "准备同步飞书"}
+                            </button>
+                          )}
+                          {action.feishuSyncStatus === "待确认" && (
+                            <button className="btn-primary" type="button" disabled={syncingActionId === action.id} onClick={() => syncRemediationActionToFeishu(action, "confirm")}>
+                              {syncingActionId === action.id ? "写入中..." : "确认写入飞书任务"}
+                            </button>
+                          )}
+                          {action.feishuSyncStatus === "同步失败" && (
+                            <button className="btn-primary" type="button" disabled={syncingActionId === action.id} onClick={() => syncRemediationActionToFeishu(action, "confirm")}>
+                              {syncingActionId === action.id ? "重试中..." : "重新确认写入"}
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
