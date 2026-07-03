@@ -21,6 +21,10 @@ import {
   parseGovernanceActionItems,
 } from '../src/features/governance/model.ts';
 import {
+  buildGovernanceSlaDashboard,
+  deriveGovernanceSla,
+} from '../src/features/governance/sla.ts';
+import {
   buildIssueChangeChainReport,
   deriveChangeNextStatus,
   deriveIssueNextStatus,
@@ -139,6 +143,10 @@ test('delivery management blueprint remains a separate BPM subpage with arrow fl
 });
 
 test('governance workflows define inputs outputs owners states and audit trail', () => {
+  const governancePageSource = readFileSync(new URL('../src/app/governance-workflows/GovernanceWorkflowsClient.tsx', import.meta.url), 'utf8');
+  const governanceRouteSource = readFileSync(new URL('../src/app/api/governance/workflows/route.ts', import.meta.url), 'utf8');
+  const workbenchPageSource = readFileSync(new URL('../src/app/workbench/page.tsx', import.meta.url), 'utf8');
+
   assert.equal(governanceWorkflows.length >= 5, true);
   for (const workflow of governanceWorkflows) {
     assert.ok(workflow.owner);
@@ -148,6 +156,11 @@ test('governance workflows define inputs outputs owners states and audit trail',
     assert.equal(workflow.states.length > 0, true);
     assert.ok(workflow.auditTrail);
   }
+  assert.match(governanceRouteSource, /buildGovernanceSlaDashboard/);
+  assert.match(governancePageSource, /治理 SLA 与待我处理/);
+  assert.match(governancePageSource, /未设 SLA/);
+  assert.match(workbenchPageSource, /待我处理治理事项/);
+  assert.match(workbenchPageSource, /\/api\/governance\/workflows/);
 });
 
 test('data quality rules include high severity closure prerequisites', () => {
@@ -1098,6 +1111,74 @@ test('governance workflow model derives lifecycle transitions', () => {
   assert.equal(deriveGovernanceNextState('project-initiation-review', '待评审', 'return'), '需补充');
   assert.equal(deriveGovernanceNextState('change-control', '待审批', 'reject'), '已拒绝');
   assert.equal(deriveGovernanceNextState('project-closure', '已验收', 'close'), '已归档');
+});
+
+test('governance SLA dashboard highlights overdue and my pending workflow items', () => {
+  const instances = [
+    {
+      id: 'gov-1',
+      workflowId: 'stage-gate-review',
+      workflowName: '阶段门评审',
+      stage: '全生命周期',
+      projectName: '项目A',
+      title: '项目A阶段门评审',
+      owner: '张三',
+      approver: 'PMO',
+      state: '待评审',
+      priority: 'high',
+      deadline: '2026-07-01',
+      source: 'ai-pmo',
+      createdByName: '管理员',
+      createdAt: '2026-07-01T00:00:00.000Z',
+      updatedAt: '2026-07-01T00:00:00.000Z',
+    },
+    {
+      id: 'gov-2',
+      workflowId: 'change-control',
+      workflowName: '变更评审',
+      stage: '执行',
+      projectName: '项目B',
+      title: '项目B范围变更',
+      owner: '李四',
+      approver: '张三',
+      state: '待审批',
+      priority: 'medium',
+      deadline: '2026-07-03',
+      source: 'ai-pmo',
+      createdByName: '李四',
+      createdAt: '2026-07-01T00:00:00.000Z',
+      updatedAt: '2026-07-01T00:00:00.000Z',
+    },
+    {
+      id: 'gov-3',
+      workflowId: 'project-closure',
+      workflowName: '收尾验收',
+      stage: '收尾',
+      projectName: '项目C',
+      title: '项目C归档',
+      owner: '王五',
+      approver: 'PMO',
+      state: '已归档',
+      priority: 'low',
+      deadline: '2026-07-01',
+      source: 'ai-pmo',
+      createdByName: '王五',
+      createdAt: '2026-07-01T00:00:00.000Z',
+      updatedAt: '2026-07-01T00:00:00.000Z',
+      closedAt: '2026-07-01T00:00:00.000Z',
+    },
+  ] as never;
+  const now = new Date('2026-07-03T10:00:00+08:00');
+  const sla = deriveGovernanceSla(instances[0], now);
+  const dashboard = buildGovernanceSlaDashboard(instances, { name: '张三', role: 'user' }, now);
+
+  assert.equal(sla.status, '已逾期');
+  assert.equal(sla.daysLeft, -2);
+  assert.equal(dashboard.summary.totalOpen, 2);
+  assert.equal(dashboard.summary.overdue, 1);
+  assert.equal(dashboard.summary.dueToday, 1);
+  assert.equal(dashboard.summary.myPending, 2);
+  assert.deepEqual(dashboard.workItems.map(item => item.role), ['责任人', '审批人']);
 });
 
 test('governance action item parser supports text rows and structured rows', () => {

@@ -28,6 +28,34 @@ type WorkbenchResponse = {
   workbench: Workbench;
 };
 
+type GovernanceWorkItem = {
+  id: string;
+  workflowName: string;
+  projectName: string;
+  title: string;
+  state: string;
+  role: string;
+  deadline: string | null;
+  sla: { severity: "ok" | "warning" | "critical" | "done"; label: string; nextAction: string };
+  action: string;
+};
+
+type GovernanceWorkbenchResponse = {
+  status: string;
+  governance_workbench?: {
+    summary: {
+      totalOpen: number;
+      overdue: number;
+      dueToday: number;
+      dueSoon: number;
+      missingDeadline: number;
+      myPending: number;
+    };
+    workItems: GovernanceWorkItem[];
+  };
+  warning?: string;
+};
+
 const priorityColor: Record<string, string> = {
   P0: "var(--red)",
   P1: "var(--amber)",
@@ -66,8 +94,16 @@ function StatusTag({ value }: { value: string }) {
   );
 }
 
+function slaColor(severity?: string): string {
+  if (severity === "critical") return "var(--red)";
+  if (severity === "warning") return "var(--amber)";
+  if (severity === "done") return "var(--green)";
+  return "var(--accent2)";
+}
+
 export default function WorkbenchPage() {
   const [data, setData] = useState<WorkbenchResponse | null>(null);
+  const [governanceData, setGovernanceData] = useState<GovernanceWorkbenchResponse | null>(null);
   const [error, setError] = useState("");
   const [actionMessage, setActionMessage] = useState("");
   const [savingSuggestion, setSavingSuggestion] = useState<string | null>(null);
@@ -76,9 +112,14 @@ export default function WorkbenchPage() {
     let cancelled = false;
     async function load() {
       try {
-        const response = await fetch("/api/operating-system/workbench", { cache: "no-store" });
+        const [response, governanceResponse] = await Promise.all([
+          fetch("/api/operating-system/workbench", { cache: "no-store" }),
+          fetch("/api/governance/workflows", { cache: "no-store" }),
+        ]);
         const body = await response.json();
+        const governanceBody = await governanceResponse.json();
         if (!cancelled) setData(body);
+        if (!cancelled) setGovernanceData(governanceBody);
       } catch {
         if (!cancelled) setError("无法生成工作台摘要，请稍后重试。");
       }
@@ -203,6 +244,58 @@ export default function WorkbenchPage() {
                   </div>
                 ))}
               </div>
+            </section>
+
+            <section className="card" style={{ marginBottom: 18 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", marginBottom: 12 }}>
+                <div>
+                  <div className="section-title">🧭 待我处理治理事项</div>
+                  <p style={{ color: "var(--text2)", lineHeight: 1.6, fontSize: "0.84rem" }}>
+                    从治理工作流中心同步待办，优先显示我作为责任人、审批人或管理员需要处理的逾期、今日到期和即将到期事项。
+                  </p>
+                </div>
+                <Link href="/governance-workflows" className="btn-secondary" style={{ textDecoration: "none", whiteSpace: "nowrap" }}>进入治理中心</Link>
+              </div>
+              {governanceData?.warning && (
+                <div style={{ border: "1px solid rgba(245,158,11,0.48)", background: "rgba(245,158,11,0.08)", color: "var(--amber)", borderRadius: 10, padding: 12, marginBottom: 12, fontSize: "0.82rem", lineHeight: 1.6 }}>
+                  {governanceData.warning}
+                </div>
+              )}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10, marginBottom: 12 }}>
+                {[
+                  ["待我处理", governanceData?.governance_workbench?.summary.myPending ?? 0],
+                  ["已逾期", governanceData?.governance_workbench?.summary.overdue ?? 0],
+                  ["今日到期", governanceData?.governance_workbench?.summary.dueToday ?? 0],
+                  ["即将到期", governanceData?.governance_workbench?.summary.dueSoon ?? 0],
+                ].map(([label, value]) => (
+                  <div key={label} style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 10, padding: 12 }}>
+                    <div style={{ color: "var(--text2)", fontSize: "0.76rem" }}>{label}</div>
+                    <strong>{value}</strong>
+                  </div>
+                ))}
+              </div>
+              {(governanceData?.governance_workbench?.workItems.length ?? 0) === 0 ? (
+                <p style={{ color: "var(--text2)", lineHeight: 1.7 }}>
+                  暂无待我处理治理事项。若实际存在待办，请检查治理流程实例中的责任人/审批人与当前账号名称、邮箱或手机号是否一致。
+                </p>
+              ) : (
+                <div style={{ display: "grid", gap: 12 }}>
+                  {governanceData?.governance_workbench?.workItems.slice(0, 6).map(item => (
+                    <div key={item.id} style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 10, padding: 14 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start", flexWrap: "wrap" }}>
+                        <div>
+                          <strong>{item.title}</strong>
+                          <p style={{ color: "var(--text2)", fontSize: "0.8rem", lineHeight: 1.6, marginTop: 6 }}>
+                            {item.workflowName} · {item.projectName} · 我的角色：{item.role} · 状态：{item.state}
+                          </p>
+                        </div>
+                        <span className="tag" style={{ background: `${slaColor(item.sla.severity)}22`, color: slaColor(item.sla.severity) }}>{item.sla.label}</span>
+                      </div>
+                      <p style={{ color: "var(--accent2)", fontSize: "0.8rem", lineHeight: 1.6, marginTop: 6 }}>动作：{item.action}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
             </section>
 
             <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 18, marginBottom: 18 }}>

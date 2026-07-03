@@ -7,6 +7,7 @@ import {
   type GovernanceCreateInput,
   type GovernanceTransitionInput,
 } from "@/features/governance/repository";
+import { buildGovernanceSlaDashboard, deriveGovernanceSla } from "@/features/governance/sla";
 import { writeIntegrationSyncLog } from "@/features/operating-system/sync-logs";
 
 export const runtime = "nodejs";
@@ -20,8 +21,15 @@ function jsonResponse(body: unknown, status = 200, requestId = crypto.randomUUID
 
 export async function GET(): Promise<Response> {
   const requestId = crypto.randomUUID();
+  const user = await getCurrentUser();
   const result = await listGovernanceInstances();
-  return jsonResponse({ request_id: requestId, ...result }, 200, requestId);
+  const governance_workbench = buildGovernanceSlaDashboard(result.instances, user);
+  return jsonResponse({
+    request_id: requestId,
+    ...result,
+    instances: result.instances.map(instance => ({ ...instance, sla: deriveGovernanceSla(instance) })),
+    governance_workbench,
+  }, 200, requestId);
 }
 
 export async function POST(request: Request): Promise<Response> {

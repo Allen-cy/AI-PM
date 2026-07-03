@@ -67,6 +67,10 @@ npm run build
 - 飞书端已建立8张业务表；公开项目记录API会等用户登录和授权模型完成后再开放。
 - 全仓历史 ESLint 基线仍有旧问题；V4新增/改动文件执行独立零错误门禁。
 
+## AI-PMO System V5.3.21
+
+V5.3.21 将治理工作流从“可创建、可流转”推进到“可运营待办”：新增 `src/features/governance/sla.ts`，基于治理流程实例的状态、责任人、审批人、创建人和 `deadline` 计算 SLA 状态、逾期、今日到期、即将到期、未设 SLA 和“待我处理”事项。`/api/governance/workflows` 现在返回 `governance_workbench` 和实例级 `sla`；`/governance-workflows` 新增“治理 SLA 与待我处理”区域，每个流程卡片显示 SLA 建议动作；`/workbench` 新增“待我处理治理事项”区块，将治理流程拉入 PM/PMO 每日工作台。本版本不新增数据库脚本，复用 V5.2.9 治理流程表的 `deadline/owner/approver/state`。
+
 ## AI-PMO System V5.3.20
 
 V5.3.20 将迁移中心补齐“正式切换前最后一公里”：新增 `src/features/migration/cutover-decision.ts` 和 `/api/migration/cutover-decision/report`，基于迁移成熟度、字段映射方案、多轮试迁移批次、整改关闭率、飞书写入配置、权限安全、回滚预案和业务签字生成 Go/No-Go 决策包。`/migration-center` 新增“正式迁移前检查清单与 Go/No-Go 决策包”区域，区分系统证据和人工确认项，展示阻断项、待补充项、下一步动作，并可下载带签字栏的 Markdown 决策材料。本版本不新增数据库脚本，复用 V5.3.13、V5.3.16、V5.3.18 已有迁移证据。

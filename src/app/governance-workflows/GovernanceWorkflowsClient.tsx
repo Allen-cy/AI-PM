@@ -34,12 +34,45 @@ type Instance = {
   deadline?: string | null;
   createdByName?: string | null;
   updatedAt: string;
+  sla?: {
+    status: string;
+    severity: "ok" | "warning" | "critical" | "done";
+    daysLeft: number | null;
+    label: string;
+    nextAction: string;
+  };
+};
+
+type GovernanceWorkItem = {
+  id: string;
+  workflowName: string;
+  projectName: string;
+  title: string;
+  state: string;
+  owner: string;
+  approver: string;
+  priority: "high" | "medium" | "low";
+  deadline: string | null;
+  role: string;
+  sla: NonNullable<Instance["sla"]>;
+  action: string;
 };
 
 type GovernanceResponse = {
   status: string;
   workflows: Workflow[];
   instances: Instance[];
+  governance_workbench?: {
+    summary: {
+      totalOpen: number;
+      overdue: number;
+      dueToday: number;
+      dueSoon: number;
+      missingDeadline: number;
+      myPending: number;
+    };
+    workItems: GovernanceWorkItem[];
+  };
   warning?: string;
 };
 
@@ -93,6 +126,13 @@ function statusColor(state: string): string {
   return "var(--accent2)";
 }
 
+function slaColor(severity?: string): string {
+  if (severity === "critical") return "var(--red)";
+  if (severity === "warning") return "var(--amber)";
+  if (severity === "done") return "var(--green)";
+  return "var(--accent2)";
+}
+
 export default function GovernanceWorkflowsClient() {
   const [data, setData] = useState<GovernanceResponse | null>(null);
   const [form, setForm] = useState<CreateForm>(emptyForm());
@@ -117,7 +157,24 @@ export default function GovernanceWorkflowsClient() {
   }
 
   useEffect(() => {
-    load().catch(() => setMessage("无法读取治理流程，请稍后重试。"));
+    let cancelled = false;
+    async function loadInitialData() {
+      try {
+        const response = await fetch("/api/governance/workflows", { cache: "no-store" });
+        const body = await response.json();
+        if (cancelled) return;
+        setData(body);
+        if (body.workflows?.length && !form.workflowId) {
+          setForm(emptyForm(body.workflows[0]));
+        }
+      } catch {
+        if (!cancelled) setMessage("无法读取治理流程，请稍后重试。");
+      }
+    }
+    void loadInitialData();
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -214,6 +271,60 @@ export default function GovernanceWorkflowsClient() {
         ) : (
           <>
             <section className="card" style={{ marginBottom: 18 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", marginBottom: 12 }}>
+                <div>
+                  <div className="section-title">⏱️ 治理 SLA 与待我处理</div>
+                  <p style={{ color: "var(--text2)", lineHeight: 1.6, fontSize: "0.84rem" }}>
+                    基于流程实例的责任人、审批人、状态和截止日期自动识别逾期、今日到期、即将到期和未设 SLA 的治理事项。
+                  </p>
+                </div>
+                <span className="tag tag-blue">待我处理 {data.governance_workbench?.summary.myPending ?? 0}</span>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10, marginBottom: 12 }}>
+                {[
+                  ["未关闭流程", data.governance_workbench?.summary.totalOpen ?? 0, "当前仍需处理"],
+                  ["已逾期", data.governance_workbench?.summary.overdue ?? 0, "需要立即升级"],
+                  ["今日到期", data.governance_workbench?.summary.dueToday ?? 0, "今天必须处理"],
+                  ["即将到期", data.governance_workbench?.summary.dueSoon ?? 0, "2天内到期"],
+                  ["未设SLA", data.governance_workbench?.summary.missingDeadline ?? 0, "需补截止日期"],
+                ].map(([label, value, hint]) => (
+                  <div key={label} style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 10, padding: 14 }}>
+                    <div style={{ color: "var(--text2)", fontSize: "0.76rem" }}>{label}</div>
+                    <strong style={{ fontSize: "1.1rem" }}>{value}</strong>
+                    <p style={{ color: "var(--text2)", fontSize: "0.74rem", marginTop: 4 }}>{hint}</p>
+                  </div>
+                ))}
+              </div>
+
+              {(data.governance_workbench?.workItems.length ?? 0) === 0 ? (
+                <div style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 10, padding: 14 }}>
+                  <strong>暂无待我处理治理事项</strong>
+                  <p style={{ color: "var(--text2)", lineHeight: 1.6, fontSize: "0.82rem", marginTop: 6 }}>
+                    如果你是责任人或审批人，请确认流程实例中的姓名、邮箱或手机号与当前账号一致。
+                  </p>
+                </div>
+              ) : (
+                <div style={{ display: "grid", gap: 10 }}>
+                  {data.governance_workbench?.workItems.slice(0, 8).map(item => (
+                    <div key={item.id} style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 10, padding: 14 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start", flexWrap: "wrap" }}>
+                        <div>
+                          <strong>{item.title}</strong>
+                          <p style={{ color: "var(--text2)", lineHeight: 1.6, fontSize: "0.8rem", marginTop: 6 }}>
+                            {item.workflowName} · {item.projectName} · 我的角色：{item.role} · 状态：{item.state}
+                          </p>
+                        </div>
+                        <span className="tag" style={{ background: `${slaColor(item.sla.severity)}22`, color: slaColor(item.sla.severity) }}>{item.sla.label}</span>
+                      </div>
+                      <p style={{ color: "var(--accent2)", lineHeight: 1.6, fontSize: "0.8rem", marginTop: 6 }}>动作：{item.action}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+
+            <section className="card" style={{ marginBottom: 18 }}>
               <div className="section-title">🧾 创建治理流程实例</div>
               <form onSubmit={submitCreate} style={{ display: "grid", gap: 12 }}>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
@@ -292,10 +403,20 @@ export default function GovernanceWorkflowsClient() {
                             <span className="tag tag-blue">{instance.workflowName}</span>
                             <span className="tag" style={{ background: `${statusColor(instance.state)}22`, color: statusColor(instance.state) }}>{instance.state}</span>
                             <span className="tag tag-amber">优先级：{priorityLabel[instance.priority]}</span>
+                            {instance.sla && (
+                              <span className="tag" style={{ background: `${slaColor(instance.sla.severity)}22`, color: slaColor(instance.sla.severity) }}>
+                                {instance.sla.label}
+                              </span>
+                            )}
                           </div>
                           <p style={{ color: "var(--text2)", fontSize: "0.82rem", lineHeight: 1.6, marginTop: 8 }}>
                             {instance.projectName} · 责任人：{instance.owner} · 审批：{instance.approver} · deadline：{instance.deadline || "未设定"}
                           </p>
+                          {instance.sla && (
+                            <p style={{ color: slaColor(instance.sla.severity), fontSize: "0.8rem", lineHeight: 1.6, marginTop: 4 }}>
+                              SLA：{instance.sla.status}；建议动作：{instance.sla.nextAction}
+                            </p>
+                          )}
                         </div>
                         <a href={`/api/governance/workflows/${instance.id}/report`} className="btn-secondary" style={{ textDecoration: "none", alignSelf: "start" }}>下载输出</a>
                       </div>
