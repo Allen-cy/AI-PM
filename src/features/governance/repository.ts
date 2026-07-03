@@ -31,6 +31,9 @@ export interface GovernanceCreateInput {
   priority?: "high" | "medium" | "low";
   deadline?: string;
   actionItems?: unknown;
+  strategyVersion?: string;
+  strategyRuleId?: string;
+  strategySummary?: string;
 }
 
 export interface GovernanceTransitionInput {
@@ -261,7 +264,16 @@ export async function createGovernanceInstance(input: GovernanceCreateInput, use
         source: "ai-pmo",
         created_by: user?.id ?? null,
         created_by_name: user?.name || user?.email || null,
-        metadata: { required_inputs: workflow.inputs, expected_outputs: workflow.outputs },
+        metadata: {
+          required_inputs: workflow.inputs,
+          expected_outputs: workflow.outputs,
+          governance_strategy: {
+            version: input.strategyVersion?.trim() || null,
+            rule_id: input.strategyRuleId?.trim() || null,
+            summary: input.strategySummary?.trim() || null,
+            history_boundary: "策略版本只影响新建流程推荐；历史治理流程和已生成审计包不自动改写。",
+          },
+        },
       })
       .select("*")
       .maybeSingle();
@@ -286,7 +298,14 @@ export async function createGovernanceInstance(input: GovernanceCreateInput, use
         actor_name: user?.name || user?.email || "系统",
         actor_role: user?.role || "system",
         decision: "created",
-        outputs: { business_impact: businessImpact },
+        outputs: {
+          business_impact: businessImpact,
+          governance_strategy: {
+            version: input.strategyVersion?.trim() || null,
+            rule_id: input.strategyRuleId?.trim() || null,
+            summary: input.strategySummary?.trim() || null,
+          },
+        },
       })
       .select("id")
       .maybeSingle();

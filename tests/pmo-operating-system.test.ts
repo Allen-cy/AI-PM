@@ -35,6 +35,11 @@ import {
   buildGovernanceImpactPackage,
 } from '../src/features/governance/impact.ts';
 import {
+  evaluateGovernanceStrategy,
+  GOVERNANCE_STRATEGY_VERSION,
+  listGovernanceStrategyCatalog,
+} from '../src/features/governance/strategy.ts';
+import {
   buildIssueChangeChainReport,
   deriveChangeNextStatus,
   deriveIssueNextStatus,
@@ -156,6 +161,8 @@ test('governance workflows define inputs outputs owners states and audit trail',
   const governancePageSource = readFileSync(new URL('../src/app/governance-workflows/GovernanceWorkflowsClient.tsx', import.meta.url), 'utf8');
   const governanceRouteSource = readFileSync(new URL('../src/app/api/governance/workflows/route.ts', import.meta.url), 'utf8');
   const governanceAuditRouteSource = readFileSync(new URL('../src/app/api/governance/audit-package/route.ts', import.meta.url), 'utf8');
+  const governanceStrategyRouteSource = readFileSync(new URL('../src/app/api/governance/strategy/route.ts', import.meta.url), 'utf8');
+  const governanceRepositorySource = readFileSync(new URL('../src/features/governance/repository.ts', import.meta.url), 'utf8');
   const workbenchPageSource = readFileSync(new URL('../src/app/workbench/page.tsx', import.meta.url), 'utf8');
 
   assert.equal(governanceWorkflows.length >= 5, true);
@@ -172,11 +179,55 @@ test('governance workflows define inputs outputs owners states and audit trail',
   assert.match(governancePageSource, /治理 SLA 与待我处理/);
   assert.match(governancePageSource, /治理结果业务联动/);
   assert.match(governancePageSource, /治理审计包导出/);
+  assert.match(governancePageSource, /治理策略配置与预览/);
+  assert.match(governancePageSource, /\/api\/governance\/strategy/);
   assert.match(governancePageSource, /\/api\/governance\/audit-package/);
   assert.match(governancePageSource, /未设 SLA/);
   assert.match(governanceAuditRouteSource, /governanceAuditCollectionMarkdown/);
+  assert.match(governanceStrategyRouteSource, /evaluateGovernanceStrategy/);
+  assert.match(governanceRepositorySource, /governance_strategy/);
   assert.match(workbenchPageSource, /待我处理治理事项/);
   assert.match(workbenchPageSource, /\/api\/governance\/workflows/);
+});
+
+test('governance strategy previews require classification fields before recommending workflows', () => {
+  const preview = evaluateGovernanceStrategy({
+    projectName: '策略预览项目',
+    projectType: '',
+    riskLevel: '',
+  }, { baseDate: new Date('2026-07-03T00:00:00.000Z') });
+
+  assert.equal(preview.status, 'needs_input');
+  assert.equal(preview.recommendation, null);
+  assert.equal(preview.blockers.some(item => item.includes('项目等级')), true);
+  assert.equal(preview.blockers.some(item => item.includes('项目类型')), true);
+  assert.equal(preview.blockers.some(item => item.includes('风险等级')), true);
+  assert.match(preview.strategy.historyBoundary, /历史治理流程/);
+});
+
+test('governance strategy recommends strong stage gates for S key high risk projects', () => {
+  const preview = evaluateGovernanceStrategy({
+    projectName: '战略重点项目A',
+    projectLevel: 'S级',
+    projectType: '信息化交付',
+    riskLevel: '高',
+    isKeyProject: true,
+    currentStage: '执行',
+  }, { baseDate: new Date('2026-07-03T00:00:00.000Z') });
+
+  assert.equal(preview.status, 'ready');
+  assert.equal(preview.recommendation?.strategyVersion, GOVERNANCE_STRATEGY_VERSION);
+  assert.equal(preview.recommendation?.ruleId, 's-key-high-risk');
+  assert.equal(preview.recommendation?.primaryWorkflowId, 'stage-gate-review');
+  assert.equal(preview.recommendation?.recommendedWorkflowIds.includes('risk-escalation'), true);
+  assert.equal(preview.recommendation?.priority, 'high');
+  assert.equal(preview.recommendation?.deadlineDays, 1);
+  assert.equal(preview.recommendation?.deadlineDate, '2026-07-04');
+  assert.equal(preview.recommendation?.creationDefaults.strategyRuleId, 's-key-high-risk');
+
+  const catalog = listGovernanceStrategyCatalog();
+  assert.equal(catalog.version, GOVERNANCE_STRATEGY_VERSION);
+  assert.equal(catalog.rules.some(rule => rule.id === 'c-level-governance'), true);
 });
 
 test('data quality rules include high severity closure prerequisites', () => {

@@ -77,6 +77,12 @@ type GovernanceResponse = {
   status: string;
   workflows: Workflow[];
   instances: Instance[];
+  governance_strategy?: {
+    version: string;
+    name: string;
+    effectiveDate: string;
+    historyBoundary: string;
+  };
   governance_workbench?: {
     summary: {
       totalOpen: number;
@@ -101,6 +107,46 @@ type GovernanceResponse = {
   warning?: string;
 };
 
+type StrategyForm = {
+  projectName: string;
+  projectLevel: string;
+  projectType: string;
+  riskLevel: string;
+  isKeyProject: boolean;
+  currentStage: string;
+};
+
+type StrategyPreview = {
+  status: "ready" | "needs_input";
+  strategy: {
+    version: string;
+    name: string;
+    effectiveDate: string;
+    historyBoundary: string;
+  };
+  input: StrategyForm;
+  blockers: string[];
+  warnings: string[];
+  recommendation: null | {
+    strategyVersion: string;
+    ruleId: string;
+    ruleName: string;
+    governanceLevel: string;
+    primaryWorkflowId: string;
+    recommendedWorkflowIds: string[];
+    owner: string;
+    approver: string;
+    priority: "high" | "medium" | "low";
+    deadlineDays: number;
+    deadlineDate: string;
+    requiredInputs: string[];
+    expectedOutputs: string[];
+    sla: string;
+    reasons: string[];
+    creationDefaults: CreateForm;
+  };
+};
+
 type CreateForm = {
   workflowId: string;
   projectName: string;
@@ -112,6 +158,9 @@ type CreateForm = {
   triggerSummary: string;
   inputSummary: string;
   actionItems: string;
+  strategyVersion: string;
+  strategyRuleId: string;
+  strategySummary: string;
 };
 
 const priorityLabel: Record<string, string> = {
@@ -141,6 +190,9 @@ function emptyForm(workflow?: Workflow): CreateForm {
     triggerSummary: workflow?.trigger || "",
     inputSummary: "",
     actionItems: "",
+    strategyVersion: "",
+    strategyRuleId: "",
+    strategySummary: "",
   };
 }
 
@@ -173,6 +225,16 @@ export default function GovernanceWorkflowsClient() {
   const [transitionOutput, setTransitionOutput] = useState<Record<string, string>>({});
   const [transitionActions, setTransitionActions] = useState<Record<string, string>>({});
   const [auditFilter, setAuditFilter] = useState({ projectName: "", dateFrom: "", dateTo: "" });
+  const [strategyForm, setStrategyForm] = useState<StrategyForm>({
+    projectName: "",
+    projectLevel: "",
+    projectType: "",
+    riskLevel: "",
+    isKeyProject: false,
+    currentStage: "",
+  });
+  const [strategyPreview, setStrategyPreview] = useState<StrategyPreview | null>(null);
+  const [strategyBusy, setStrategyBusy] = useState(false);
 
   const selectedWorkflow = useMemo(
     () => data?.workflows.find(workflow => workflow.id === form.workflowId),
@@ -228,6 +290,45 @@ export default function GovernanceWorkflowsClient() {
       approver: current.approver || workflow?.approver || "",
       triggerSummary: current.triggerSummary || workflow?.trigger || "",
     }));
+  }
+
+  async function previewStrategy() {
+    setStrategyBusy(true);
+    setMessage("");
+    try {
+      const response = await fetch("/api/governance/strategy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(strategyForm),
+      });
+      const body = await response.json() as StrategyPreview & { warning?: string };
+      if (!response.ok) {
+        setMessage(body.warning || "治理策略预览失败。");
+        setStrategyPreview(null);
+      } else {
+        setStrategyPreview(body);
+        setMessage(body.status === "needs_input" ? "治理策略需要补齐关键字段后才能推荐流程。" : "治理策略预览已生成，可带入创建流程。");
+      }
+    } catch {
+      setMessage("治理策略预览失败。");
+      setStrategyPreview(null);
+    } finally {
+      setStrategyBusy(false);
+    }
+  }
+
+  function applyStrategyToCreateForm() {
+    if (!strategyPreview?.recommendation) return;
+    const defaults = strategyPreview.recommendation.creationDefaults;
+    setForm(current => ({
+      ...current,
+      ...defaults,
+      projectName: defaults.projectName || strategyForm.projectName || current.projectName,
+      title: defaults.title.includes("待补充项目名称") && strategyForm.projectName
+        ? `${strategyForm.projectName}-${data?.workflows.find(workflow => workflow.id === defaults.workflowId)?.name || "治理流程"}`
+        : defaults.title,
+    }));
+    setMessage("已将治理策略带入创建流程表单，请复核输入材料后提交。");
   }
 
   async function submitCreate(event: FormEvent<HTMLFormElement>) {
@@ -422,6 +523,144 @@ export default function GovernanceWorkflowsClient() {
             </section>
 
             <section className="card" style={{ marginBottom: 18 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap", marginBottom: 12 }}>
+                <div>
+                  <div className="section-title">🧭 治理策略配置与预览</div>
+                  <p style={{ color: "var(--text2)", lineHeight: 1.6, fontSize: "0.84rem" }}>
+                    按项目等级、类型、风险等级、重点项目标记和当前阶段推荐治理流程、审批人、必填输入和 SLA；策略只影响新建流程，不改写历史审计包。
+                  </p>
+                </div>
+                <span className="tag tag-purple">{data.governance_strategy?.version || strategyPreview?.strategy.version || "策略待加载"}</span>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10, marginBottom: 12 }}>
+                <label style={{ display: "grid", gap: 6 }}>
+                  <span style={{ color: "var(--text2)", fontSize: "0.78rem" }}>项目名称</span>
+                  <input value={strategyForm.projectName} onChange={event => setStrategyForm(current => ({ ...current, projectName: event.target.value }))} placeholder="用于带入创建流程" style={{ padding: 10, borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface2)", color: "var(--text)" }} />
+                </label>
+                <label style={{ display: "grid", gap: 6 }}>
+                  <span style={{ color: "var(--text2)", fontSize: "0.78rem" }}>项目等级</span>
+                  <select value={strategyForm.projectLevel} onChange={event => setStrategyForm(current => ({ ...current, projectLevel: event.target.value }))} style={{ padding: 10, borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface2)", color: "var(--text)" }}>
+                    <option value="">请选择</option>
+                    <option value="S">S级</option>
+                    <option value="A">A级</option>
+                    <option value="B">B级</option>
+                    <option value="C">C级</option>
+                  </select>
+                </label>
+                <label style={{ display: "grid", gap: 6 }}>
+                  <span style={{ color: "var(--text2)", fontSize: "0.78rem" }}>项目类型</span>
+                  <input value={strategyForm.projectType} onChange={event => setStrategyForm(current => ({ ...current, projectType: event.target.value }))} placeholder="如：信息化、交付、研发" style={{ padding: 10, borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface2)", color: "var(--text)" }} />
+                </label>
+                <label style={{ display: "grid", gap: 6 }}>
+                  <span style={{ color: "var(--text2)", fontSize: "0.78rem" }}>风险等级</span>
+                  <select value={strategyForm.riskLevel} onChange={event => setStrategyForm(current => ({ ...current, riskLevel: event.target.value }))} style={{ padding: 10, borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface2)", color: "var(--text)" }}>
+                    <option value="">请选择</option>
+                    <option value="高">高</option>
+                    <option value="中">中</option>
+                    <option value="低">低</option>
+                  </select>
+                </label>
+                <label style={{ display: "grid", gap: 6 }}>
+                  <span style={{ color: "var(--text2)", fontSize: "0.78rem" }}>当前阶段</span>
+                  <select value={strategyForm.currentStage} onChange={event => setStrategyForm(current => ({ ...current, currentStage: event.target.value }))} style={{ padding: 10, borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface2)", color: "var(--text)" }}>
+                    <option value="">可选</option>
+                    <option value="启动">启动</option>
+                    <option value="规划">规划</option>
+                    <option value="执行">执行</option>
+                    <option value="监控">监控</option>
+                    <option value="收尾">收尾</option>
+                  </select>
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, paddingTop: 22, color: "var(--text2)", fontSize: "0.82rem" }}>
+                  <input type="checkbox" checked={strategyForm.isKeyProject} onChange={event => setStrategyForm(current => ({ ...current, isKeyProject: event.target.checked }))} />
+                  重点项目
+                </label>
+              </div>
+
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: strategyPreview ? 12 : 0 }}>
+                <button type="button" className="btn-primary" onClick={previewStrategy} disabled={strategyBusy}>
+                  {strategyBusy ? "预览中..." : "预览治理策略"}
+                </button>
+                <button type="button" className="btn-secondary" onClick={applyStrategyToCreateForm} disabled={!strategyPreview?.recommendation}>
+                  应用到创建流程
+                </button>
+              </div>
+
+              {strategyPreview && (
+                <div style={{ display: "grid", gap: 12 }}>
+                  {(strategyPreview.blockers.length > 0 || strategyPreview.warnings.length > 0) && (
+                    <div style={{ background: "var(--surface2)", border: `1px solid ${strategyPreview.blockers.length > 0 ? "var(--amber)" : "var(--border)"}`, borderRadius: 10, padding: 14 }}>
+                      {strategyPreview.blockers.length > 0 && (
+                        <>
+                          <strong style={{ color: "var(--amber)" }}>需要补齐后才能推荐策略</strong>
+                          <ul style={{ color: "var(--text2)", lineHeight: 1.7, paddingLeft: 18, marginTop: 8 }}>
+                            {strategyPreview.blockers.map(item => <li key={item}>{item}</li>)}
+                          </ul>
+                        </>
+                      )}
+                      {strategyPreview.warnings.length > 0 && (
+                        <>
+                          <strong style={{ color: "var(--accent2)" }}>提示</strong>
+                          <ul style={{ color: "var(--text2)", lineHeight: 1.7, paddingLeft: 18, marginTop: 8 }}>
+                            {strategyPreview.warnings.map(item => <li key={item}>{item}</li>)}
+                          </ul>
+                        </>
+                      )}
+                    </div>
+                  )}
+
+                  {strategyPreview.recommendation && (
+                    <div style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 10, padding: 14 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "flex-start" }}>
+                        <div>
+                          <strong>{strategyPreview.recommendation.ruleName}</strong>
+                          <p style={{ color: "var(--text2)", lineHeight: 1.6, fontSize: "0.8rem", marginTop: 6 }}>
+                            治理强度：{strategyPreview.recommendation.governanceLevel} · 审批：{strategyPreview.recommendation.approver} · SLA：{strategyPreview.recommendation.deadlineDays}天
+                          </p>
+                        </div>
+                        <span className="tag" style={{ background: `${impactColor(strategyPreview.recommendation.priority === "high" ? "high" : strategyPreview.recommendation.priority === "medium" ? "medium" : "low")}22`, color: impactColor(strategyPreview.recommendation.priority === "high" ? "high" : strategyPreview.recommendation.priority === "medium" ? "medium" : "low") }}>
+                          优先级：{priorityLabel[strategyPreview.recommendation.priority]}
+                        </span>
+                      </div>
+
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, marginTop: 12 }}>
+                        <div>
+                          <strong style={{ fontSize: "0.84rem" }}>推荐流程</strong>
+                          <ul style={{ color: "var(--text2)", lineHeight: 1.7, paddingLeft: 18, marginTop: 8 }}>
+                            {strategyPreview.recommendation.recommendedWorkflowIds.map(id => {
+                              const workflow = data.workflows.find(item => item.id === id);
+                              return <li key={id}>{workflow?.name || id}{id === strategyPreview.recommendation?.primaryWorkflowId ? "（首选创建）" : ""}</li>;
+                            })}
+                          </ul>
+                        </div>
+                        <div>
+                          <strong style={{ fontSize: "0.84rem" }}>必填输入</strong>
+                          <ul style={{ color: "var(--text2)", lineHeight: 1.7, paddingLeft: 18, marginTop: 8 }}>
+                            {strategyPreview.recommendation.requiredInputs.slice(0, 8).map(item => <li key={item}>{item}</li>)}
+                          </ul>
+                        </div>
+                        <div>
+                          <strong style={{ fontSize: "0.84rem" }}>输出成果</strong>
+                          <ul style={{ color: "var(--text2)", lineHeight: 1.7, paddingLeft: 18, marginTop: 8 }}>
+                            {strategyPreview.recommendation.expectedOutputs.slice(0, 8).map(item => <li key={item}>{item}</li>)}
+                          </ul>
+                        </div>
+                      </div>
+
+                      <p style={{ color: "var(--accent2)", lineHeight: 1.6, fontSize: "0.8rem", marginTop: 10 }}>
+                        SLA：{strategyPreview.recommendation.sla}；建议截止：{strategyPreview.recommendation.deadlineDate}
+                      </p>
+                      <p style={{ color: "var(--text2)", lineHeight: 1.6, fontSize: "0.78rem", marginTop: 6 }}>
+                        策略边界：{strategyPreview.strategy.historyBoundary}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </section>
+
+            <section className="card" style={{ marginBottom: 18 }}>
               <div className="section-title">🧾 创建治理流程实例</div>
               <form onSubmit={submitCreate} style={{ display: "grid", gap: 12 }}>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
@@ -466,6 +705,15 @@ export default function GovernanceWorkflowsClient() {
                     <strong>{selectedWorkflow.stage} · {selectedWorkflow.name}</strong>
                     <p style={{ color: "var(--text2)", fontSize: "0.82rem", lineHeight: 1.6, marginTop: 8 }}>触发：{selectedWorkflow.trigger}</p>
                     <p style={{ color: "var(--accent2)", fontSize: "0.82rem", lineHeight: 1.6, marginTop: 6 }}>时限：{selectedWorkflow.deadlineRule}</p>
+                  </div>
+                )}
+
+                {form.strategyVersion && (
+                  <div style={{ background: "var(--surface2)", border: "1px solid var(--accent2)", borderRadius: 10, padding: 14 }}>
+                    <strong>已应用治理策略：{form.strategyVersion}</strong>
+                    <p style={{ color: "var(--text2)", fontSize: "0.8rem", lineHeight: 1.6, marginTop: 6 }}>
+                      规则：{form.strategyRuleId}。提交后策略版本会写入流程元数据和创建事件，用于后续审计追溯；历史审计包不受新策略影响。
+                    </p>
                   </div>
                 )}
 

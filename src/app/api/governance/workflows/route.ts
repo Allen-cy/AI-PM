@@ -1,6 +1,7 @@
 import { getCurrentUser } from "@/features/auth/server";
 import { syncGovernanceEventToFeishu } from "@/features/governance/feishu-sync";
 import { buildGovernanceImpactDashboard, buildGovernanceImpactPackage } from "@/features/governance/impact";
+import { listGovernanceStrategyCatalog } from "@/features/governance/strategy";
 import {
   createGovernanceInstance,
   listGovernanceInstances,
@@ -26,12 +27,14 @@ export async function GET(): Promise<Response> {
   const result = await listGovernanceInstances();
   const governance_workbench = buildGovernanceSlaDashboard(result.instances, user);
   const governance_impact = buildGovernanceImpactDashboard(result.instances);
+  const governance_strategy = listGovernanceStrategyCatalog();
   return jsonResponse({
     request_id: requestId,
     ...result,
     instances: result.instances.map(instance => ({ ...instance, sla: deriveGovernanceSla(instance), businessImpact: buildGovernanceImpactPackage({ instance }) })),
     governance_workbench,
     governance_impact,
+    governance_strategy,
   }, 200, requestId);
 }
 

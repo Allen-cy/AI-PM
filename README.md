@@ -67,6 +67,10 @@ npm run build
 - 飞书端已建立8张业务表；公开项目记录API会等用户登录和授权模型完成后再开放。
 - 全仓历史 ESLint 基线仍有旧问题；V4新增/改动文件执行独立零错误门禁。
 
+## AI-PMO System V5.3.24
+
+V5.3.24 将治理工作流从“人工选择流程”升级为“按项目分层推荐治理策略”：新增 `src/features/governance/strategy.ts` 和 `/api/governance/strategy`，按项目等级（S/A/B/C）、项目类型、风险等级、重点项目标记和当前阶段推荐治理流程、审批人、优先级、必填输入、输出成果和 SLA。`/governance-workflows` 新增“治理策略配置与预览”区域，缺少项目等级、项目类型或风险等级时只提示补齐，不静默套用默认策略；策略可一键带入创建流程。创建治理流程时会把策略版本、规则 ID 和策略摘要写入现有元数据与创建事件，保证后续审计可追溯；本版本不新增 SQL，历史治理流程和已生成审计包不被自动改写。
+
 ## AI-PMO System V5.3.23
 
 V5.3.23 将治理下载从“流程输出报告”升级为“可审计归档包”：新增 `src/features/governance/audit-package.ts`，单流程审计包覆盖输入材料、审批意见、状态流转、附件索引、输出成果、行动项闭环、SLA 与业务联动建议，并对密钥类内容做基础脱敏。新增 `/api/governance/audit-package`，支持按项目名称和日期范围下载 PMO 治理审计包汇总；原 `/api/governance/workflows/[id]/report` 升级为单流程审计包下载，并在启用登录保护时要求先登录。`/governance-workflows` 新增“治理审计包导出”区域，支持汇总导出和单流程导出。本版本不新增 SQL，复用 V5.2.9 治理表。
