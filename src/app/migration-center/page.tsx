@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import type { MigrationAnalysisResult } from "@/features/migration/package";
+import { buildMigrationRemediationActions, type MigrationAnalysisResult } from "@/features/migration/package";
 import type { MigrationBatchRecord } from "@/features/migration/repository";
 import {
   assessMigrationReadiness,
@@ -64,6 +64,7 @@ export default function MigrationCenterPage() {
   const [downloadingReport, setDownloadingReport] = useState(false);
 
   const result = useMemo(() => assessMigrationReadiness(selectedAreaIds), [selectedAreaIds]);
+  const remediationActions = useMemo(() => analysis ? buildMigrationRemediationActions(analysis) : [], [analysis]);
 
   useEffect(() => {
     let active = true;
@@ -445,6 +446,31 @@ export default function MigrationCenterPage() {
                     <ul style={{ margin: "0 0 0 18px", color: "var(--accent2)", lineHeight: 1.7, fontSize: "0.82rem" }}>
                       {analysis.nextActions.map(action => <li key={action}>{action}</li>)}
                     </ul>
+                  </div>
+
+                  <div style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 12, padding: 14 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", marginBottom: 10 }}>
+                      <h2 style={{ fontSize: "0.95rem", margin: 0 }}>整改行动项</h2>
+                      <span className="tag tag-blue">{remediationActions.length}项</span>
+                    </div>
+                    <div style={{ display: "grid", gap: 10 }}>
+                      {remediationActions.map(action => (
+                        <div key={action.id} style={{ borderTop: "1px solid var(--border)", paddingTop: 10 }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "flex-start" }}>
+                            <strong style={{ fontSize: "0.84rem", lineHeight: 1.5 }}>{action.title}</strong>
+                            <span className={action.priority === "P0" ? "tag tag-red" : action.priority === "P1" ? "tag tag-amber" : "tag"}>
+                              {action.priority}
+                            </span>
+                          </div>
+                          <p style={{ color: "var(--text2)", lineHeight: 1.55, fontSize: "0.76rem", marginTop: 6 }}>
+                            责任角色：{action.ownerRole} · 建议截止：{action.dueDate} · 状态：{action.status}
+                          </p>
+                          <p style={{ color: "var(--green)", lineHeight: 1.55, fontSize: "0.76rem", marginTop: 6 }}>
+                            验收标准：{action.acceptanceCriteria}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
                   </div>
 
                   <div style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 12, padding: 14 }}>

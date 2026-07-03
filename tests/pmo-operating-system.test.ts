@@ -64,6 +64,7 @@ import {
 } from '../src/features/migration/readiness.ts';
 import {
   analyzeMigrationRows,
+  buildMigrationRemediationActions,
   buildMigrationReviewReport,
   buildMigrationTemplateSheets,
   summarizeMigrationBatch,
@@ -235,6 +236,20 @@ test('migration review report exports field mapping and fix checklist as markdow
   assert.match(await response.text(), /阶段门结论/);
 });
 
+test('migration quality issues become accountable remediation actions', () => {
+  const analysis = analyzeMigrationRows('项目台账', [
+    { 项目编号: 'P-001', 项目名称: '迁移项目A', 项目经理: '', 项目状态: '进行中', 计划开始日期: '错误日期', 计划完成日期: '2026-08-01', 合同金额: 'abc' },
+  ], new Date('2026-07-03T00:00:00.000Z'));
+  const actions = buildMigrationRemediationActions(analysis);
+  const report = buildMigrationReviewReport({ analysis, batchName: '项目台账整改评审' });
+
+  assert.equal(actions.some(action => action.priority === 'P0' && action.ownerRole === '项目经理'), true);
+  assert.equal(actions.every(action => action.status === '待处理' && action.dueDate >= '2026-07-04'), true);
+  assert.equal(actions.some(action => action.acceptanceCriteria.includes('重新上传样本')), true);
+  assert.match(report, /## 四、整改行动项/);
+  assert.match(report, /责任角色/);
+});
+
 test('migration center is discoverable from home and integration center', () => {
   const homeSource = readFileSync(new URL('../src/app/page.tsx', import.meta.url), 'utf8');
   const integrationSource = readFileSync(new URL('../src/app/integration-center/page.tsx', import.meta.url), 'utf8');
@@ -251,6 +266,7 @@ test('migration center is discoverable from home and integration center', () => 
   assert.match(migrationPageSource, /保存为迁移批次/);
   assert.match(migrationPageSource, /历史迁移批次/);
   assert.match(migrationPageSource, /下载评审报告\/修复清单/);
+  assert.match(migrationPageSource, /整改行动项/);
 });
 
 test('workbench summary derives action priorities from dashboard facts', () => {

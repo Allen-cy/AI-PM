@@ -58,6 +58,19 @@ export interface MigrationReviewReportInput {
   generatedBy?: string | null;
 }
 
+export interface MigrationRemediationAction {
+  id: string;
+  title: string;
+  priority: "P0" | "P1" | "P2";
+  ownerRole: string;
+  dueDate: string;
+  status: "待处理";
+  sourceIssue: string;
+  sampleRefs: string[];
+  recommendation: string;
+  acceptanceCriteria: string;
+}
+
 type RawRow = Record<string, unknown>;
 
 const FIELD_ALIASES: Record<string, string[]> = {
@@ -322,6 +335,66 @@ export function summarizeMigrationBatch(analysis: MigrationAnalysisResult): Migr
   };
 }
 
+function dateByOffset(baseIso: string, days: number): string {
+  const base = Number.isNaN(Date.parse(baseIso)) ? new Date() : new Date(baseIso);
+  base.setDate(base.getDate() + days);
+  return base.toISOString().slice(0, 10);
+}
+
+function priorityForIssue(severity: MigrationIssueSeverity): MigrationRemediationAction["priority"] {
+  if (severity === "high") return "P0";
+  if (severity === "medium") return "P1";
+  return "P2";
+}
+
+function ownerForIssue(issue: MigrationQualityIssue): string {
+  if (/字段|映射|编号|重复/.test(issue.title)) return "数据负责人";
+  if (/金额|合同|回款|应收/.test(issue.title)) return "业财负责人";
+  if (/日期|计划|到期/.test(issue.title)) return "项目经理";
+  if (/风险|应对|严重/.test(issue.title)) return "风险负责人";
+  return "项目经理";
+}
+
+function acceptanceForIssue(issue: MigrationQualityIssue): string {
+  if (issue.id === "missing-required-fields") return "补齐缺失字段或形成字段映射方案，并重新上传样本后缺失字段数为0。";
+  if (issue.id.startsWith("duplicate-")) return "完成唯一编号清洗，重新上传样本后重复编号数为0。";
+  if (issue.id.startsWith("invalid-date-")) return "统一日期格式为 YYYY-MM-DD 或飞书可识别日期，重新上传样本后日期异常数为0。";
+  if (issue.id.startsWith("invalid-amount-")) return "统一金额为数字格式，重新上传样本后金额异常数为0。";
+  if (issue.id === "high-risk-without-action") return "所有高风险均补齐应对动作、责任人和复核日期。";
+  if (issue.id.startsWith("empty-")) return "补齐空值记录，重新上传样本后该字段空值数为0。";
+  return "按修复建议完成数据修正，并通过下一轮试迁移复检。";
+}
+
+export function buildMigrationRemediationActions(analysis: MigrationAnalysisResult): MigrationRemediationAction[] {
+  if (analysis.qualityIssues.length === 0) {
+    return [{
+      id: `migration-review-${analysis.objectName}`,
+      title: `${analysis.objectName}进入试迁移前复核`,
+      priority: "P2",
+      ownerRole: "项目经理",
+      dueDate: dateByOffset(analysis.generatedAt, 3),
+      status: "待处理",
+      sourceIssue: "未发现基础质量问题",
+      sampleRefs: [],
+      recommendation: "保留当前字段映射和质量报告，进入试迁移阶段门前完成一次人工复核。",
+      acceptanceCriteria: "PM/PMO确认字段口径、样本范围和权限边界后，允许进入试迁移。",
+    }];
+  }
+
+  return analysis.qualityIssues.map((issue, index) => ({
+    id: `migration-fix-${issue.id}-${index + 1}`,
+    title: `修复${analysis.objectName}：${issue.title}`,
+    priority: priorityForIssue(issue.severity),
+    ownerRole: ownerForIssue(issue),
+    dueDate: dateByOffset(analysis.generatedAt, issue.severity === "high" ? 1 : issue.severity === "medium" ? 3 : 5),
+    status: "待处理",
+    sourceIssue: issue.title,
+    sampleRefs: issue.sampleRefs,
+    recommendation: issue.recommendation,
+    acceptanceCriteria: acceptanceForIssue(issue),
+  }));
+}
+
 function escapeMarkdownCell(value: unknown): string {
   return String(value ?? "-").replace(/\|/g, "\\|").replace(/\n/g, " ");
 }
@@ -342,6 +415,7 @@ function severityLabel(severity: MigrationIssueSeverity): string {
 export function buildMigrationReviewReport(input: MigrationReviewReportInput): string {
   const analysis = input.analysis;
   const metrics = summarizeMigrationBatch(analysis);
+  const remediationActions = buildMigrationRemediationActions(analysis);
   const batchName = input.batchName?.trim() || `${analysis.objectName}-试迁移评审`;
   const issueRows = analysis.qualityIssues.length > 0
     ? analysis.qualityIssues.map(issue => [
@@ -359,6 +433,14 @@ export function buildMigrationReviewReport(input: MigrationReviewReportInput): s
     escapeMarkdownCell(mapping.sourceField || "-"),
     escapeMarkdownCell(mapping.status === "matched" ? "直接匹配" : mapping.status === "alias" ? "别名匹配" : "缺失"),
     escapeMarkdownCell(mapping.note),
+  ].join(" | "));
+  const actionRows = remediationActions.map(action => [
+    escapeMarkdownCell(action.title),
+    action.priority,
+    escapeMarkdownCell(action.ownerRole),
+    action.dueDate,
+    action.status,
+    escapeMarkdownCell(action.acceptanceCriteria),
   ].join(" | "));
 
   return [
@@ -388,11 +470,17 @@ export function buildMigrationReviewReport(input: MigrationReviewReportInput): s
     "| --- | --- | ---: | --- | --- | --- |",
     ...issueRows,
     "",
-    "## 四、下一步动作",
+    "## 四、整改行动项",
+    "",
+    "| 行动项 | 优先级 | 责任角色 | 建议截止日期 | 状态 | 验收标准 |",
+    "| --- | --- | --- | --- | --- | --- |",
+    ...actionRows,
+    "",
+    "## 五、下一步动作",
     "",
     ...analysis.nextActions.map(action => `- ${action}`),
     "",
-    "## 五、迁移评审签字",
+    "## 六、迁移评审签字",
     "",
     "| 角色 | 姓名 | 意见 | 日期 |",
     "| --- | --- | --- | --- |",
@@ -401,7 +489,7 @@ export function buildMigrationReviewReport(input: MigrationReviewReportInput): s
     "| 业务负责人 |  |  |  |",
     "| 数据负责人 |  |  |  |",
     "",
-    "## 六、生成边界",
+    "## 七、生成边界",
     "",
     "- 本报告基于上传样本文件的字段和基础质量规则自动生成，不代表正式全量迁移结果。",
     "- 系统不会在生成本报告时写入飞书业务表；正式迁移前仍需人工复核字段口径、权限范围、历史数据完整性和试点反馈。",
