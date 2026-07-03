@@ -67,6 +67,10 @@ npm run build
 - 飞书端已建立8张业务表；公开项目记录API会等用户登录和授权模型完成后再开放。
 - 全仓历史 ESLint 基线仍有旧问题；V4新增/改动文件执行独立零错误门禁。
 
+## AI-PMO System V5.3.23
+
+V5.3.23 将治理下载从“流程输出报告”升级为“可审计归档包”：新增 `src/features/governance/audit-package.ts`，单流程审计包覆盖输入材料、审批意见、状态流转、附件索引、输出成果、行动项闭环、SLA 与业务联动建议，并对密钥类内容做基础脱敏。新增 `/api/governance/audit-package`，支持按项目名称和日期范围下载 PMO 治理审计包汇总；原 `/api/governance/workflows/[id]/report` 升级为单流程审计包下载，并在启用登录保护时要求先登录。`/governance-workflows` 新增“治理审计包导出”区域，支持汇总导出和单流程导出。本版本不新增 SQL，复用 V5.2.9 治理表。
+
 ## AI-PMO System V5.3.22
 
 V5.3.22 将治理审批结果从“流程内部状态”推进到“跨模块可追溯联动”：新增 `src/features/governance/impact.ts`，将立项、阶段门、变更、风险升级、收尾验收等治理状态转换为项目台账、风险登记册和报告工厂可引用的业务影响包。`/api/governance/workflows` 现在返回 `governance_impact` 和实例级 `businessImpact`；`/governance-workflows` 新增“治理结果业务联动”区域，每个流程卡片展示建议写回字段、下一步动作和“需人工确认”的写回模式。治理流转会把业务影响包写入事件输出和集成审计日志，避免静默改写业务主数据。报告工厂会引用治理流程结果、SLA、逾期和写回建议，生成含治理依据的周报/月报/项目例外报告。本版本不新增数据库脚本，复用 V5.2.9 治理流程表与 V5.2.7 集成日志表。

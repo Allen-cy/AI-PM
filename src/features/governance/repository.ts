@@ -1,8 +1,13 @@
 import { getAuthSupabase, isAuthStorageConfigured, type AppUser } from "../auth/server.ts";
 import { governanceWorkflows } from "../pmo-operating-system.ts";
+import {
+  buildGovernanceAuditCollectionMarkdown,
+  buildGovernanceAuditPackage,
+  filterGovernanceAuditInstances,
+  type GovernanceAuditCollectionFilter,
+} from "./audit-package.ts";
 import { buildGovernanceImpactPackage, type GovernanceImpactPackage } from "./impact.ts";
 import {
-  buildGovernanceReport,
   deriveGovernanceNextState,
   initialGovernanceState,
   isTerminalGovernanceState,
@@ -392,10 +397,48 @@ export async function governanceReportMarkdown(id: string): Promise<{
     return { status: bundle.status, warning: bundle.warning };
   }
   const instance = bundle.instance;
-  const businessImpact = buildGovernanceImpactPackage({ instance, actions: bundle.actions });
+  const auditPackage = buildGovernanceAuditPackage({
+    instance,
+    events: bundle.events,
+    actions: bundle.actions,
+  });
   return {
     status: "succeeded",
-    markdown: buildGovernanceReport({ instance, events: bundle.events, actions: bundle.actions, businessImpact }),
-    filename: `${instance.workflowName}-${instance.projectName}-${instance.id.slice(0, 8)}.md`,
+    markdown: auditPackage.markdown,
+    filename: `${instance.workflowName}-${instance.projectName}-治理审计包-${instance.id.slice(0, 8)}.md`,
+  };
+}
+
+export async function governanceAuditCollectionMarkdown(input: GovernanceAuditCollectionFilter & { limit?: number }): Promise<{
+  status: "succeeded" | "not_configured" | "failed";
+  markdown?: string;
+  filename?: string;
+  warning?: string;
+}> {
+  const result = await listGovernanceInstances(input.limit ?? 80);
+  if (result.status !== "succeeded") {
+    return { status: result.status, warning: result.warning };
+  }
+  const filtered = filterGovernanceAuditInstances(result.instances, input).slice(0, input.limit ?? 80);
+  const packages = [];
+  for (const instance of filtered) {
+    const bundle = await getGovernanceInstanceBundle(instance.id);
+    if (bundle.status === "succeeded" && bundle.instance) {
+      packages.push(buildGovernanceAuditPackage({
+        instance: bundle.instance,
+        events: bundle.events,
+        actions: bundle.actions,
+      }));
+    }
+  }
+  const suffix = [
+    input.projectName ? input.projectName.replace(/[^\p{L}\p{N}-]+/gu, "-") : "全部项目",
+    input.dateFrom || "不限开始",
+    input.dateTo || "不限结束",
+  ].join("-");
+  return {
+    status: "succeeded",
+    markdown: buildGovernanceAuditCollectionMarkdown({ packages, filter: input }),
+    filename: `PMO治理审计包汇总-${suffix}.md`,
   };
 }

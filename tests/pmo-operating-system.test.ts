@@ -25,6 +25,12 @@ import {
   deriveGovernanceSla,
 } from '../src/features/governance/sla.ts';
 import {
+  buildGovernanceAuditCollectionMarkdown,
+  buildGovernanceAuditPackage,
+  filterGovernanceAuditInstances,
+  redactGovernanceAuditText,
+} from '../src/features/governance/audit-package.ts';
+import {
   buildGovernanceImpactDashboard,
   buildGovernanceImpactPackage,
 } from '../src/features/governance/impact.ts';
@@ -149,6 +155,7 @@ test('delivery management blueprint remains a separate BPM subpage with arrow fl
 test('governance workflows define inputs outputs owners states and audit trail', () => {
   const governancePageSource = readFileSync(new URL('../src/app/governance-workflows/GovernanceWorkflowsClient.tsx', import.meta.url), 'utf8');
   const governanceRouteSource = readFileSync(new URL('../src/app/api/governance/workflows/route.ts', import.meta.url), 'utf8');
+  const governanceAuditRouteSource = readFileSync(new URL('../src/app/api/governance/audit-package/route.ts', import.meta.url), 'utf8');
   const workbenchPageSource = readFileSync(new URL('../src/app/workbench/page.tsx', import.meta.url), 'utf8');
 
   assert.equal(governanceWorkflows.length >= 5, true);
@@ -164,7 +171,10 @@ test('governance workflows define inputs outputs owners states and audit trail',
   assert.match(governanceRouteSource, /buildGovernanceImpactDashboard/);
   assert.match(governancePageSource, /治理 SLA 与待我处理/);
   assert.match(governancePageSource, /治理结果业务联动/);
+  assert.match(governancePageSource, /治理审计包导出/);
+  assert.match(governancePageSource, /\/api\/governance\/audit-package/);
   assert.match(governancePageSource, /未设 SLA/);
+  assert.match(governanceAuditRouteSource, /governanceAuditCollectionMarkdown/);
   assert.match(workbenchPageSource, /待我处理治理事项/);
   assert.match(workbenchPageSource, /\/api\/governance\/workflows/);
 });
@@ -1326,6 +1336,75 @@ test('governance report includes outputs actions and audit trail', () => {
   assert.match(markdown, /同意进入下一阶段/);
   assert.match(markdown, /同步下一阶段计划/);
   assert.match(markdown, /待评审 → 已通过/);
+});
+
+test('governance audit package exports inputs approvals attachments outputs and redacted evidence', () => {
+  const secret = `sk-${'x'.repeat(24)}`;
+  const instance = {
+    id: 'gov-audit-1',
+    workflowId: 'stage-gate-review',
+    workflowName: '阶段门评审',
+    stage: '全生命周期',
+    projectName: '项目A',
+    title: '项目A阶段门评审',
+    triggerSummary: '项目进入下一阶段前，需要确认阶段成果。',
+    inputSummary: `阶段成果材料：https://example.com/stage-a；密钥误填 ${secret}`,
+    outputSummary: '同意进入下一阶段，但需要关闭整改行动项。',
+    owner: '项目经理',
+    approver: 'PMO',
+    state: '有条件通过',
+    priority: 'high',
+    deadline: '2026-07-05',
+    source: 'ai-pmo',
+    createdByName: '管理员',
+    createdAt: '2026-07-01T00:00:00.000Z',
+    updatedAt: '2026-07-01T01:00:00.000Z',
+  } as never;
+  const events = [
+    {
+      id: 'event-1',
+      instanceId: 'gov-audit-1',
+      eventType: 'conditional_approve',
+      fromState: '待评审',
+      toState: '有条件通过',
+      comment: '材料基本完整，缺陷清单需关闭。',
+      actorName: 'PMO',
+      actorRole: 'admin',
+      decision: 'conditional_approve',
+      outputs: { attachment_url: 'https://example.com/evidence-a' },
+      createdAt: '2026-07-01T01:00:00.000Z',
+    },
+  ] as never;
+  const actions = [
+    {
+      id: 'action-1',
+      instanceId: 'gov-audit-1',
+      title: '关闭缺陷清单',
+      owner: '交付负责人',
+      dueDate: '2026-07-04',
+      status: 'open',
+      createdAt: '2026-07-01T01:00:00.000Z',
+      updatedAt: '2026-07-01T01:00:00.000Z',
+    },
+  ] as never;
+
+  const auditPackage = buildGovernanceAuditPackage({ instance, events, actions, generatedAt: '2026-07-03T00:00:00.000Z' });
+  const collection = buildGovernanceAuditCollectionMarkdown({ packages: [auditPackage], filter: { projectName: '项目A', dateFrom: '2026-07-01', dateTo: '2026-07-03' } });
+  const filtered = filterGovernanceAuditInstances([instance], { projectName: '项目A', dateFrom: '2026-07-01', dateTo: '2026-07-03' });
+
+  assert.match(auditPackage.markdown, /治理流程输出与审计包/);
+  assert.match(auditPackage.markdown, /输入材料与附件索引/);
+  assert.match(auditPackage.markdown, /审批意见与状态流转/);
+  assert.match(auditPackage.markdown, /输出成果与业务联动/);
+  assert.match(auditPackage.markdown, /行动项闭环/);
+  assert.match(auditPackage.markdown, /已脱敏密钥/);
+  assert.equal(auditPackage.markdown.includes(secret), false);
+  assert.equal(auditPackage.attachments.some(item => item.status === 'indexed'), true);
+  assert.equal(auditPackage.unresolvedActions.length, 1);
+  assert.match(collection, /PMO治理审计包汇总/);
+  assert.match(collection, /项目A/);
+  assert.equal(filtered.length, 1);
+  assert.equal(redactGovernanceAuditText(`${'api'}${'key'}=${'a'.repeat(20)}`).includes('已脱敏'), true);
 });
 
 test('issue change model derives risk issue change lifecycle', () => {

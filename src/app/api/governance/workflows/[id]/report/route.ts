@@ -1,3 +1,4 @@
+import { getCurrentUser } from "@/features/auth/server";
 import { governanceReportMarkdown } from "@/features/governance/repository";
 
 export const runtime = "nodejs";
@@ -7,6 +8,17 @@ export async function GET(
   context: { params: Promise<{ id: string }> },
 ): Promise<Response> {
   const requestId = crypto.randomUUID();
+  const user = await getCurrentUser();
+  if (process.env.AUTH_REQUIRED === "true" && !user) {
+    return Response.json({
+      request_id: requestId,
+      status: "unauthorized",
+      warning: "请先登录后再下载治理审计包。",
+    }, {
+      status: 401,
+      headers: { "Cache-Control": "no-store", "X-Request-Id": requestId },
+    });
+  }
   const { id } = await context.params;
   const result = await governanceReportMarkdown(id);
   if (result.status !== "succeeded" || !result.markdown) {

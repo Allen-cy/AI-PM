@@ -172,11 +172,21 @@ export default function GovernanceWorkflowsClient() {
   const [transitionNote, setTransitionNote] = useState<Record<string, string>>({});
   const [transitionOutput, setTransitionOutput] = useState<Record<string, string>>({});
   const [transitionActions, setTransitionActions] = useState<Record<string, string>>({});
+  const [auditFilter, setAuditFilter] = useState({ projectName: "", dateFrom: "", dateTo: "" });
 
   const selectedWorkflow = useMemo(
     () => data?.workflows.find(workflow => workflow.id === form.workflowId),
     [data?.workflows, form.workflowId],
   );
+
+  const auditDownloadHref = useMemo(() => {
+    const params = new URLSearchParams();
+    if (auditFilter.projectName.trim()) params.set("projectName", auditFilter.projectName.trim());
+    if (auditFilter.dateFrom) params.set("dateFrom", auditFilter.dateFrom);
+    if (auditFilter.dateTo) params.set("dateTo", auditFilter.dateTo);
+    const query = params.toString();
+    return `/api/governance/audit-package${query ? `?${query}` : ""}`;
+  }, [auditFilter]);
 
   async function load() {
     const response = await fetch("/api/governance/workflows", { cache: "no-store" });
@@ -383,6 +393,35 @@ export default function GovernanceWorkflowsClient() {
             </section>
 
             <section className="card" style={{ marginBottom: 18 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap", marginBottom: 12 }}>
+                <div>
+                  <div className="section-title">📦 治理审计包导出</div>
+                  <p style={{ color: "var(--text2)", lineHeight: 1.6, fontSize: "0.84rem" }}>
+                    导出内容包含输入材料、审批意见、附件索引、输出成果、行动项、SLA 和业务联动建议；适合 PMO 月度治理复盘和外部审计留档。
+                  </p>
+                </div>
+                <a href={auditDownloadHref} className="btn-primary" style={{ textDecoration: "none" }}>下载汇总审计包</a>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
+                <label style={{ display: "grid", gap: 6 }}>
+                  <span style={{ color: "var(--text2)", fontSize: "0.78rem" }}>项目名称筛选</span>
+                  <input value={auditFilter.projectName} onChange={event => setAuditFilter(current => ({ ...current, projectName: event.target.value }))} placeholder="不填则导出全部" style={{ padding: 10, borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface2)", color: "var(--text)" }} />
+                </label>
+                <label style={{ display: "grid", gap: 6 }}>
+                  <span style={{ color: "var(--text2)", fontSize: "0.78rem" }}>开始日期</span>
+                  <input type="date" value={auditFilter.dateFrom} onChange={event => setAuditFilter(current => ({ ...current, dateFrom: event.target.value }))} style={{ padding: 10, borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface2)", color: "var(--text)" }} />
+                </label>
+                <label style={{ display: "grid", gap: 6 }}>
+                  <span style={{ color: "var(--text2)", fontSize: "0.78rem" }}>结束日期</span>
+                  <input type="date" value={auditFilter.dateTo} onChange={event => setAuditFilter(current => ({ ...current, dateTo: event.target.value }))} style={{ padding: 10, borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface2)", color: "var(--text)" }} />
+                </label>
+              </div>
+              <p style={{ color: "var(--text2)", fontSize: "0.78rem", lineHeight: 1.6, marginTop: 10 }}>
+                单流程审计包可在每条流程实例右侧下载；汇总审计包会按上方筛选条件导出当前治理实例。
+              </p>
+            </section>
+
+            <section className="card" style={{ marginBottom: 18 }}>
               <div className="section-title">🧾 创建治理流程实例</div>
               <form onSubmit={submitCreate} style={{ display: "grid", gap: 12 }}>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
@@ -493,7 +532,7 @@ export default function GovernanceWorkflowsClient() {
                             </div>
                           )}
                         </div>
-                        <a href={`/api/governance/workflows/${instance.id}/report`} className="btn-secondary" style={{ textDecoration: "none", alignSelf: "start" }}>下载输出</a>
+                        <a href={`/api/governance/workflows/${instance.id}/report`} className="btn-secondary" style={{ textDecoration: "none", alignSelf: "start" }}>下载审计包</a>
                       </div>
 
                       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10, marginTop: 12 }}>
