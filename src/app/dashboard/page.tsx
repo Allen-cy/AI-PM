@@ -1,10 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { buildDashboardData, DEFAULT_DASHBOARD_DATA, normalizeProjectRows } from "@/features/dashboard/normalizer";
 import type { DashboardData } from "@/features/dashboard/types";
 import { feishuTableUrl } from "@/features/feishu/links";
+import {
+  buildRiskSensitivityImpactDashboard,
+  type RiskSensitivityImpactDashboard,
+  type RiskSensitivityImpactLevel,
+} from "@/features/risk/sensitivity-impact";
 
 const DASHBOARD_CACHE_KEY = "ai-pmo-dashboard-data-v3";
 const LEGACY_DASHBOARD_CACHE_KEYS = ["ai-pmo-dashboard-data", "ai-pmo-dashboard-data-v2"];
@@ -280,9 +285,22 @@ function DonutChart({ data }: { data: DashboardData["projectLevels"] }) {
   );
 }
 
-function HealthMatrix({ data }: { data: DashboardData["healthMatrix"] }) {
+function sensitivityLevelLabel(level: RiskSensitivityImpactLevel): string {
+  if (level === "high") return "高敏";
+  if (level === "medium") return "中敏";
+  return "低敏";
+}
+
+function sensitivityLevelColor(level: RiskSensitivityImpactLevel): string {
+  if (level === "high") return "#ef4444";
+  if (level === "medium") return "#f59e0b";
+  return "#10b981";
+}
+
+function HealthMatrix({ data, sensitivityImpact }: { data: DashboardData["healthMatrix"]; sensitivityImpact: RiskSensitivityImpactDashboard }) {
   const statusColors = { green: "#10b981", yellow: "#f59e0b", red: "#ef4444" };
   const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+  const impactByProject = new Map(sensitivityImpact.projectImpacts.map(item => [item.projectName, item]));
   return (
     <div style={{ position: "relative", minHeight: 330, background: "var(--surface2)", borderRadius: 12, padding: "24px 24px 60px 72px", overflow: "hidden" }}>
       <div style={{ fontSize: "0.72rem", color: "var(--text2)", position: "absolute", left: 18, top: "46%", transform: "rotate(-90deg)", transformOrigin: "center", whiteSpace: "nowrap" }}>成本健康度（越高越好）</div>
@@ -315,22 +333,26 @@ function HealthMatrix({ data }: { data: DashboardData["healthMatrix"] }) {
         {data.map((p, i) => {
           const x = clamp(((p.progressDev + 25) / 50) * 100, 3, 97);
           const y = clamp(100 - ((p.costHealth - 40) / 60) * 100, 3, 97);
+          const impact = impactByProject.get(p.name);
+          const title = impact
+            ? `${p.name}: 进度${p.progressDev}%, 成本${p.costHealth}%；敏感性${sensitivityLevelLabel(impact.level)}，首要因素${impact.topFactor}，需人工确认`
+            : `${p.name}: 进度${p.progressDev}%, 成本${p.costHealth}%`;
           return (
             <div
               key={i}
-              title={`${p.name}: 进度${p.progressDev}%, 成本${p.costHealth}%`}
-              aria-label={`${p.name}: 进度偏差${p.progressDev}%, 成本健康度${p.costHealth}%`}
+              title={title}
+              aria-label={title}
               style={{
                 position: "absolute",
                 left: `${x}%`,
                 top: `${y}%`,
-                width: 12,
-                height: 12,
+                width: impact?.level === "high" ? 15 : 12,
+                height: impact?.level === "high" ? 15 : 12,
                 borderRadius: "50%",
                 background: statusColors[p.status as keyof typeof statusColors],
                 opacity: 0.9,
-                border: "2px solid rgba(255,255,255,0.72)",
-                boxShadow: "0 4px 10px rgba(15,23,42,0.18)",
+                border: impact ? `3px solid ${sensitivityLevelColor(impact.level)}` : "2px solid rgba(255,255,255,0.72)",
+                boxShadow: impact ? `0 0 0 4px ${sensitivityLevelColor(impact.level)}24, 0 4px 10px rgba(15,23,42,0.18)` : "0 4px 10px rgba(15,23,42,0.18)",
                 transform: "translate(-50%, -50%)",
               }}
             />
@@ -419,6 +441,7 @@ function KeyProjectProgressBoard({ data }: { data: DashboardData["keyProjects"] 
 export default function DashboardPage() {
   const [riskFilter, setRiskFilter] = useState("全部");
   const [dashboardData, setDashboardData] = useState<DashboardData>(DEFAULT_DASHBOARD_DATA);
+  const riskSensitivityImpact = useMemo(() => buildRiskSensitivityImpactDashboard(dashboardData), [dashboardData]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -611,7 +634,7 @@ export default function DashboardPage() {
             项目健康矩阵
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 300px", gap: 24 }}>
-            <HealthMatrix data={dashboardData.healthMatrix} />
+            <HealthMatrix data={dashboardData.healthMatrix} sensitivityImpact={riskSensitivityImpact} />
             <div style={{ borderLeft: "1px solid var(--border)", paddingLeft: 24 }}>
               <div style={{ fontSize: "0.75rem", color: "var(--text2)", marginBottom: 12 }}>健康度说明</div>
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -633,6 +656,34 @@ export default function DashboardPage() {
                 <div style={{ fontSize: "0.75rem", color: "var(--text2)", lineHeight: 1.6 }}>
                   X轴：进度偏差 = (计划进度 - 实际进度) / 计划进度 × 100%<br />
                   Y轴：成本健康度 = (预算 - 实际支出) / 预算 × 100%
+                </div>
+              </div>
+              <div style={{ marginTop: 14, padding: 12, background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.22)", borderRadius: 8 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", marginBottom: 8 }}>
+                  <div style={{ fontSize: "0.7rem", color: "var(--text2)" }}>敏感性分析建议</div>
+                  <a href="/api/risk/sensitivity-impact" target="_blank" rel="noopener noreferrer" style={{ fontSize: "0.68rem", color: "var(--accent2)", textDecoration: "none" }}>
+                    查看影响包
+                  </a>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
+                  <div style={{ fontSize: "0.75rem", color: "var(--text2)" }}>高敏：<span style={{ color: "var(--red)", fontWeight: 700 }}>{riskSensitivityImpact.summary.highSensitivity}</span></div>
+                  <div style={{ fontSize: "0.75rem", color: "var(--text2)" }}>待确认：<span style={{ color: "var(--amber)", fontWeight: 700 }}>{riskSensitivityImpact.summary.pendingConfirmation}</span></div>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {riskSensitivityImpact.projectImpacts.slice(0, 4).map(item => (
+                    <div key={item.projectId || item.projectName} style={{ padding: "8px 10px", borderRadius: 8, background: "var(--surface)", border: "1px solid var(--border)" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 4 }}>
+                        <span style={{ fontSize: "0.74rem", fontWeight: 700, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.projectName}</span>
+                        <span style={{ fontSize: "0.68rem", color: sensitivityLevelColor(item.level), fontWeight: 700 }}>{sensitivityLevelLabel(item.level)}</span>
+                      </div>
+                      <div style={{ fontSize: "0.68rem", color: "var(--text2)", lineHeight: 1.45 }}>
+                        {item.topFactor} · 摆动值{item.topSwing} · 建议{item.suggestedHealthStatus === item.currentHealthStatus ? "保持当前分区" : "复核健康分区"}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ marginTop: 10, fontSize: "0.68rem", color: "var(--text2)", lineHeight: 1.5 }}>
+                  敏感性建议不自动写回飞书；健康分区调整必须由项目负责人或PMO确认。
                 </div>
               </div>
             </div>

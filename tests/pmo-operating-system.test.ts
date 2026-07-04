@@ -54,6 +54,7 @@ import {
 import { buildFinanceCockpit } from '../src/features/finance/cockpit.ts';
 import { buildRiskEscalationDraftDashboard } from '../src/features/risk/escalation.ts';
 import { buildRiskIntegrationDashboard } from '../src/features/risk/integration.ts';
+import { buildRiskSensitivityImpactDashboard } from '../src/features/risk/sensitivity-impact.ts';
 import {
   buildReportEvidence,
   buildReportFactoryPackage,
@@ -654,6 +655,86 @@ test('workbench summary gives setup action when dashboard data is unavailable', 
   assert.equal(summary.kpis[0].value, '待连接');
 });
 
+test('risk sensitivity impact package turns ledger facts into health and report signals', () => {
+  const dashboard: DashboardData = {
+    source: { type: 'feishu', name: '飞书项目台账', generatedAt: '2026-07-04T00:00:00.000Z' },
+    kpi: {
+      totalProjects: 1,
+      totalContract: 180,
+      totalCollection: 60,
+      collectionRate: 33.3,
+      receivable: 120,
+    },
+    statusDistribution: [],
+    monthlyTrend: [],
+    regionDistribution: [],
+    paymentGroups: [],
+    projectLevels: [],
+    healthMatrix: [
+      {
+        name: '高敏项目A',
+        progressDev: -12,
+        costHealth: 76,
+        status: 'yellow',
+      },
+    ],
+    keyProjects: [],
+    riskProjects: [],
+    upcomingPayments: [],
+    records: [
+      {
+        项目编号: 'PRJ-SEN-1',
+        项目名称: '高敏项目A',
+        省份: '北京',
+        客户名称: '客户A',
+        项目状态: '执行中',
+        项目等级: 'A',
+        项目类型: '交付',
+        产品类别: 'AI PMO',
+        项目经理: '张三',
+        当前进度: 0.52,
+        合同金额: 180,
+        已回款金额: 60,
+        应收金额: 120,
+        回款率: 0.333,
+        成本健康度: 76,
+        进度偏差: -12,
+        风险类型: '回款风险',
+        风险等级: '高',
+        风险状态: '应对中',
+        风险趋势: '恶化',
+        计划成本: 100,
+        实际成本: 118,
+      },
+    ],
+  };
+
+  const impact = buildRiskSensitivityImpactDashboard(dashboard);
+
+  assert.equal(impact.summary.analyzedProjects, 1);
+  assert.equal(impact.summary.highSensitivity >= 1, true);
+  assert.equal(impact.summary.healthMatrixSuggestions >= 1, true);
+  assert.equal(impact.projectImpacts[0].projectName, '高敏项目A');
+  assert.equal(impact.projectImpacts[0].requiresConfirmation, true);
+  assert.match(impact.projectImpacts[0].reportFact, /需人工确认/);
+  assert.match(impact.boundary, /不自动写回飞书/);
+  assert.equal(impact.reportFacts.some(item => item.includes('高敏项目A')), true);
+});
+
+test('risk sensitivity impact is discoverable from api dashboard and sensitivity page', () => {
+  const apiSource = readFileSync(new URL('../src/app/api/risk/sensitivity-impact/route.ts', import.meta.url), 'utf8');
+  const dashboardSource = readFileSync(new URL('../src/app/dashboard/page.tsx', import.meta.url), 'utf8');
+  const sensitivityPageSource = readFileSync(new URL('../src/app/risk/sensitivity/page.tsx', import.meta.url), 'utf8');
+  const reportRouteSource = readFileSync(new URL('../src/app/api/reports/route.ts', import.meta.url), 'utf8');
+
+  assert.match(apiSource, /buildRiskSensitivityImpactDashboard/);
+  assert.match(dashboardSource, /buildRiskSensitivityImpactDashboard/);
+  assert.match(dashboardSource, /\/api\/risk\/sensitivity-impact/);
+  assert.match(sensitivityPageSource, /系统联动口径/);
+  assert.match(sensitivityPageSource, /\/api\/risk\/sensitivity-impact/);
+  assert.match(reportRouteSource, /riskSensitivityImpact/);
+});
+
 test('field mapping diagnostics detect missing Chinese fields and aliases', () => {
   const checks = evaluateFeishuFieldMappings({
     configuredTables: ['project'],
@@ -1022,6 +1103,7 @@ test('report factory cites data sources and turns meeting minutes into actions',
     ],
     asOf: new Date('2026-07-02T00:00:00.000Z'),
   });
+  const riskSensitivityImpact = buildRiskSensitivityImpactDashboard(dashboard);
   const request = {
     type: 'meeting' as const,
     projectName: '智慧校园一期',
@@ -1038,6 +1120,7 @@ test('report factory cites data sources and turns meeting minutes into actions',
     sourceStatus: 'live' as const,
     model: 'MiniMax-M3',
     riskIntegration,
+    riskSensitivityImpact,
     governanceImpact: buildGovernanceImpactDashboard([{
       id: 'gov-rpt-1',
       workflowId: 'project-closure',
@@ -1064,16 +1147,20 @@ test('report factory cites data sources and turns meeting minutes into actions',
 
   assert.equal(dataPackage.dataSources.some(source => source.source === 'feishu'), true);
   assert.equal(dataPackage.dataSources.some(source => source.label === '风险联动包'), true);
+  assert.equal(dataPackage.dataSources.some(source => source.label === '风险敏感性影响包'), true);
   assert.equal(dataPackage.dataSources.some(source => source.label === '治理工作流与审批联动'), true);
   assert.equal(dataPackage.financeFacts.some(item => item.includes('验收阻塞回款')), true);
   assert.equal(dataPackage.riskFacts.some(item => item.includes('风险联动')), true);
+  assert.equal(dataPackage.riskFacts.some(item => item.includes('敏感性分析')), true);
   assert.equal(dataPackage.riskFacts.some(item => item.includes('治理联动')), true);
   assert.equal(actionItems.length, 2);
   assert.equal(actionItems[1].priority, 'P0');
   assert.equal(evidence.scene, 'report');
   assert.equal(evidence.citations.includes('飞书项目台账'), true);
   assert.equal(evidence.citations.includes('风险联动包'), true);
+  assert.equal(evidence.citations.includes('风险敏感性影响包'), true);
   assert.equal(evidence.citations.includes('治理工作流与审批联动'), true);
+  assert.equal(evidence.basis.some(item => item.label === '敏感性分析依据'), true);
   assert.equal(evidence.suggestedActions.length, 2);
   assert.match(markdown, /数据来源与生成边界/);
   assert.match(markdown, /补齐客户付款条件清单/);

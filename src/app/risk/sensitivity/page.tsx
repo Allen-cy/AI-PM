@@ -86,6 +86,24 @@ export default function RiskSensitivityPage() {
           </div>
         )}
 
+        <section className="card" style={{ marginBottom: 22, background: "linear-gradient(135deg, rgba(59,130,246,0.08), rgba(245,158,11,0.08))" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 18, alignItems: "center" }}>
+            <div>
+              <div className="section-title"><span>🔗</span>系统联动口径</div>
+              <div style={{ color: "var(--text2)", fontSize: "0.84rem", lineHeight: 1.7 }}>
+                当前页面用于手工录入变量并下载项目级分析报告；项目组合看板和报告工厂会通过
+                <code style={{ margin: "0 4px", padding: "2px 6px", borderRadius: 6, background: "var(--surface2)" }}>/api/risk/sensitivity-impact</code>
+                从飞书/当前项目台账自动生成“敏感性影响包”。影响包只输出健康矩阵建议和报告事实，不自动写回飞书，不自动改变项目健康状态。
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
+              <Link href="/dashboard" className="btn-secondary" style={{ textDecoration: "none" }}>查看项目健康矩阵</Link>
+              <Link href="/reports" className="btn-secondary" style={{ textDecoration: "none" }}>进入报告工厂</Link>
+              <a href="/api/risk/sensitivity-impact" target="_blank" rel="noopener noreferrer" className="btn-secondary" style={{ textDecoration: "none" }}>查看影响包API</a>
+            </div>
+          </div>
+        </section>
+
         <section className="card" style={{ marginBottom: 22 }}>
           <div className="section-title"><span>📥</span>输入信息</div>
           <div style={{ display: "grid", gridTemplateColumns: "280px 1fr", gap: 16, alignItems: "start" }}>

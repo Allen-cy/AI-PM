@@ -6,6 +6,7 @@ import { buildFinanceCockpit } from "@/features/finance/cockpit";
 import { persistAiEvidence } from "@/features/ai/evidence-repository";
 import { withAuditResult } from "@/features/ai/evidence";
 import { buildRiskIntegrationDashboard } from "@/features/risk/integration";
+import { buildRiskSensitivityImpactDashboard } from "@/features/risk/sensitivity-impact";
 import { filterDashboardByProjectAccess, projectAccessMode } from "@/features/security/authorization";
 import { loadProjectAccessGrantsForUser, writeOperationAudit } from "@/features/security/repository";
 import { buildGovernanceImpactDashboard } from "@/features/governance/impact";
@@ -144,6 +145,7 @@ export async function POST(request: Request): Promise<Response> {
     risks: riskResult.risks,
     dashboard,
   });
+  const riskSensitivityImpact = buildRiskSensitivityImpactDashboard(dashboard);
   const context: ReportFactoryContext = {
     dashboard,
     finance,
@@ -152,6 +154,7 @@ export async function POST(request: Request): Promise<Response> {
     model: "configured-llm",
     governanceImpact,
     riskIntegration,
+    riskSensitivityImpact,
   };
   const dataPackage = buildReportFactoryPackage(body, context);
   const actionItems = actionItemsFor(body, context);
