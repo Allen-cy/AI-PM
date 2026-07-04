@@ -34,6 +34,10 @@ export interface GovernanceCreateInput {
   strategyVersion?: string;
   strategyRuleId?: string;
   strategySummary?: string;
+  sourceType?: string;
+  sourceId?: string;
+  sourceLinkId?: string;
+  sourceSummary?: string;
 }
 
 export interface GovernanceTransitionInput {
@@ -273,6 +277,12 @@ export async function createGovernanceInstance(input: GovernanceCreateInput, use
             summary: input.strategySummary?.trim() || null,
             history_boundary: "策略版本只影响新建流程推荐；历史治理流程和已生成审计包不自动改写。",
           },
+          source: {
+            type: input.sourceType?.trim() || null,
+            id: input.sourceId?.trim() || null,
+            link_id: input.sourceLinkId?.trim() || null,
+            summary: input.sourceSummary?.trim() || null,
+          },
         },
       })
       .select("*")
@@ -304,6 +314,12 @@ export async function createGovernanceInstance(input: GovernanceCreateInput, use
             version: input.strategyVersion?.trim() || null,
             rule_id: input.strategyRuleId?.trim() || null,
             summary: input.strategySummary?.trim() || null,
+          },
+          source: {
+            type: input.sourceType?.trim() || null,
+            id: input.sourceId?.trim() || null,
+            link_id: input.sourceLinkId?.trim() || null,
+            summary: input.sourceSummary?.trim() || null,
           },
         },
       })

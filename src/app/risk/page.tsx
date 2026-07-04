@@ -92,6 +92,37 @@ type RiskIntegration = {
   boundary: string;
 };
 
+type RiskEscalationDraftType = "governance_workflow" | "unified_action";
+
+type RiskEscalationDraft = {
+  id: string;
+  type: RiskEscalationDraftType;
+  projectName: string;
+  title: string;
+  owner: string;
+  deadline: string;
+  priority: "P0" | "P1" | "P2";
+  sourceReason: string;
+  confirmationRequired: boolean;
+  targetRoute: string;
+  workflowId?: string;
+  approver?: string;
+  targetModule?: string;
+};
+
+type RiskEscalationDraftDashboard = {
+  summary: {
+    candidateRiskLinks: number;
+    governanceDrafts: number;
+    actionDrafts: number;
+    highPriorityDrafts: number;
+    pendingConfirmation: number;
+  };
+  governanceDrafts: RiskEscalationDraft[];
+  actionDrafts: RiskEscalationDraft[];
+  boundary: string;
+};
+
 const categories = Object.keys(categoryLabels) as RiskCategory[];
 const impactAreas = Object.keys(impactAreaLabels) as RiskImpactArea[];
 const stages: RiskStage[] = ["立项", "规划", "执行", "监控", "验收", "结项", "全生命周期"];
@@ -307,6 +338,9 @@ export default function RiskPage() {
   const [loadingFeishu, setLoadingFeishu] = useState(false);
   const [lastRiskEvidence, setLastRiskEvidence] = useState<AiEvidence | null>(null);
   const [riskIntegration, setRiskIntegration] = useState<RiskIntegration | null>(null);
+  const [riskEscalation, setRiskEscalation] = useState<RiskEscalationDraftDashboard | null>(null);
+  const [confirmingEscalationDraft, setConfirmingEscalationDraft] = useState<string | null>(null);
+  const [confirmedEscalationDrafts, setConfirmedEscalationDrafts] = useState<Set<string>>(() => new Set());
   const [savingEvidenceAction, setSavingEvidenceAction] = useState<string | null>(null);
   const [evidenceActionMessage, setEvidenceActionMessage] = useState("");
   const [reviewNow] = useState(() => Date.now());
@@ -322,12 +356,17 @@ export default function RiskPage() {
         const response = await fetch("/api/risk", { cache: "no-store" });
         const data = await response.json() as { risks?: Risk[]; events?: RiskWorkflowEvent[]; warning?: string; error?: string; migrationHint?: string };
         if (!response.ok) throw new Error([data.error, data.migrationHint].filter(Boolean).join("；") || "风险登记册读取失败");
-        const integrationResponse = await fetch("/api/risk/integration", { cache: "no-store" });
+        const [integrationResponse, escalationResponse] = await Promise.all([
+          fetch("/api/risk/integration", { cache: "no-store" }),
+          fetch("/api/risk/escalation-drafts", { cache: "no-store" }),
+        ]);
         const integrationData = await integrationResponse.json().catch(() => ({})) as { risk_integration?: RiskIntegration };
+        const escalationData = await escalationResponse.json().catch(() => ({})) as { risk_escalation?: RiskEscalationDraftDashboard };
         if (cancelled) return;
         setRisks(Array.isArray(data.risks) ? data.risks : []);
         setWorkflowEvents(Array.isArray(data.events) ? data.events : []);
         setRiskIntegration(integrationData.risk_integration ?? null);
+        setRiskEscalation(escalationData.risk_escalation ?? null);
         setMessage(data.warning || "");
       } catch (e: unknown) {
         if (cancelled) return;
@@ -554,6 +593,38 @@ export default function RiskPage() {
     }
   };
 
+  const confirmRiskEscalationDraft = async (draft: RiskEscalationDraft) => {
+    setConfirmingEscalationDraft(draft.id);
+    setError("");
+    setMessage("");
+    try {
+      const response = await fetch("/api/risk/escalation-drafts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ draftId: draft.id, draftType: draft.type, confirm: true }),
+      });
+      const payload = await response.json().catch(() => ({})) as {
+        status?: string;
+        warning?: string;
+        instance?: { id?: string; title?: string };
+        action?: { id?: string; title?: string };
+      };
+      if (!response.ok || !["succeeded", "already_exists"].includes(payload.status || "")) {
+        throw new Error(payload.warning || "风险升级草稿确认失败");
+      }
+      setConfirmedEscalationDrafts(current => new Set([...current, draft.id]));
+      const targetName = draft.type === "governance_workflow" ? "治理流程" : "统一行动项";
+      const createdId = payload.instance?.id || payload.action?.id || draft.title;
+      setMessage(payload.status === "already_exists"
+        ? `${targetName}已存在，未重复创建：${createdId}`
+        : `已确认创建${targetName}：${createdId}`);
+    } catch (e: unknown) {
+      setError(`风险升级草稿确认失败：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setConfirmingEscalationDraft(null);
+    }
+  };
+
   const handleLoadDashboardRisks = async () => {
     setLoadingFeishu(true);
     setError("");
@@ -715,6 +786,114 @@ export default function RiskPage() {
                   </div>
                 ))}
               </div>
+            </div>
+            <div className="card">
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start", marginBottom: 16 }}>
+                <div>
+                  <div style={{ fontSize: "0.85rem", fontWeight: 800, color: "var(--text2)", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.08em" }}>风险升级确认队列</div>
+                  <p style={{ color: "var(--text2)", lineHeight: 1.7, fontSize: "0.84rem" }}>
+                    高风险、逾期风险和需要上报的风险会先生成治理流程草稿或统一行动项草稿。只有点击确认后，系统才会写入 Supabase 并进入治理中心或问题-变更-行动项链路。
+                  </p>
+                </div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                  <Link href="/governance-workflows" className="btn-secondary" style={{ textDecoration: "none" }}>查看治理中心</Link>
+                  <Link href="/issue-change" className="btn-secondary" style={{ textDecoration: "none" }}>查看行动项链路</Link>
+                </div>
+              </div>
+
+              {!riskEscalation ? (
+                <div style={{ color: "var(--text2)", lineHeight: 1.7 }}>正在生成风险升级草稿...</div>
+              ) : (
+                <>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10, marginBottom: 16 }}>
+                    {[
+                      ["候选风险", riskEscalation.summary.candidateRiskLinks],
+                      ["治理草稿", riskEscalation.summary.governanceDrafts],
+                      ["行动项草稿", riskEscalation.summary.actionDrafts],
+                      ["P0草稿", riskEscalation.summary.highPriorityDrafts],
+                      ["待确认", riskEscalation.summary.pendingConfirmation],
+                    ].map(([label, value]) => (
+                      <div key={label} style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 10, padding: 12 }}>
+                        <div style={{ color: "var(--text2)", fontSize: "0.74rem" }}>{label}</div>
+                        <strong>{value}</strong>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div style={{ display: "grid", gap: 14 }}>
+                    {[...riskEscalation.governanceDrafts, ...riskEscalation.actionDrafts].length === 0 ? (
+                      <div style={{ color: "var(--text2)", lineHeight: 1.7 }}>暂无需要升级确认的风险草稿。</div>
+                    ) : (
+                      <>
+                        {riskEscalation.governanceDrafts.length > 0 && (
+                          <div>
+                            <div style={{ fontWeight: 800, marginBottom: 10 }}>治理流程草稿</div>
+                            <div style={{ display: "grid", gap: 10 }}>
+                              {riskEscalation.governanceDrafts.map(draft => (
+                                <article key={draft.id} style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 12, padding: 14 }}>
+                                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "flex-start" }}>
+                                    <div>
+                                      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                                        <strong>{draft.title}</strong>
+                                        <span className="tag tag-amber">{draft.priority}</span>
+                                        <span className="tag tag-purple">风险升级评审</span>
+                                      </div>
+                                      <p style={{ color: "var(--text2)", lineHeight: 1.6, fontSize: "0.8rem", marginTop: 8 }}>
+                                        {draft.projectName} · 责任人：{draft.owner} · 审批：{draft.approver || "PMO/项目负责人"} · deadline：{draft.deadline}
+                                      </p>
+                                      <p style={{ color: "var(--accent2)", lineHeight: 1.6, fontSize: "0.78rem", marginTop: 6 }}>{draft.sourceReason}</p>
+                                    </div>
+                                    <button
+                                      className="btn-primary"
+                                      disabled={confirmingEscalationDraft === draft.id || confirmedEscalationDrafts.has(draft.id)}
+                                      onClick={() => void confirmRiskEscalationDraft(draft)}
+                                    >
+                                      {confirmedEscalationDrafts.has(draft.id) ? "已确认" : confirmingEscalationDraft === draft.id ? "确认中..." : "确认创建治理流程"}
+                                    </button>
+                                  </div>
+                                </article>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {riskEscalation.actionDrafts.length > 0 && (
+                          <div>
+                            <div style={{ fontWeight: 800, marginBottom: 10 }}>统一行动项草稿</div>
+                            <div style={{ display: "grid", gap: 10 }}>
+                              {riskEscalation.actionDrafts.map(draft => (
+                                <article key={draft.id} style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 12, padding: 14 }}>
+                                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "flex-start" }}>
+                                    <div>
+                                      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                                        <strong>{draft.title}</strong>
+                                        <span className="tag tag-blue">{draft.targetModule || "行动项"}</span>
+                                        <span className="tag" style={{ background: `${priorityColor[draft.priority]}22`, color: priorityColor[draft.priority] }}>{draft.priority}</span>
+                                      </div>
+                                      <p style={{ color: "var(--text2)", lineHeight: 1.6, fontSize: "0.8rem", marginTop: 8 }}>
+                                        {draft.projectName} · 责任人：{draft.owner} · deadline：{draft.deadline}
+                                      </p>
+                                      <p style={{ color: "var(--accent2)", lineHeight: 1.6, fontSize: "0.78rem", marginTop: 6 }}>{draft.sourceReason}</p>
+                                    </div>
+                                    <button
+                                      className="btn-secondary"
+                                      disabled={confirmingEscalationDraft === draft.id || confirmedEscalationDrafts.has(draft.id)}
+                                      onClick={() => void confirmRiskEscalationDraft(draft)}
+                                    >
+                                      {confirmedEscalationDrafts.has(draft.id) ? "已确认" : confirmingEscalationDraft === draft.id ? "确认中..." : "确认创建行动项"}
+                                    </button>
+                                  </div>
+                                </article>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                  <div style={{ marginTop: 14, color: "var(--text2)", fontSize: "0.78rem", lineHeight: 1.6 }}>{riskEscalation.boundary}</div>
+                </>
+              )}
             </div>
           </div>
         )}

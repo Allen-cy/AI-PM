@@ -52,6 +52,7 @@ import {
   buildRiskScanEvidence,
 } from '../src/features/ai/evidence.ts';
 import { buildFinanceCockpit } from '../src/features/finance/cockpit.ts';
+import { buildRiskEscalationDraftDashboard } from '../src/features/risk/escalation.ts';
 import { buildRiskIntegrationDashboard } from '../src/features/risk/integration.ts';
 import {
   buildReportEvidence,
@@ -1176,6 +1177,66 @@ test('risk integration links register risks to project health milestones payment
   assert.equal(fromRegister.links[0].actions.some(action => action.targetModule === '治理工作流' && action.priority === 'P0'), true);
   assert.match(fromRegister.reportFacts[0], /智慧校园一期/);
   assert.match(fromRegister.reportFacts[0], /回款/);
+});
+
+test('risk escalation drafts convert linked risks into confirmable governance workflows and actions', () => {
+  const riskIntegration = buildRiskIntegrationDashboard({
+    asOf: new Date('2026-07-04T00:00:00.000Z'),
+    risks: [
+      {
+        id: 'R-ESC-1',
+        riskCode: 'R-ESC-1',
+        projectName: '智慧校园一期',
+        description: '验收阻塞导致回款延期',
+        category: '财务',
+        stage: '监控',
+        source: '风险登记册',
+        impactArea: '回款',
+        probability: 4,
+        impact: 5,
+        urgency: 5,
+        piScore: 20,
+        priorityScore: 100,
+        status: 'tracking',
+        responseStrategyType: '上报',
+        responseStrategy: '升级PMO协调验收和付款路径',
+        preventiveAction: '补齐验收材料',
+        contingencyPlan: '必要时发起风险升级评审',
+        trigger: '客户验收签字依赖缺陷修复和付款材料确认。',
+        trackingMethod: '周会跟踪',
+        owner: '张三',
+        dueDate: '2026-07-04',
+        nextReviewDate: '2026-07-04',
+        closingCriteria: '验收签字并确认付款计划',
+        linkedModule: '合同回款',
+        createdAt: '2026-07-01',
+      },
+    ],
+  });
+  const drafts = buildRiskEscalationDraftDashboard({ riskIntegration });
+
+  assert.equal(drafts.summary.candidateRiskLinks, 1);
+  assert.equal(drafts.summary.governanceDrafts, 1);
+  assert.equal(drafts.summary.actionDrafts >= 1, true);
+  assert.equal(drafts.summary.pendingConfirmation, drafts.summary.governanceDrafts + drafts.summary.actionDrafts);
+  assert.equal(drafts.governanceDrafts[0].createInput.workflowId, 'risk-escalation');
+  assert.equal(drafts.governanceDrafts[0].confirmationRequired, true);
+  assert.match(drafts.governanceDrafts[0].createInput.inputSummary || '', /风险联动包/);
+  assert.match(drafts.governanceDrafts[0].createInput.strategySummary || '', /确认后才创建/);
+  assert.equal(drafts.actionDrafts[0].createInput.sourceType, 'risk');
+  assert.equal(drafts.actionDrafts[0].createInput.sourceId, 'R-ESC-1');
+  assert.match(drafts.boundary, /用户点击确认前不写/);
+});
+
+test('risk escalation draft API requires explicit confirmation before writes', () => {
+  const routeSource = readFileSync(new URL('../src/app/api/risk/escalation-drafts/route.ts', import.meta.url), 'utf8');
+  const riskPageSource = readFileSync(new URL('../src/app/risk/page.tsx', import.meta.url), 'utf8');
+
+  assert.match(routeSource, /confirm !== true/);
+  assert.match(routeSource, /createGovernanceInstance/);
+  assert.match(routeSource, /createUnifiedAction/);
+  assert.match(routeSource, /already_exists/);
+  assert.match(riskPageSource, /\/api\/risk\/escalation-drafts/);
 });
 
 test('enterprise security permissions and project access scope data', () => {
