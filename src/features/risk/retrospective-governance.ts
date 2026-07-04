@@ -44,6 +44,22 @@ export interface RiskRetrospectiveGovernanceEffectItem {
   effectConclusion: string;
 }
 
+export type RiskRetrospectiveGovernanceActionItemPriority = "high" | "medium" | "low";
+
+export interface RiskRetrospectiveGovernanceActionItem {
+  id: string;
+  sourceLogId: string;
+  assetTitle: string;
+  reason: string;
+  actionRequired: string;
+  owner: string;
+  deadline: string;
+  priority: RiskRetrospectiveGovernanceActionItemPriority;
+  status: "pending_review";
+  closingCriteria: string;
+  reminderText: string;
+}
+
 export interface RiskRetrospectiveGovernanceEffect {
   monthlyActions: number;
   qualityScoreLift: number;
@@ -55,6 +71,8 @@ export interface RiskRetrospectiveGovernanceEffect {
   duplicateRiskReduction: number;
   latestEffectAt: string | null;
   items: RiskRetrospectiveGovernanceEffectItem[];
+  actionItems: RiskRetrospectiveGovernanceActionItem[];
+  reminders: RiskRetrospectiveGovernanceActionItem[];
 }
 
 export interface RiskRetrospectiveGovernanceDashboard {
@@ -261,6 +279,72 @@ function monthKey(value: Date): string {
   return value.toISOString().slice(0, 7);
 }
 
+function dateByOffset(days: number, from = new Date()): string {
+  const date = new Date(from);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function itemDate(item: RiskRetrospectiveGovernanceEffectItem): Date {
+  const date = new Date(item.createdAt);
+  return Number.isNaN(date.getTime()) ? new Date() : date;
+}
+
+function actionItemReason(item: RiskRetrospectiveGovernanceEffectItem): string | null {
+  if (item.qualityDelta < 0) return "治理后质量分下降，需要复核字段完整性、归档原因和是否误撤回高价值资产。";
+  if ((item.afterScore ?? 100) < 70) return "治理后质量分仍低于70，尚未达到可稳定复用的组织过程资产标准。";
+  if (item.qualityDelta === 0 && (item.afterScore ?? 0) < 85) return "治理后质量分未改善，需确认补充动作是否真正解决关闭证据、经验教训或预警规则缺口。";
+  if ((item.action === "publish" || item.action === "review") && item.ragReferenceDelta <= 0) return "资产已进入可复用状态但暂无 RAG 引用增长，需要优化标题、标签、别名或适用范围。";
+  if (item.action === "merge" && item.duplicateRiskDelta <= 0) return "合并动作后重复风险未下降，需要复核主资产选择和源资产归档是否完整。";
+  return null;
+}
+
+function actionItemPriority(item: RiskRetrospectiveGovernanceEffectItem, reason: string): RiskRetrospectiveGovernanceActionItemPriority {
+  if (item.qualityDelta < 0 || reason.includes("低于70")) return "high";
+  if (reason.includes("重复风险") || reason.includes("暂无 RAG 引用")) return "medium";
+  return "low";
+}
+
+function actionItemRequired(reason: string): string {
+  if (reason.includes("质量分下降")) return "重新打开复盘资产，核对关闭证据、经验教训、预警规则和状态变更依据，必要时补充后再发布。";
+  if (reason.includes("低于70")) return "补齐关闭证据、复核意见、经验教训、早期预警规则、可复用做法和适用范围。";
+  if (reason.includes("未改善")) return "对照治理前后快照逐项检查差异，补充能改变质量评分的实质字段。";
+  if (reason.includes("RAG 引用")) return "优化资产标题、标签、别名、适用范围和预警规则，并在知识问答中做一次验证检索。";
+  if (reason.includes("重复风险")) return "复核重复资产组，保留证据最完整的主资产，撤回或合并低质量重复项。";
+  return "PMO知识管理员复核治理动作有效性，并给出二次治理结论。";
+}
+
+function closingCriteria(reason: string): string {
+  if (reason.includes("RAG 引用")) return "资产能被知识问答命中，或 PMO 确认该资产暂不需要进入 RAG 推荐。";
+  if (reason.includes("重复风险")) return "重复资产提示下降，或 PMO 在资产中补充差异化适用说明。";
+  return "二次治理后质量分提升至70以上，且关键字段不再缺失。";
+}
+
+function buildActionItems(items: RiskRetrospectiveGovernanceEffectItem[]): RiskRetrospectiveGovernanceActionItem[] {
+  return items.flatMap(item => {
+    const reason = actionItemReason(item);
+    if (!reason) return [];
+    const priority = actionItemPriority(item, reason);
+    const deadline = dateByOffset(priority === "high" ? 3 : priority === "medium" ? 7 : 14, itemDate(item));
+    return [{
+      id: `risk-retro-governance-action:${item.logId}`,
+      sourceLogId: item.logId,
+      assetTitle: item.assetTitle,
+      reason,
+      actionRequired: actionItemRequired(reason),
+      owner: "PMO知识管理员",
+      deadline,
+      priority,
+      status: "pending_review" as const,
+      closingCriteria: closingCriteria(reason),
+      reminderText: `${deadline} 前完成「${item.assetTitle}」二次治理：${reason}`,
+    }];
+  }).sort((a, b) => {
+    const priorityOrder = { high: 0, medium: 1, low: 2 };
+    return priorityOrder[a.priority] - priorityOrder[b.priority] || a.deadline.localeCompare(b.deadline);
+  });
+}
+
 export function buildRiskRetrospectiveGovernanceEffect(input: {
   logs: RiskRetrospectiveGovernanceLog[];
   currentAssets?: RiskRetrospectiveAssetRecord[];
@@ -295,6 +379,7 @@ export function buildRiskRetrospectiveGovernanceEffect(input: {
       effectConclusion: effectConclusion(itemWithoutConclusion),
     };
   });
+  const actionItems = buildActionItems(items);
   return {
     monthlyActions: input.logs.filter(log => log.createdAt.startsWith(currentMonth)).length,
     qualityScoreLift: items.reduce((sum, item) => sum + item.qualityDelta, 0),
@@ -312,6 +397,8 @@ export function buildRiskRetrospectiveGovernanceEffect(input: {
     duplicateRiskReduction: items.reduce((sum, item) => sum + item.duplicateRiskDelta, 0),
     latestEffectAt: items[0]?.createdAt ?? null,
     items,
+    actionItems,
+    reminders: actionItems.slice(0, 5),
   };
 }
 
@@ -347,6 +434,14 @@ export function buildRiskRetrospectiveGovernanceDashboard(input: {
     item.qualityDelta > 0 ? `+${item.qualityDelta}` : String(item.qualityDelta),
     item.effectConclusion,
   ]);
+  const actionItemRows = effect.actionItems.slice(0, 12).map(item => [
+    item.priority === "high" ? "高" : item.priority === "medium" ? "中" : "低",
+    item.assetTitle,
+    item.owner,
+    item.deadline,
+    item.reason,
+    item.closingCriteria,
+  ]);
   const logRows = input.logs.slice(0, 12).map(log => [
     log.createdAt.slice(0, 10),
     log.actionLabel,
@@ -377,8 +472,13 @@ export function buildRiskRetrospectiveGovernanceDashboard(input: {
     `- 被 RAG 引用资产数：${effect.referencedAssets}`,
     `- RAG 引用增长：${effect.ragReferenceGrowth > 0 ? `+${effect.ragReferenceGrowth}` : effect.ragReferenceGrowth}`,
     `- 重复风险下降：${effect.duplicateRiskReduction}`,
+    `- 二次治理待办：${effect.actionItems.length}`,
     "",
     ...markdownTable([["日期", "动作", "资产", "治理前", "治理后", "变化", "结论"], ...effectRows]),
+    "",
+    "## 二次治理待办",
+    "",
+    ...markdownTable([["优先级", "资产", "责任人", "Deadline", "原因", "关闭标准"], ...actionItemRows]),
     "",
     "## 质量治理队列",
     "",

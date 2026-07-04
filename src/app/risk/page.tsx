@@ -1990,6 +1990,7 @@ export default function RiskPage() {
                             ["本月动作", riskRetrospectiveGovernance.effect.monthlyActions],
                             ["质量净变", riskRetrospectiveGovernance.effect.qualityScoreLift > 0 ? `+${riskRetrospectiveGovernance.effect.qualityScoreLift}` : riskRetrospectiveGovernance.effect.qualityScoreLift],
                             ["引用资产", riskRetrospectiveGovernance.effect.referencedAssets],
+                            ["二次待办", riskRetrospectiveGovernance.effect.actionItems.length],
                           ].map(([label, value]) => (
                             <div key={label} style={{ background: "linear-gradient(135deg, rgba(34,197,94,0.1), rgba(59,130,246,0.08))", border: "1px solid rgba(34,197,94,0.18)", borderRadius: 10, padding: 10 }}>
                               <div style={{ color: "var(--text2)", fontSize: "0.68rem" }}>{label}</div>
@@ -2025,6 +2026,33 @@ export default function RiskPage() {
                             </div>
                           </article>
                         ))}
+                        <div style={{ fontWeight: 800, margin: "12px 0 8px" }}>二次治理待办</div>
+                        {riskRetrospectiveGovernance.effect.actionItems.length === 0 ? (
+                          <div style={{ color: "var(--text2)", fontSize: "0.78rem", lineHeight: 1.7 }}>当前没有低效果治理动作需要二次复核。</div>
+                        ) : riskRetrospectiveGovernance.effect.actionItems.slice(0, 5).map(item => (
+                          <article key={item.id} style={{ padding: 12, border: "1px solid rgba(245,158,11,0.24)", borderRadius: 10, background: "rgba(245,158,11,0.08)", marginBottom: 8 }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 6 }}>
+                              <strong style={{ fontSize: "0.8rem" }}>{item.assetTitle}</strong>
+                              <span className={item.priority === "high" ? "tag tag-red" : item.priority === "medium" ? "tag tag-amber" : "tag tag-blue"}>
+                                {item.priority === "high" ? "高优先级" : item.priority === "medium" ? "中优先级" : "低优先级"}
+                              </span>
+                            </div>
+                            <div style={{ color: "var(--text2)", fontSize: "0.72rem", lineHeight: 1.6 }}>
+                              <div>责任人：{item.owner} · deadline：{item.deadline}</div>
+                              <div>原因：{item.reason}</div>
+                              <div>动作：{item.actionRequired}</div>
+                              <div>关闭标准：{item.closingCriteria}</div>
+                            </div>
+                          </article>
+                        ))}
+                        {riskRetrospectiveGovernance.effect.reminders.length > 0 && (
+                          <div style={{ marginTop: 8, padding: 10, borderRadius: 10, background: "rgba(59,130,246,0.08)", color: "var(--text2)", fontSize: "0.72rem", lineHeight: 1.6 }}>
+                            <div style={{ fontWeight: 800, color: "var(--text)", marginBottom: 4 }}>提醒</div>
+                            {riskRetrospectiveGovernance.effect.reminders.slice(0, 3).map(item => (
+                              <div key={`reminder-${item.id}`}>- {item.reminderText}</div>
+                            ))}
+                          </div>
+                        )}
                       </>
                     )}
                   </div>

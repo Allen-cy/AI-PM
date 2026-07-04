@@ -795,6 +795,7 @@ test('risk sensitivity impact is discoverable from api dashboard and sensitivity
   assert.match(riskPageSource, /合并到主资产/);
   assert.match(riskPageSource, /治理审计台/);
   assert.match(riskPageSource, /知识治理效果/);
+  assert.match(riskPageSource, /二次治理待办/);
   assert.match(riskPageSource, /下载治理报告/);
   assert.match(reportRouteSource, /riskRetrospective/);
   assert.match(trackingPageSource, /关闭证据与复核意见/);
@@ -1299,6 +1300,61 @@ test('risk retrospective governance dashboard exports traceable markdown report'
   assert.match(dashboard.reportMarkdown, /质量分净变化/);
   assert.match(dashboard.reportMarkdown, /补充早期预警规则/);
   assert.match(dashboard.boundary, /治理审计台/);
+});
+
+test('risk retrospective governance creates second-pass actions for ineffective governance', () => {
+  const weakCard = {
+    id: 'R-GOV-ACTION-1',
+    sourceRiskId: 'R-GOV-ACTION-1',
+    projectName: '二次治理项目',
+    title: '低质量复盘资产',
+    riskDescription: '供应商多次延期',
+    category: '供应商',
+    impactArea: '进度',
+    severity: 'medium' as const,
+    trigger: '供应商未提交计划',
+    effectiveResponse: '召开供应商例会',
+    closingEvidence: '',
+    reviewOpinion: '',
+    lessonLearned: '',
+    earlyWarningRule: '',
+    reusablePractice: '',
+    tags: ['供应商'],
+  };
+  const before = buildRiskRetrospectiveAssetDraft(weakCard, { status: 'reviewed' });
+  const after = { ...before, status: 'published' as const };
+  const logs: RiskRetrospectiveGovernanceLog[] = [
+    {
+      id: 'log-low-effect',
+      assetId: after.id,
+      targetAssetId: null,
+      action: 'publish',
+      actionLabel: '发布RAG',
+      actionSummary: '低质量资产发布到RAG',
+      beforeTitle: before.title,
+      afterTitle: after.title,
+      beforeStatus: before.status,
+      afterStatus: after.status,
+      beforeSnapshot: before,
+      afterSnapshot: after,
+      performedByName: 'PMO知识管理员',
+      requestId: 'req-low-effect',
+      createdAt: '2026-07-04T12:00:00.000Z',
+    },
+  ];
+  const dashboard = buildRiskRetrospectiveGovernanceDashboard({
+    assets: [after],
+    logs,
+    quality: buildRiskRetrospectiveQualityDashboard([after], new Date('2026-07-04T00:00:00.000Z')),
+  });
+
+  assert.equal(dashboard.effect.actionItems.length, 1);
+  assert.equal(dashboard.effect.reminders.length, 1);
+  assert.equal(dashboard.effect.actionItems[0]?.priority, 'high');
+  assert.match(dashboard.effect.actionItems[0]?.reason ?? '', /低于70|质量分/);
+  assert.match(dashboard.effect.actionItems[0]?.closingCriteria ?? '', /质量分提升/);
+  assert.match(dashboard.reportMarkdown, /二次治理待办/);
+  assert.match(dashboard.reportMarkdown, /PMO知识管理员/);
 });
 
 test('field mapping diagnostics detect missing Chinese fields and aliases', () => {
