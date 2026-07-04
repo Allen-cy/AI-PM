@@ -1863,6 +1863,8 @@ export default function RiskPage() {
                       ["待补复盘", riskRetrospective.summary.missingLessons],
                       ["已确认资产", riskRetrospectiveAssets.filter(asset => asset.status === "reviewed" || asset.status === "published").length],
                       ["已发布RAG", riskRetrospectiveAssets.filter(asset => asset.status === "published").length],
+                      ["本月治理", riskRetrospectiveGovernance?.effect.monthlyActions ?? 0],
+                      ["质量净提升", riskRetrospectiveGovernance?.effect.qualityScoreLift ?? 0],
                     ].map(([label, value]) => (
                       <div key={label} style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 10, padding: 12 }}>
                         <div style={{ color: "var(--text2)", fontSize: "0.74rem" }}>{label}</div>
@@ -1977,6 +1979,56 @@ export default function RiskPage() {
                 <div style={{ color: "var(--text2)", fontSize: "0.8rem", lineHeight: 1.7 }}>暂无复盘资产包。</div>
               ) : (
                 <div style={{ display: "grid", gap: 14 }}>
+                  <div>
+                    <div style={{ fontWeight: 800, marginBottom: 8 }}>知识治理效果</div>
+                    {!riskRetrospectiveGovernance ? (
+                      <div style={{ color: "var(--text2)", fontSize: "0.78rem", lineHeight: 1.7 }}>暂无治理效果趋势。执行资产补充、合并、发布、撤回或恢复后会开始沉淀。</div>
+                    ) : (
+                      <>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginBottom: 10 }}>
+                          {[
+                            ["本月动作", riskRetrospectiveGovernance.effect.monthlyActions],
+                            ["质量净变", riskRetrospectiveGovernance.effect.qualityScoreLift > 0 ? `+${riskRetrospectiveGovernance.effect.qualityScoreLift}` : riskRetrospectiveGovernance.effect.qualityScoreLift],
+                            ["引用资产", riskRetrospectiveGovernance.effect.referencedAssets],
+                          ].map(([label, value]) => (
+                            <div key={label} style={{ background: "linear-gradient(135deg, rgba(34,197,94,0.1), rgba(59,130,246,0.08))", border: "1px solid rgba(34,197,94,0.18)", borderRadius: 10, padding: 10 }}>
+                              <div style={{ color: "var(--text2)", fontSize: "0.68rem" }}>{label}</div>
+                              <strong style={{ fontSize: "0.95rem" }}>{value}</strong>
+                            </div>
+                          ))}
+                        </div>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 8, marginBottom: 10 }}>
+                          {[
+                            ["质量提升动作", riskRetrospectiveGovernance.effect.improvedActions],
+                            ["重复风险下降", riskRetrospectiveGovernance.effect.duplicateRiskReduction],
+                          ].map(([label, value]) => (
+                            <div key={label} style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 10, padding: 10 }}>
+                              <div style={{ color: "var(--text2)", fontSize: "0.68rem" }}>{label}</div>
+                              <strong style={{ fontSize: "0.9rem" }}>{value}</strong>
+                            </div>
+                          ))}
+                        </div>
+                        {riskRetrospectiveGovernance.effect.items.length === 0 ? (
+                          <div style={{ color: "var(--text2)", fontSize: "0.78rem", lineHeight: 1.7 }}>暂无可计算的治理效果。治理动作产生 before/after 快照后，会展示每条资产的分数变化。</div>
+                        ) : riskRetrospectiveGovernance.effect.items.slice(0, 4).map(item => (
+                          <article key={item.logId} style={{ padding: 12, border: "1px solid rgba(34,197,94,0.18)", borderRadius: 10, background: "rgba(34,197,94,0.07)", marginBottom: 8 }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 6 }}>
+                              <strong style={{ fontSize: "0.8rem" }}>{item.assetTitle}</strong>
+                              <span className={item.qualityDelta > 0 ? "tag tag-green" : item.qualityDelta < 0 ? "tag tag-red" : "tag tag-blue"}>
+                                {item.qualityDelta > 0 ? `+${item.qualityDelta}` : item.qualityDelta}
+                              </span>
+                            </div>
+                            <div style={{ color: "var(--text2)", fontSize: "0.72rem", lineHeight: 1.6 }}>
+                              <div>动作：{item.actionLabel} · {item.createdAt.slice(0, 10)}</div>
+                              <div>质量：{item.beforeScore ?? "暂无"} → {item.afterScore ?? "暂无"}；RAG引用变化：{item.ragReferenceDelta > 0 ? `+${item.ragReferenceDelta}` : item.ragReferenceDelta}</div>
+                              <div>结论：{item.effectConclusion}</div>
+                            </div>
+                          </article>
+                        ))}
+                      </>
+                    )}
+                  </div>
+
                   <div>
                     <div style={{ fontWeight: 800, marginBottom: 8 }}>资产质量与治理队列</div>
                     {!riskRetrospectiveQuality ? (

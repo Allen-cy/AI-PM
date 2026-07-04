@@ -774,6 +774,7 @@ test('risk sensitivity impact is discoverable from api dashboard and sensitivity
   assert.match(retrospectiveExportApiSource, /buildRiskRetrospectiveKnowledgeExport/);
   assert.match(retrospectiveQualityApiSource, /buildRiskRetrospectiveQualityDashboard/);
   assert.match(retrospectiveGovernanceApiSource, /buildRiskRetrospectiveGovernanceDashboard/);
+  assert.match(retrospectiveGovernanceApiSource, /risk_retrospective_governance/);
   assert.match(retrospectiveAssetsSql, /risk_retrospective_assets/);
   assert.match(retrospectiveExportSql, /risk_retrospective_asset_sync_logs/);
   assert.match(retrospectiveValueSql, /risk_retrospective_asset_usage_logs/);
@@ -793,6 +794,7 @@ test('risk sensitivity impact is discoverable from api dashboard and sensitivity
   assert.match(riskPageSource, /补充资产/);
   assert.match(riskPageSource, /合并到主资产/);
   assert.match(riskPageSource, /治理审计台/);
+  assert.match(riskPageSource, /知识治理效果/);
   assert.match(riskPageSource, /下载治理报告/);
   assert.match(reportRouteSource, /riskRetrospective/);
   assert.match(trackingPageSource, /关闭证据与复核意见/);
@@ -1253,6 +1255,11 @@ test('risk retrospective governance dashboard exports traceable markdown report'
     tags: ['回款', '验收'],
   };
   const asset = buildRiskRetrospectiveAssetDraft(baseCard, { status: 'published' });
+  const enrichedAsset = {
+    ...asset,
+    earlyWarningRule: `${asset.earlyWarningRule}；回款计划超过3天未确认即预警`,
+    ragReferenceCount: 2,
+  };
   const quality = buildRiskRetrospectiveQualityDashboard([asset], new Date('2026-07-04T00:00:00.000Z'));
   const logs: RiskRetrospectiveGovernanceLog[] = [
     {
@@ -1266,6 +1273,12 @@ test('risk retrospective governance dashboard exports traceable markdown report'
       afterTitle: asset.title,
       beforeStatus: 'reviewed',
       afterStatus: 'published',
+      beforeSnapshot: {
+        ...asset,
+        earlyWarningRule: '',
+        ragReferenceCount: 0,
+      },
+      afterSnapshot: enrichedAsset,
       performedByName: 'PMO知识管理员',
       requestId: 'req-1',
       createdAt: '2026-07-04T10:00:00.000Z',
@@ -1276,7 +1289,14 @@ test('risk retrospective governance dashboard exports traceable markdown report'
   assert.equal(dashboard.summary.totalLogs, 1);
   assert.equal(dashboard.summary.editActions, 1);
   assert.equal(dashboard.summary.touchedAssets, 1);
+  assert.equal(dashboard.effect.monthlyActions, 1);
+  assert.equal(dashboard.effect.improvedActions, 1);
+  assert.equal(dashboard.effect.referencedAssets, 1);
+  assert.equal(dashboard.effect.ragReferenceGrowth, 2);
+  assert.equal(dashboard.effect.items[0]?.qualityDelta > 0, true);
   assert.match(dashboard.reportMarkdown, /风险复盘资产治理报告/);
+  assert.match(dashboard.reportMarkdown, /治理效果趋势/);
+  assert.match(dashboard.reportMarkdown, /质量分净变化/);
   assert.match(dashboard.reportMarkdown, /补充早期预警规则/);
   assert.match(dashboard.boundary, /治理审计台/);
 });

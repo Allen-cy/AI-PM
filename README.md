@@ -67,6 +67,10 @@ npm run build
 - 飞书端已建立8张业务表；公开项目记录API会等用户登录和授权模型完成后再开放。
 - 全仓历史 ESLint 基线仍有旧问题；V4新增/改动文件执行独立零错误门禁。
 
+## AI-PMO System V5.3.36
+
+V5.3.36 将复盘资产治理从“有动作审计”推进到“能看治理效果”：`risk_retrospective_asset_governance_logs` 中已有的 before/after 快照会被用于计算每次治理动作的质量分变化、RAG 引用增长和重复风险下降。`/api/risk/retrospective/assets/governance` 返回体新增 `effect`，治理报告新增“治理效果趋势”章节，展示本月治理动作、质量分净变化、质量提升动作、被引用资产数、RAG 引用增长和重复风险下降。`/risk` 的“复盘资产”页签新增“知识治理效果”小卡片，并在顶部统计展示本月治理和质量净提升。本版本不新增 SQL，复用 V5.3.34 治理审计表和 V5.3.32 价值度量字段。
+
 ## AI-PMO System V5.3.35
 
 V5.3.35 将复盘资产治理动作沉淀为可查看、可下载的审计台和治理报告：新增 `src/features/risk/retrospective-governance.ts` 和 `/api/risk/retrospective/assets/governance`，读取 V5.3.34 的 `risk_retrospective_asset_governance_logs`，输出治理动作数、补充编辑数、合并数、涉及资产数、最近动作时间和当前质量均分，并生成“风险复盘资产治理报告” Markdown。`/risk` 的“复盘资产”页签新增“治理审计台”和“下载治理报告”，用于查看补充、合并、发布、撤回、恢复等动作历史。本版本不新增 SQL，但需要已执行 `supabase-v5334-risk-retrospective-governance.sql` 才能读取真实治理审计。
