@@ -66,6 +66,7 @@ import {
   buildRiskRetrospectiveAssetDraft,
   riskRetrospectiveAssetToRagDocument,
 } from '../src/features/risk/retrospective-assets.ts';
+import { buildRiskRetrospectiveKnowledgeExport } from '../src/features/risk/retrospective-knowledge-sync.ts';
 import {
   buildReportEvidence,
   buildReportFactoryPackage,
@@ -742,7 +743,9 @@ test('risk sensitivity impact is discoverable from api dashboard and sensitivity
   const retrospectiveApiSource = readFileSync(new URL('../src/app/api/risk/retrospective/route.ts', import.meta.url), 'utf8');
   const retrospectiveAssetsApiSource = readFileSync(new URL('../src/app/api/risk/retrospective/assets/route.ts', import.meta.url), 'utf8');
   const retrospectiveRecommendationsApiSource = readFileSync(new URL('../src/app/api/risk/retrospective/recommendations/route.ts', import.meta.url), 'utf8');
+  const retrospectiveExportApiSource = readFileSync(new URL('../src/app/api/risk/retrospective/assets/export/route.ts', import.meta.url), 'utf8');
   const retrospectiveAssetsSql = readFileSync(new URL('../supabase-v5330-risk-retrospective-assets.sql', import.meta.url), 'utf8');
+  const retrospectiveExportSql = readFileSync(new URL('../supabase-v5331-risk-retrospective-knowledge-sync.sql', import.meta.url), 'utf8');
   const ragQueryRouteSource = readFileSync(new URL('../src/app/api/rag/query/route.ts', import.meta.url), 'utf8');
   const riskPageSource = readFileSync(new URL('../src/app/risk/page.tsx', import.meta.url), 'utf8');
   const trackingPageSource = readFileSync(new URL('../src/app/risk/tracking/page.tsx', import.meta.url), 'utf8');
@@ -757,7 +760,9 @@ test('risk sensitivity impact is discoverable from api dashboard and sensitivity
   assert.match(retrospectiveApiSource, /buildRiskRetrospectiveDashboard/);
   assert.match(retrospectiveAssetsApiSource, /confirmRiskRetrospectiveAsset/);
   assert.match(retrospectiveRecommendationsApiSource, /buildRiskRetrospectiveRecommendations/);
+  assert.match(retrospectiveExportApiSource, /buildRiskRetrospectiveKnowledgeExport/);
   assert.match(retrospectiveAssetsSql, /risk_retrospective_assets/);
+  assert.match(retrospectiveExportSql, /risk_retrospective_asset_sync_logs/);
   assert.match(ragQueryRouteSource, /listPublishedRiskRetrospectiveRagDocuments/);
   assert.match(riskPageSource, /关闭证据/);
   assert.match(riskPageSource, /\/api\/risk\/closure/);
@@ -765,6 +770,7 @@ test('risk sensitivity impact is discoverable from api dashboard and sensitivity
   assert.match(riskPageSource, /\/api\/risk\/retrospective/);
   assert.match(riskPageSource, /发布到RAG/);
   assert.match(riskPageSource, /同类项目预警推荐/);
+  assert.match(riskPageSource, /导出AI-PMO-SYS知识页/);
   assert.match(reportRouteSource, /riskRetrospective/);
   assert.match(trackingPageSource, /关闭证据与复核意见/);
 });
@@ -1026,6 +1032,47 @@ test('risk retrospective assets can be published as dynamic RAG documents', () =
   assert.equal(result.citations.some(item => item.page_id.startsWith('RISK-RETRO-')), true);
   assert.match(result.answer, /提前冻结验收材料/);
   assert.match(result.retrieval.index_version, /dynamic-1/);
+});
+
+test('risk retrospective assets export to AI PMO SYS markdown with audit hash', () => {
+  const risk: Risk = {
+    id: 'R-EXPORT-RETRO',
+    riskCode: 'R-EXPORT-RETRO',
+    projectName: '知识库导出项目',
+    description: '供应商交付延迟造成里程碑风险',
+    category: '供应商',
+    stage: '结项',
+    source: '风险登记册',
+    impactArea: '供应商',
+    probability: 4,
+    impact: 4,
+    urgency: 4,
+    piScore: 16,
+    priorityScore: 64,
+    status: 'closed',
+    responseStrategyType: '缓解',
+    responseStrategy: '建立供应商周度交付验收节奏',
+    preventiveAction: '关键物料提前锁定备选供应商',
+    contingencyPlan: '切换备选供应商',
+    trigger: '供应商连续两周未按计划交付。',
+    trackingMethod: '复盘会',
+    owner: '采购负责人',
+    dueDate: '2026-07-04',
+    nextReviewDate: '2026-07-03',
+    closingCriteria: '供应商完成补交并恢复里程碑计划',
+    linkedModule: '资源',
+    evidence: '关闭证据：补交验收单\n复核意见：同意关闭\n复核人：PMO\n复核日期：2026-07-04\n依赖处置：里程碑计划已恢复\n经验教训：供应商风险需要提前设置备选资源和交付预警阈值。',
+    createdAt: '2026-07-01',
+  };
+  const retrospective = buildRiskRetrospectiveDashboard([risk], []);
+  const asset = buildRiskRetrospectiveAssetDraft(retrospective.knowledgeCards[0], { status: 'published', sourceRiskCode: risk.riskCode });
+  const exported = buildRiskRetrospectiveKnowledgeExport([asset]);
+
+  assert.match(exported.markdown, /风险复盘组织过程资产/);
+  assert.match(exported.markdown, /供应商连续两周未按计划交付/);
+  assert.match(exported.targetPath, /AI-PMO/);
+  assert.equal(exported.assetCount, 1);
+  assert.equal(exported.sha256.length, 64);
 });
 
 test('field mapping diagnostics detect missing Chinese fields and aliases', () => {

@@ -605,6 +605,15 @@ V5.3.30 落地说明：
 - 本版本需要先在 Supabase 执行 `supabase-v5330-risk-retrospective-assets.sql` 后才能保存/发布资产；未执行时页面明确提示，不影响只读复盘资产包生成。
 - 动态 RAG 资产不改变静态 corpus 快照；长期回写 AI-PMO-SYS Markdown 知识页和同步审计进入 V5.3.31。
 
+V5.3.31 落地说明：
+
+- 新增 `supabase-v5331-risk-retrospective-knowledge-sync.sql`，创建 `risk_retrospective_asset_sync_logs` 表，用于保存风险复盘资产导出审计。
+- 新增 `src/features/risk/retrospective-knowledge-sync.ts` 和 `/api/risk/retrospective/assets/export`，支持将已确认/已发布风险复盘资产导出为 AI-PMO-SYS 风格 Markdown。
+- `/risk` 的“复盘资产”页签新增“导出AI-PMO-SYS知识页”按钮，下载内容包含 YAML 元数据、资产目录、触发器、有效应对、经验教训、预警规则、可复用做法、关闭与复核证据。
+- 页面右侧新增“知识库导出审计”，展示导出目标路径、资产数、导出人、导出日期和 SHA256 摘要。
+- 本版本需要先在 Supabase 执行 `supabase-v5331-risk-retrospective-knowledge-sync.sql` 后才能持久化导出审计；未执行时仍可下载 Markdown，但会提示审计未持久化。
+- 由于 Vercel 线上服务不能直接写入用户本机 `/Volumes/创见/...` 路径，本版本提供下载式知识页和审计记录；自动写本机目录需要后续桌面端/本地代理或网盘 API 授权。
+
 V5.3.7 落地说明：
 
 - 新增 `/blueprint-v3/delivery-management`「项目全流程交付管理蓝图」子页面，将原附件业务流程图结构化为销售管理、项目管理、监控管理、成本管理和工具支撑五类泳道。

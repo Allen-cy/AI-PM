@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import type { AiEvidence, AiSuggestedAction } from "@/features/ai/evidence";
 import type { RiskClosureDashboard, RiskClosureDecision } from "@/features/risk/closure";
+import type { RiskRetrospectiveSyncLog } from "@/features/risk/retrospective-knowledge-sync";
 import type { RiskRetrospectiveAssetRecord, RiskRetrospectiveRecommendation } from "@/features/risk/retrospective-assets";
 import type { RiskRetrospectiveDashboard } from "@/features/risk/retrospective";
 import {
@@ -380,8 +381,11 @@ export default function RiskPage() {
   const [riskRetrospective, setRiskRetrospective] = useState<RiskRetrospectiveDashboard | null>(null);
   const [riskRetrospectiveAssets, setRiskRetrospectiveAssets] = useState<RiskRetrospectiveAssetRecord[]>([]);
   const [riskRetrospectiveRecommendations, setRiskRetrospectiveRecommendations] = useState<RiskRetrospectiveRecommendation[]>([]);
+  const [riskRetrospectiveSyncLogs, setRiskRetrospectiveSyncLogs] = useState<RiskRetrospectiveSyncLog[]>([]);
   const [retrospectiveAssetWarning, setRetrospectiveAssetWarning] = useState("");
+  const [retrospectiveSyncWarning, setRetrospectiveSyncWarning] = useState("");
   const [savingRetrospectiveAsset, setSavingRetrospectiveAsset] = useState<string | null>(null);
+  const [exportingRetrospectiveAssets, setExportingRetrospectiveAssets] = useState(false);
   const [confirmingEscalationDraft, setConfirmingEscalationDraft] = useState<string | null>(null);
   const [confirmedEscalationDrafts, setConfirmedEscalationDrafts] = useState<Set<string>>(() => new Set());
   const [savingEvidenceAction, setSavingEvidenceAction] = useState<string | null>(null);
@@ -399,13 +403,14 @@ export default function RiskPage() {
         const response = await fetch("/api/risk", { cache: "no-store" });
         const data = await response.json() as { risks?: Risk[]; events?: RiskWorkflowEvent[]; warning?: string; error?: string; migrationHint?: string };
         if (!response.ok) throw new Error([data.error, data.migrationHint].filter(Boolean).join("；") || "风险登记册读取失败");
-        const [integrationResponse, escalationResponse, closureResponse, retrospectiveResponse, retrospectiveAssetsResponse, retrospectiveRecommendationsResponse] = await Promise.all([
+        const [integrationResponse, escalationResponse, closureResponse, retrospectiveResponse, retrospectiveAssetsResponse, retrospectiveRecommendationsResponse, retrospectiveExportResponse] = await Promise.all([
           fetch("/api/risk/integration", { cache: "no-store" }),
           fetch("/api/risk/escalation-drafts", { cache: "no-store" }),
           fetch("/api/risk/closure", { cache: "no-store" }),
           fetch("/api/risk/retrospective", { cache: "no-store" }),
           fetch("/api/risk/retrospective/assets", { cache: "no-store" }),
           fetch("/api/risk/retrospective/recommendations", { cache: "no-store" }),
+          fetch("/api/risk/retrospective/assets/export", { cache: "no-store" }),
         ]);
         const integrationData = await integrationResponse.json().catch(() => ({})) as { risk_integration?: RiskIntegration };
         const escalationData = await escalationResponse.json().catch(() => ({})) as { risk_escalation?: RiskEscalationDraftDashboard };
@@ -413,6 +418,7 @@ export default function RiskPage() {
         const retrospectiveData = await retrospectiveResponse.json().catch(() => ({})) as { risk_retrospective?: RiskRetrospectiveDashboard };
         const retrospectiveAssetsData = await retrospectiveAssetsResponse.json().catch(() => ({})) as { assets?: RiskRetrospectiveAssetRecord[]; warning?: string };
         const retrospectiveRecommendationsData = await retrospectiveRecommendationsResponse.json().catch(() => ({})) as { recommendations?: RiskRetrospectiveRecommendation[] };
+        const retrospectiveExportData = await retrospectiveExportResponse.json().catch(() => ({})) as { logs?: RiskRetrospectiveSyncLog[]; warning?: string };
         if (cancelled) return;
         setRisks(Array.isArray(data.risks) ? data.risks : []);
         setWorkflowEvents(Array.isArray(data.events) ? data.events : []);
@@ -422,7 +428,9 @@ export default function RiskPage() {
         setRiskRetrospective(retrospectiveData.risk_retrospective ?? null);
         setRiskRetrospectiveAssets(Array.isArray(retrospectiveAssetsData.assets) ? retrospectiveAssetsData.assets : []);
         setRiskRetrospectiveRecommendations(Array.isArray(retrospectiveRecommendationsData.recommendations) ? retrospectiveRecommendationsData.recommendations : []);
+        setRiskRetrospectiveSyncLogs(Array.isArray(retrospectiveExportData.logs) ? retrospectiveExportData.logs : []);
         setRetrospectiveAssetWarning(retrospectiveAssetsData.warning || "");
+        setRetrospectiveSyncWarning(retrospectiveExportData.warning || "");
         setMessage(data.warning || "");
       } catch (e: unknown) {
         if (cancelled) return;
@@ -654,15 +662,19 @@ export default function RiskPage() {
   };
 
   const refreshRetrospectiveAssets = async () => {
-    const [response, recommendationsResponse] = await Promise.all([
+    const [response, recommendationsResponse, exportResponse] = await Promise.all([
       fetch("/api/risk/retrospective/assets", { cache: "no-store" }),
       fetch("/api/risk/retrospective/recommendations", { cache: "no-store" }),
+      fetch("/api/risk/retrospective/assets/export", { cache: "no-store" }),
     ]);
     const payload = await response.json().catch(() => ({})) as { assets?: RiskRetrospectiveAssetRecord[]; warning?: string };
     const recommendationsPayload = await recommendationsResponse.json().catch(() => ({})) as { recommendations?: RiskRetrospectiveRecommendation[] };
+    const exportPayload = await exportResponse.json().catch(() => ({})) as { logs?: RiskRetrospectiveSyncLog[]; warning?: string };
     setRiskRetrospectiveAssets(Array.isArray(payload.assets) ? payload.assets : []);
     setRiskRetrospectiveRecommendations(Array.isArray(recommendationsPayload.recommendations) ? recommendationsPayload.recommendations : []);
+    setRiskRetrospectiveSyncLogs(Array.isArray(exportPayload.logs) ? exportPayload.logs : []);
     setRetrospectiveAssetWarning(payload.warning || "");
+    setRetrospectiveSyncWarning(exportPayload.warning || "");
   };
 
   const mutateRetrospectiveAsset = async (input: {
@@ -697,6 +709,33 @@ export default function RiskPage() {
       setError(`风险复盘资产操作失败：${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setSavingRetrospectiveAsset(null);
+    }
+  };
+
+  const exportRetrospectiveAssets = async () => {
+    setExportingRetrospectiveAssets(true);
+    setError("");
+    setMessage("");
+    try {
+      const response = await fetch("/api/risk/retrospective/assets/export", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({})) as { error?: string };
+        throw new Error(payload.error || "风险复盘资产导出失败");
+      }
+      const markdown = await response.text();
+      downloadText("风险复盘组织过程资产.md", markdown);
+      const auditWarning = decodeURIComponent(response.headers.get("x-risk-retrospective-audit-warning") || "");
+      if (auditWarning) setRetrospectiveSyncWarning(auditWarning);
+      await refreshRetrospectiveAssets();
+      setMessage(`风险复盘资产已导出为 AI-PMO-SYS Markdown，资产数：${response.headers.get("x-risk-retrospective-asset-count") || "0"}。`);
+    } catch (e: unknown) {
+      setError(`风险复盘资产导出失败：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setExportingRetrospectiveAssets(false);
     }
   };
 
@@ -1618,12 +1657,21 @@ export default function RiskPage() {
                     关闭后的风险不会停在“已关闭”。系统会基于关闭证据、复核意见和经验教训生成复盘知识卡、早期预警规则和待补复盘清单，供后续同类项目复用。
                   </p>
                 </div>
-                <button
-                  className="btn-primary"
-                  onClick={() => downloadText("风险复盘清单与组织过程资产.md", riskRetrospective?.markdown || "# 风险复盘清单\n\n暂无风险复盘资产。")}
-                >
-                  下载复盘清单
-                </button>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                  <button
+                    className="btn-secondary"
+                    onClick={() => downloadText("风险复盘清单与组织过程资产.md", riskRetrospective?.markdown || "# 风险复盘清单\n\n暂无风险复盘资产。")}
+                  >
+                    下载复盘清单
+                  </button>
+                  <button
+                    className="btn-primary"
+                    disabled={exportingRetrospectiveAssets}
+                    onClick={() => void exportRetrospectiveAssets()}
+                  >
+                    {exportingRetrospectiveAssets ? "导出中..." : "导出AI-PMO-SYS知识页"}
+                  </button>
+                </div>
               </div>
 
               {!riskRetrospective ? (
@@ -1732,6 +1780,11 @@ export default function RiskPage() {
                   {retrospectiveAssetWarning}
                 </div>
               )}
+              {retrospectiveSyncWarning && (
+                <div style={{ marginBottom: 12, padding: 10, borderRadius: 10, background: "rgba(59,130,246,0.08)", color: "var(--accent2)", fontSize: "0.74rem", lineHeight: 1.6 }}>
+                  {retrospectiveSyncWarning}
+                </div>
+              )}
               {!riskRetrospective ? (
                 <div style={{ color: "var(--text2)", fontSize: "0.8rem", lineHeight: 1.7 }}>暂无复盘资产包。</div>
               ) : (
@@ -1772,6 +1825,27 @@ export default function RiskPage() {
                           <div>历史资产：{item.sourceAssetTitle} / {item.sourceProjectName}</div>
                           <div>匹配原因：{item.matchReason}</div>
                           <div style={{ marginTop: 6, color: "var(--accent2)" }}>建议预警：{item.recommendedWarningRule}</div>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+
+                  <div>
+                    <div style={{ fontWeight: 800, marginBottom: 8 }}>知识库导出审计</div>
+                    {riskRetrospectiveSyncLogs.length === 0 ? (
+                      <div style={{ color: "var(--text2)", fontSize: "0.78rem", lineHeight: 1.7 }}>暂无导出记录。点击“导出AI-PMO-SYS知识页”后，这里会展示最近导出的目标路径、资产数和摘要哈希。</div>
+                    ) : riskRetrospectiveSyncLogs.slice(0, 6).map(log => (
+                      <article key={log.id} style={{ padding: 12, border: "1px solid var(--border)", borderRadius: 10, background: "var(--surface2)", marginBottom: 8 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 6 }}>
+                          <strong style={{ fontSize: "0.8rem" }}>{log.markdownTitle}</strong>
+                          <span className={log.exportStatus === "exported" ? "tag tag-green" : "tag tag-amber"}>{log.exportStatus === "exported" ? "已导出" : "失败"}</span>
+                        </div>
+                        <div style={{ color: "var(--text2)", fontSize: "0.72rem", lineHeight: 1.6 }}>
+                          <div>资产数：{log.assetCount}</div>
+                          <div>路径：{log.targetPath}</div>
+                          <div>人员：{log.exportedByName || "系统"} · {log.createdAt.slice(0, 10)}</div>
+                          {log.markdownSha256 && <div>SHA256：{log.markdownSha256.slice(0, 12)}...</div>}
+                          {log.warning && <div style={{ color: "var(--amber)" }}>提示：{log.warning}</div>}
                         </div>
                       </article>
                     ))}
