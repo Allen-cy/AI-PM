@@ -67,6 +67,10 @@ npm run build
 - 飞书端已建立8张业务表；公开项目记录API会等用户登录和授权模型完成后再开放。
 - 全仓历史 ESLint 基线仍有旧问题；V4新增/改动文件执行独立零错误门禁。
 
+## AI-PMO System V5.3.35
+
+V5.3.35 将复盘资产治理动作沉淀为可查看、可下载的审计台和治理报告：新增 `src/features/risk/retrospective-governance.ts` 和 `/api/risk/retrospective/assets/governance`，读取 V5.3.34 的 `risk_retrospective_asset_governance_logs`，输出治理动作数、补充编辑数、合并数、涉及资产数、最近动作时间和当前质量均分，并生成“风险复盘资产治理报告” Markdown。`/risk` 的“复盘资产”页签新增“治理审计台”和“下载治理报告”，用于查看补充、合并、发布、撤回、恢复等动作历史。本版本不新增 SQL，但需要已执行 `supabase-v5334-risk-retrospective-governance.sql` 才能读取真实治理审计。
+
 ## AI-PMO System V5.3.34
 
 V5.3.34 将风险复盘资产治理从“评分建议队列”推进到“可编辑、可合并、可审计”：新增 `supabase-v5334-risk-retrospective-governance.sql`，创建 `risk_retrospective_asset_governance_logs` 治理动作审计表；`/api/risk/retrospective/assets` 新增 `update` 和 `merge` 动作，支持补充资产标题、适用范围、经验教训、早期预警规则、可复用做法和标签，也支持将重复资产合并到主资产并把源资产归档。`/risk` 的“已确认资产库”新增“补充资产”和“合并到主资产”操作。本版本需要执行 `supabase-v5334-risk-retrospective-governance.sql` 后才能持久化治理动作日志；未执行时编辑/合并主流程仍可执行，但会提示审计未持久化。

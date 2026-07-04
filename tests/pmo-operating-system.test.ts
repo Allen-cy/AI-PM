@@ -70,6 +70,7 @@ import {
   riskRetrospectiveAssetToRagDocument,
 } from '../src/features/risk/retrospective-assets.ts';
 import { buildRiskRetrospectiveKnowledgeExport } from '../src/features/risk/retrospective-knowledge-sync.ts';
+import { buildRiskRetrospectiveGovernanceDashboard, type RiskRetrospectiveGovernanceLog } from '../src/features/risk/retrospective-governance.ts';
 import { buildRiskRetrospectiveQualityDashboard } from '../src/features/risk/retrospective-quality.ts';
 import {
   buildReportEvidence,
@@ -749,6 +750,7 @@ test('risk sensitivity impact is discoverable from api dashboard and sensitivity
   const retrospectiveRecommendationsApiSource = readFileSync(new URL('../src/app/api/risk/retrospective/recommendations/route.ts', import.meta.url), 'utf8');
   const retrospectiveExportApiSource = readFileSync(new URL('../src/app/api/risk/retrospective/assets/export/route.ts', import.meta.url), 'utf8');
   const retrospectiveQualityApiSource = readFileSync(new URL('../src/app/api/risk/retrospective/assets/quality/route.ts', import.meta.url), 'utf8');
+  const retrospectiveGovernanceApiSource = readFileSync(new URL('../src/app/api/risk/retrospective/assets/governance/route.ts', import.meta.url), 'utf8');
   const retrospectiveAssetsSql = readFileSync(new URL('../supabase-v5330-risk-retrospective-assets.sql', import.meta.url), 'utf8');
   const retrospectiveExportSql = readFileSync(new URL('../supabase-v5331-risk-retrospective-knowledge-sync.sql', import.meta.url), 'utf8');
   const retrospectiveValueSql = readFileSync(new URL('../supabase-v5332-risk-retrospective-value.sql', import.meta.url), 'utf8');
@@ -771,6 +773,7 @@ test('risk sensitivity impact is discoverable from api dashboard and sensitivity
   assert.match(retrospectiveRecommendationsApiSource, /buildRiskRetrospectiveRecommendations/);
   assert.match(retrospectiveExportApiSource, /buildRiskRetrospectiveKnowledgeExport/);
   assert.match(retrospectiveQualityApiSource, /buildRiskRetrospectiveQualityDashboard/);
+  assert.match(retrospectiveGovernanceApiSource, /buildRiskRetrospectiveGovernanceDashboard/);
   assert.match(retrospectiveAssetsSql, /risk_retrospective_assets/);
   assert.match(retrospectiveExportSql, /risk_retrospective_asset_sync_logs/);
   assert.match(retrospectiveValueSql, /risk_retrospective_asset_usage_logs/);
@@ -789,6 +792,8 @@ test('risk sensitivity impact is discoverable from api dashboard and sensitivity
   assert.match(riskPageSource, /资产质量与治理队列/);
   assert.match(riskPageSource, /补充资产/);
   assert.match(riskPageSource, /合并到主资产/);
+  assert.match(riskPageSource, /治理审计台/);
+  assert.match(riskPageSource, /下载治理报告/);
   assert.match(reportRouteSource, /riskRetrospective/);
   assert.match(trackingPageSource, /关闭证据与复核意见/);
 });
@@ -1226,6 +1231,54 @@ test('risk retrospective asset governance builds edit payload and merge preview'
   assert.equal(preview.targetAssetId, target.id);
   assert.equal(preview.mergedTags.includes('里程碑'), true);
   assert.match(preview.actionSummary, /合并到主资产/);
+});
+
+test('risk retrospective governance dashboard exports traceable markdown report', () => {
+  const baseCard = {
+    id: 'R-GOV-REPORT-1',
+    sourceRiskId: 'R-GOV-REPORT-1',
+    projectName: '治理报告项目',
+    title: '回款延期风险复盘',
+    riskDescription: '回款延期',
+    category: '合同',
+    impactArea: '回款',
+    severity: 'high' as const,
+    trigger: '客户未确认付款计划',
+    effectiveResponse: '锁定付款计划并升级商务负责人',
+    closingEvidence: '付款计划确认邮件',
+    reviewOpinion: 'PMO同意关闭',
+    lessonLearned: '付款条件需要在验收前冻结',
+    earlyWarningRule: '付款计划超过7天未确认即预警',
+    reusablePractice: '验收清单和付款计划双签',
+    tags: ['回款', '验收'],
+  };
+  const asset = buildRiskRetrospectiveAssetDraft(baseCard, { status: 'published' });
+  const quality = buildRiskRetrospectiveQualityDashboard([asset], new Date('2026-07-04T00:00:00.000Z'));
+  const logs: RiskRetrospectiveGovernanceLog[] = [
+    {
+      id: 'log-1',
+      assetId: asset.id,
+      targetAssetId: null,
+      action: 'edit',
+      actionLabel: '补充编辑',
+      actionSummary: '补充早期预警规则',
+      beforeTitle: asset.title,
+      afterTitle: asset.title,
+      beforeStatus: 'reviewed',
+      afterStatus: 'published',
+      performedByName: 'PMO知识管理员',
+      requestId: 'req-1',
+      createdAt: '2026-07-04T10:00:00.000Z',
+    },
+  ];
+  const dashboard = buildRiskRetrospectiveGovernanceDashboard({ assets: [asset], logs, quality });
+
+  assert.equal(dashboard.summary.totalLogs, 1);
+  assert.equal(dashboard.summary.editActions, 1);
+  assert.equal(dashboard.summary.touchedAssets, 1);
+  assert.match(dashboard.reportMarkdown, /风险复盘资产治理报告/);
+  assert.match(dashboard.reportMarkdown, /补充早期预警规则/);
+  assert.match(dashboard.boundary, /治理审计台/);
 });
 
 test('field mapping diagnostics detect missing Chinese fields and aliases', () => {

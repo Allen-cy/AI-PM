@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import type { AiEvidence, AiSuggestedAction } from "@/features/ai/evidence";
 import type { RiskClosureDashboard, RiskClosureDecision } from "@/features/risk/closure";
+import type { RiskRetrospectiveGovernanceDashboard } from "@/features/risk/retrospective-governance";
 import type { RiskRetrospectiveSyncLog } from "@/features/risk/retrospective-knowledge-sync";
 import type { RiskRetrospectiveAssetDuplicateWarning, RiskRetrospectiveAssetEditPatch, RiskRetrospectiveAssetRecord, RiskRetrospectiveRecommendation } from "@/features/risk/retrospective-assets";
 import type { RiskRetrospectiveQualityDashboard } from "@/features/risk/retrospective-quality";
@@ -389,8 +390,10 @@ export default function RiskPage() {
   const [riskRetrospectiveSyncLogs, setRiskRetrospectiveSyncLogs] = useState<RiskRetrospectiveSyncLog[]>([]);
   const [riskRetrospectiveDuplicateWarnings, setRiskRetrospectiveDuplicateWarnings] = useState<RiskRetrospectiveAssetDuplicateWarning[]>([]);
   const [riskRetrospectiveQuality, setRiskRetrospectiveQuality] = useState<RiskRetrospectiveQualityDashboard | null>(null);
+  const [riskRetrospectiveGovernance, setRiskRetrospectiveGovernance] = useState<RiskRetrospectiveGovernanceDashboard | null>(null);
   const [retrospectiveAssetWarning, setRetrospectiveAssetWarning] = useState("");
   const [retrospectiveSyncWarning, setRetrospectiveSyncWarning] = useState("");
+  const [retrospectiveGovernanceWarning, setRetrospectiveGovernanceWarning] = useState("");
   const [savingRetrospectiveAsset, setSavingRetrospectiveAsset] = useState<string | null>(null);
   const [editingRetrospectiveAssetId, setEditingRetrospectiveAssetId] = useState<string | null>(null);
   const [retrospectiveAssetEditForm, setRetrospectiveAssetEditForm] = useState<RetrospectiveAssetEditForm>({
@@ -419,7 +422,7 @@ export default function RiskPage() {
         const response = await fetch("/api/risk", { cache: "no-store" });
         const data = await response.json() as { risks?: Risk[]; events?: RiskWorkflowEvent[]; warning?: string; error?: string; migrationHint?: string };
         if (!response.ok) throw new Error([data.error, data.migrationHint].filter(Boolean).join("；") || "风险登记册读取失败");
-        const [integrationResponse, escalationResponse, closureResponse, retrospectiveResponse, retrospectiveAssetsResponse, retrospectiveRecommendationsResponse, retrospectiveExportResponse, retrospectiveQualityResponse] = await Promise.all([
+        const [integrationResponse, escalationResponse, closureResponse, retrospectiveResponse, retrospectiveAssetsResponse, retrospectiveRecommendationsResponse, retrospectiveExportResponse, retrospectiveQualityResponse, retrospectiveGovernanceResponse] = await Promise.all([
           fetch("/api/risk/integration", { cache: "no-store" }),
           fetch("/api/risk/escalation-drafts", { cache: "no-store" }),
           fetch("/api/risk/closure", { cache: "no-store" }),
@@ -428,6 +431,7 @@ export default function RiskPage() {
           fetch("/api/risk/retrospective/recommendations", { cache: "no-store" }),
           fetch("/api/risk/retrospective/assets/export", { cache: "no-store" }),
           fetch("/api/risk/retrospective/assets/quality", { cache: "no-store" }),
+          fetch("/api/risk/retrospective/assets/governance", { cache: "no-store" }),
         ]);
         const integrationData = await integrationResponse.json().catch(() => ({})) as { risk_integration?: RiskIntegration };
         const escalationData = await escalationResponse.json().catch(() => ({})) as { risk_escalation?: RiskEscalationDraftDashboard };
@@ -441,6 +445,7 @@ export default function RiskPage() {
         const retrospectiveRecommendationsData = await retrospectiveRecommendationsResponse.json().catch(() => ({})) as { recommendations?: RiskRetrospectiveRecommendation[] };
         const retrospectiveExportData = await retrospectiveExportResponse.json().catch(() => ({})) as { logs?: RiskRetrospectiveSyncLog[]; warning?: string };
         const retrospectiveQualityData = await retrospectiveQualityResponse.json().catch(() => ({})) as { risk_retrospective_quality?: RiskRetrospectiveQualityDashboard };
+        const retrospectiveGovernanceData = await retrospectiveGovernanceResponse.json().catch(() => ({})) as { risk_retrospective_governance?: RiskRetrospectiveGovernanceDashboard; warning?: string };
         if (cancelled) return;
         setRisks(Array.isArray(data.risks) ? data.risks : []);
         setWorkflowEvents(Array.isArray(data.events) ? data.events : []);
@@ -453,8 +458,10 @@ export default function RiskPage() {
         setRiskRetrospectiveRecommendations(Array.isArray(retrospectiveRecommendationsData.recommendations) ? retrospectiveRecommendationsData.recommendations : []);
         setRiskRetrospectiveSyncLogs(Array.isArray(retrospectiveExportData.logs) ? retrospectiveExportData.logs : []);
         setRiskRetrospectiveQuality(retrospectiveQualityData.risk_retrospective_quality ?? null);
+        setRiskRetrospectiveGovernance(retrospectiveGovernanceData.risk_retrospective_governance ?? null);
         setRetrospectiveAssetWarning(retrospectiveAssetsData.warning || "");
         setRetrospectiveSyncWarning(retrospectiveExportData.warning || "");
+        setRetrospectiveGovernanceWarning(retrospectiveGovernanceData.warning || "");
         setMessage(data.warning || "");
       } catch (e: unknown) {
         if (cancelled) return;
@@ -678,8 +685,9 @@ export default function RiskPage() {
           fetch("/api/risk/retrospective/assets", { cache: "no-store" }),
           fetch("/api/risk/retrospective/recommendations", { cache: "no-store" }),
           fetch("/api/risk/retrospective/assets/quality", { cache: "no-store" }),
+          fetch("/api/risk/retrospective/assets/governance", { cache: "no-store" }),
         ])
-          .then(async ([closureResponse, retrospectiveResponse, assetsResponse, recommendationsResponse, qualityResponse]) => {
+          .then(async ([closureResponse, retrospectiveResponse, assetsResponse, recommendationsResponse, qualityResponse, governanceResponse]) => {
             const closurePayload = await closureResponse.json().catch(() => ({})) as { risk_closure?: RiskClosureDashboard };
             const retrospectivePayload = await retrospectiveResponse.json().catch(() => ({})) as { risk_retrospective?: RiskRetrospectiveDashboard };
             const assetsPayload = await assetsResponse.json().catch(() => ({})) as {
@@ -689,12 +697,15 @@ export default function RiskPage() {
             };
             const recommendationsPayload = await recommendationsResponse.json().catch(() => ({})) as { recommendations?: RiskRetrospectiveRecommendation[] };
             const qualityPayload = await qualityResponse.json().catch(() => ({})) as { risk_retrospective_quality?: RiskRetrospectiveQualityDashboard };
+            const governancePayload = await governanceResponse.json().catch(() => ({})) as { risk_retrospective_governance?: RiskRetrospectiveGovernanceDashboard; warning?: string };
             setRiskClosure(closurePayload.risk_closure ?? null);
             setRiskRetrospective(retrospectivePayload.risk_retrospective ?? null);
             setRiskRetrospectiveAssets(Array.isArray(assetsPayload.assets) ? assetsPayload.assets : []);
             setRiskRetrospectiveDuplicateWarnings(Array.isArray(assetsPayload.duplicate_warnings) ? assetsPayload.duplicate_warnings : []);
             setRiskRetrospectiveRecommendations(Array.isArray(recommendationsPayload.recommendations) ? recommendationsPayload.recommendations : []);
             setRiskRetrospectiveQuality(qualityPayload.risk_retrospective_quality ?? null);
+            setRiskRetrospectiveGovernance(governancePayload.risk_retrospective_governance ?? null);
+            setRetrospectiveGovernanceWarning(governancePayload.warning || "");
             setRetrospectiveAssetWarning(assetsPayload.warning || "");
           })
           .catch(() => undefined);
@@ -709,11 +720,12 @@ export default function RiskPage() {
   };
 
   const refreshRetrospectiveAssets = async () => {
-    const [response, recommendationsResponse, exportResponse, qualityResponse] = await Promise.all([
+    const [response, recommendationsResponse, exportResponse, qualityResponse, governanceResponse] = await Promise.all([
       fetch("/api/risk/retrospective/assets", { cache: "no-store" }),
       fetch("/api/risk/retrospective/recommendations", { cache: "no-store" }),
       fetch("/api/risk/retrospective/assets/export", { cache: "no-store" }),
       fetch("/api/risk/retrospective/assets/quality", { cache: "no-store" }),
+      fetch("/api/risk/retrospective/assets/governance", { cache: "no-store" }),
     ]);
     const payload = await response.json().catch(() => ({})) as {
       assets?: RiskRetrospectiveAssetRecord[];
@@ -723,13 +735,16 @@ export default function RiskPage() {
     const recommendationsPayload = await recommendationsResponse.json().catch(() => ({})) as { recommendations?: RiskRetrospectiveRecommendation[] };
     const exportPayload = await exportResponse.json().catch(() => ({})) as { logs?: RiskRetrospectiveSyncLog[]; warning?: string };
     const qualityPayload = await qualityResponse.json().catch(() => ({})) as { risk_retrospective_quality?: RiskRetrospectiveQualityDashboard };
+    const governancePayload = await governanceResponse.json().catch(() => ({})) as { risk_retrospective_governance?: RiskRetrospectiveGovernanceDashboard; warning?: string };
     setRiskRetrospectiveAssets(Array.isArray(payload.assets) ? payload.assets : []);
     setRiskRetrospectiveDuplicateWarnings(Array.isArray(payload.duplicate_warnings) ? payload.duplicate_warnings : []);
     setRiskRetrospectiveRecommendations(Array.isArray(recommendationsPayload.recommendations) ? recommendationsPayload.recommendations : []);
     setRiskRetrospectiveSyncLogs(Array.isArray(exportPayload.logs) ? exportPayload.logs : []);
     setRiskRetrospectiveQuality(qualityPayload.risk_retrospective_quality ?? null);
+    setRiskRetrospectiveGovernance(governancePayload.risk_retrospective_governance ?? null);
     setRetrospectiveAssetWarning(payload.warning || "");
     setRetrospectiveSyncWarning(exportPayload.warning || "");
+    setRetrospectiveGovernanceWarning(governancePayload.warning || "");
   };
 
   const mutateRetrospectiveAsset = async (input: {
@@ -1819,6 +1834,12 @@ export default function RiskPage() {
                     下载复盘清单
                   </button>
                   <button
+                    className="btn-secondary"
+                    onClick={() => downloadText("风险复盘资产治理报告.md", riskRetrospectiveGovernance?.reportMarkdown || "# 风险复盘资产治理报告\n\n暂无治理审计数据。")}
+                  >
+                    下载治理报告
+                  </button>
+                  <button
                     className="btn-primary"
                     disabled={exportingRetrospectiveAssets}
                     onClick={() => void exportRetrospectiveAssets()}
@@ -1939,6 +1960,11 @@ export default function RiskPage() {
                   {retrospectiveSyncWarning}
                 </div>
               )}
+              {retrospectiveGovernanceWarning && (
+                <div style={{ marginBottom: 12, padding: 10, borderRadius: 10, background: "rgba(59,130,246,0.08)", color: "var(--accent2)", fontSize: "0.74rem", lineHeight: 1.6 }}>
+                  {retrospectiveGovernanceWarning}
+                </div>
+              )}
               {riskRetrospectiveDuplicateWarnings.length > 0 && (
                 <div style={{ marginBottom: 12, padding: 10, borderRadius: 10, background: "rgba(245,158,11,0.1)", color: "var(--amber)", fontSize: "0.74rem", lineHeight: 1.7 }}>
                   <div style={{ fontWeight: 800, marginBottom: 6 }}>重复资产提示</div>
@@ -1985,6 +2011,44 @@ export default function RiskPage() {
                           </article>
                         ))}
                         <div style={{ color: "var(--text2)", fontSize: "0.7rem", lineHeight: 1.6 }}>{riskRetrospectiveQuality.boundary}</div>
+                      </>
+                    )}
+                  </div>
+
+                  <div>
+                    <div style={{ fontWeight: 800, marginBottom: 8 }}>治理审计台</div>
+                    {!riskRetrospectiveGovernance ? (
+                      <div style={{ color: "var(--text2)", fontSize: "0.78rem", lineHeight: 1.7 }}>暂无治理审计数据。执行补充、合并、发布、撤回或恢复后会在这里展示。</div>
+                    ) : (
+                      <>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginBottom: 10 }}>
+                          {[
+                            ["动作数", riskRetrospectiveGovernance.summary.totalLogs],
+                            ["编辑", riskRetrospectiveGovernance.summary.editActions],
+                            ["合并", riskRetrospectiveGovernance.summary.mergeActions],
+                          ].map(([label, value]) => (
+                            <div key={label} style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 10, padding: 10 }}>
+                              <div style={{ color: "var(--text2)", fontSize: "0.68rem" }}>{label}</div>
+                              <strong style={{ fontSize: "0.95rem" }}>{value}</strong>
+                            </div>
+                          ))}
+                        </div>
+                        {riskRetrospectiveGovernance.logs.length === 0 ? (
+                          <div style={{ color: "var(--text2)", fontSize: "0.78rem", lineHeight: 1.7 }}>暂无治理动作。执行“补充资产”或“合并到主资产”后，这里会展示动作审计。</div>
+                        ) : riskRetrospectiveGovernance.logs.slice(0, 6).map(log => (
+                          <article key={log.id} style={{ padding: 12, border: "1px solid var(--border)", borderRadius: 10, background: "var(--surface2)", marginBottom: 8 }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 6 }}>
+                              <strong style={{ fontSize: "0.8rem" }}>{log.actionLabel}</strong>
+                              <span className={log.action === "merge" ? "tag tag-purple" : log.action === "edit" ? "tag tag-blue" : "tag tag-green"}>{log.createdAt.slice(0, 10)}</span>
+                            </div>
+                            <div style={{ color: "var(--text2)", fontSize: "0.72rem", lineHeight: 1.6 }}>
+                              <div>资产：{log.afterTitle || log.beforeTitle || "未知资产"}</div>
+                              <div>人员：{log.performedByName || "系统"}</div>
+                              <div>摘要：{log.actionSummary}</div>
+                            </div>
+                          </article>
+                        ))}
+                        <div style={{ color: "var(--text2)", fontSize: "0.7rem", lineHeight: 1.6 }}>{riskRetrospectiveGovernance.boundary}</div>
                       </>
                     )}
                   </div>

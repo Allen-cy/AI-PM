@@ -638,6 +638,14 @@ V5.3.34 落地说明：
 - `/risk` 的“已确认资产库”新增“补充资产”和“合并到主资产”操作。
 - 本版本需要执行 `supabase-v5334-risk-retrospective-governance.sql` 后才能持久化治理动作审计；未执行时编辑/合并主流程仍可执行，但会提示审计未持久化。
 
+V5.3.35 落地说明：
+
+- 新增 `src/features/risk/retrospective-governance.ts`，读取 V5.3.34 的 `risk_retrospective_asset_governance_logs` 并生成治理审计台数据。
+- 新增 `/api/risk/retrospective/assets/governance`，支持按动作和资产读取治理日志，并返回可下载 Markdown 报告。
+- `/risk` 的“复盘资产”页签新增“治理审计台”和“下载治理报告”。
+- 治理报告包含资产数、治理动作数、补充编辑数、合并数、状态动作数、涉及资产数、当前质量均分、质量治理队列和治理动作审计。
+- 本版本不新增 SQL，但需要已执行 `supabase-v5334-risk-retrospective-governance.sql` 才能读取真实治理审计。
+
 V5.3.7 落地说明：
 
 - 新增 `/blueprint-v3/delivery-management`「项目全流程交付管理蓝图」子页面，将原附件业务流程图结构化为销售管理、项目管理、监控管理、成本管理和工具支撑五类泳道。
