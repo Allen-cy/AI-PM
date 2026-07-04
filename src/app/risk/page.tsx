@@ -32,7 +32,7 @@ import {
   statusOrder,
 } from "@/lib/risk";
 
-type ActiveTab = "overview" | "list" | "checklist" | "matrix" | "workflow" | "response";
+type ActiveTab = "overview" | "integration" | "list" | "checklist" | "matrix" | "workflow" | "response";
 
 type RiskForm = Omit<Risk, "id" | "piScore" | "priorityScore" | "createdAt">;
 
@@ -62,11 +62,46 @@ interface DashboardRiskRecord {
   重点项目原因?: string;
 }
 
+type RiskIntegration = {
+  summary: {
+    openRiskLinks: number;
+    highSeverity: number;
+    projectHealthImpacts: number;
+    taskImpacts: number;
+    milestoneImpacts: number;
+    paymentImpacts: number;
+    governanceEscalations: number;
+    pendingConfirmation: number;
+  };
+  links: Array<{
+    id: string;
+    projectName: string;
+    riskDescription: string;
+    severity: "高" | "中" | "低";
+    status: string;
+    owner: string;
+    deadline: string;
+    dependencies: string[];
+    impactedTargets: string[];
+    suggestedWritebacks: Array<{ target: string; field: string; suggestedValue: string; reason: string; requiresConfirmation: boolean }>;
+    actions: Array<{ id: string; title: string; owner: string; dueDate: string; priority: "P0" | "P1" | "P2"; targetModule: string; sourceReason: string; confirmationRequired: boolean }>;
+    reportFact: string;
+    writebackMode: string;
+  }>;
+  reportFacts: string[];
+  boundary: string;
+};
+
 const categories = Object.keys(categoryLabels) as RiskCategory[];
 const impactAreas = Object.keys(impactAreaLabels) as RiskImpactArea[];
 const stages: RiskStage[] = ["立项", "规划", "执行", "监控", "验收", "结项", "全生命周期"];
 const strategies: RiskStrategy[] = ["规避", "缓解", "转移", "接受", "上报"];
 const modules: LinkedModule[] = ["项目组合看板", "立项", "规划", "执行", "监控", "收尾", "合同回款", "质量", "资源"];
+const priorityColor: Record<string, string> = {
+  P0: "var(--red)",
+  P1: "var(--amber)",
+  P2: "var(--accent2)",
+};
 
 function dateByOffset(days: number): string {
   const date = new Date();
@@ -271,6 +306,7 @@ export default function RiskPage() {
   const [scanning, setScanning] = useState(false);
   const [loadingFeishu, setLoadingFeishu] = useState(false);
   const [lastRiskEvidence, setLastRiskEvidence] = useState<AiEvidence | null>(null);
+  const [riskIntegration, setRiskIntegration] = useState<RiskIntegration | null>(null);
   const [savingEvidenceAction, setSavingEvidenceAction] = useState<string | null>(null);
   const [evidenceActionMessage, setEvidenceActionMessage] = useState("");
   const [reviewNow] = useState(() => Date.now());
@@ -286,9 +322,12 @@ export default function RiskPage() {
         const response = await fetch("/api/risk", { cache: "no-store" });
         const data = await response.json() as { risks?: Risk[]; events?: RiskWorkflowEvent[]; warning?: string; error?: string; migrationHint?: string };
         if (!response.ok) throw new Error([data.error, data.migrationHint].filter(Boolean).join("；") || "风险登记册读取失败");
+        const integrationResponse = await fetch("/api/risk/integration", { cache: "no-store" });
+        const integrationData = await integrationResponse.json().catch(() => ({})) as { risk_integration?: RiskIntegration };
         if (cancelled) return;
         setRisks(Array.isArray(data.risks) ? data.risks : []);
         setWorkflowEvents(Array.isArray(data.events) ? data.events : []);
+        setRiskIntegration(integrationData.risk_integration ?? null);
         setMessage(data.warning || "");
       } catch (e: unknown) {
         if (cancelled) return;
@@ -595,6 +634,7 @@ export default function RiskPage() {
         <div style={{ display: "flex", gap: 0, marginBottom: 24, borderBottom: "1px solid var(--border)", overflowX: "auto" }}>
           {[
             { key: "overview", icon: "🧭", label: "总览闭环" },
+            { key: "integration", icon: "🔗", label: "风险联动" },
             { key: "list", icon: "📋", label: "风险登记册" },
             { key: "checklist", icon: "✅", label: "核查清单" },
             { key: "matrix", icon: "🎯", label: "P-I矩阵" },
@@ -675,6 +715,101 @@ export default function RiskPage() {
                   </div>
                 ))}
               </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === "integration" && (
+          <div style={{ display: "grid", gap: 20 }}>
+            <div className="card">
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start", marginBottom: 16 }}>
+                <div>
+                  <div style={{ fontSize: "0.85rem", fontWeight: 800, color: "var(--text2)", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.08em" }}>风险与业务对象联动</div>
+                  <p style={{ color: "var(--text2)", lineHeight: 1.7, fontSize: "0.84rem" }}>
+                    该视图把风险登记册和项目台账中的风险线索，映射到项目健康、任务、里程碑、回款、治理工作流和报告工厂。系统只生成建议，写回飞书或改变主数据前必须人工确认。
+                  </p>
+                </div>
+                <button className="btn-secondary" disabled={loadingFeishu} onClick={() => void handleLoadDashboardRisks()}>
+                  {loadingFeishu ? "读取飞书中..." : "从飞书导入风险线索"}
+                </button>
+              </div>
+              {!riskIntegration ? (
+                <div style={{ color: "var(--text2)", lineHeight: 1.7 }}>正在读取风险联动包...</div>
+              ) : (
+                <>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 10, marginBottom: 16 }}>
+                    {[
+                      ["联动风险", riskIntegration.summary.openRiskLinks],
+                      ["高风险", riskIntegration.summary.highSeverity],
+                      ["项目健康", riskIntegration.summary.projectHealthImpacts],
+                      ["任务", riskIntegration.summary.taskImpacts],
+                      ["里程碑", riskIntegration.summary.milestoneImpacts],
+                      ["回款", riskIntegration.summary.paymentImpacts],
+                      ["治理升级", riskIntegration.summary.governanceEscalations],
+                      ["待确认写回", riskIntegration.summary.pendingConfirmation],
+                    ].map(([label, value]) => (
+                      <div key={label} style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 10, padding: 12 }}>
+                        <div style={{ color: "var(--text2)", fontSize: "0.74rem" }}>{label}</div>
+                        <strong>{value}</strong>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div style={{ display: "grid", gap: 14 }}>
+                    {riskIntegration.links.length === 0 ? (
+                      <div style={{ color: "var(--text2)", lineHeight: 1.7 }}>暂无可联动风险。若实际存在风险，请先补齐风险登记册或飞书项目台账的风险字段。</div>
+                    ) : (
+                      riskIntegration.links.map(link => (
+                        <article key={link.id} style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 12, padding: 16 }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "flex-start" }}>
+                            <div>
+                              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                                <strong>{link.projectName}</strong>
+                                <span className={`tag ${link.severity === "高" ? "tag-amber" : link.severity === "中" ? "tag-blue" : "tag-green"}`}>{link.severity}风险</span>
+                                <span className="tag tag-purple">{link.status}</span>
+                              </div>
+                              <p style={{ color: "var(--text2)", lineHeight: 1.6, fontSize: "0.82rem", marginTop: 8 }}>
+                                {link.riskDescription} · 责任人：{link.owner} · deadline：{link.deadline}
+                              </p>
+                            </div>
+                            <span className="tag tag-amber">{link.writebackMode === "manual_confirmation_required" ? "写回需确认" : "仅审计"}</span>
+                          </div>
+
+                          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, marginTop: 14 }}>
+                            <div>
+                              <div style={{ fontWeight: 800, fontSize: "0.8rem", marginBottom: 8 }}>影响对象</div>
+                              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                                {link.impactedTargets.map(target => <span key={target} className="tag tag-blue">{target}</span>)}
+                              </div>
+                              <ul style={{ color: "var(--text2)", lineHeight: 1.7, paddingLeft: 18, fontSize: "0.78rem", marginTop: 10 }}>
+                                {link.dependencies.slice(0, 4).map(item => <li key={item}>{item}</li>)}
+                              </ul>
+                            </div>
+                            <div>
+                              <div style={{ fontWeight: 800, fontSize: "0.8rem", marginBottom: 8 }}>建议写回字段</div>
+                              <ul style={{ color: "var(--text2)", lineHeight: 1.7, paddingLeft: 18, fontSize: "0.78rem" }}>
+                                {link.suggestedWritebacks.slice(0, 4).map(item => (
+                                  <li key={`${item.target}-${item.field}`}>{item.field} → <strong style={{ color: "var(--text)" }}>{item.suggestedValue}</strong></li>
+                                ))}
+                              </ul>
+                            </div>
+                            <div>
+                              <div style={{ fontWeight: 800, fontSize: "0.8rem", marginBottom: 8 }}>下一步动作</div>
+                              <ul style={{ color: "var(--text2)", lineHeight: 1.7, paddingLeft: 18, fontSize: "0.78rem" }}>
+                                {link.actions.slice(0, 4).map(action => (
+                                  <li key={action.id}><strong style={{ color: priorityColor[action.priority] }}>{action.priority}</strong> · {action.title} · {action.owner} · {action.dueDate}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          </div>
+                          <div style={{ marginTop: 12, color: "var(--accent2)", fontSize: "0.8rem", lineHeight: 1.6 }}>报告事实：{link.reportFact}</div>
+                        </article>
+                      ))
+                    )}
+                  </div>
+                  <div style={{ marginTop: 14, color: "var(--text2)", fontSize: "0.78rem", lineHeight: 1.6 }}>{riskIntegration.boundary}</div>
+                </>
+              )}
             </div>
           </div>
         )}

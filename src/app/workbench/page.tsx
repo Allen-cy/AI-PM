@@ -12,6 +12,32 @@ type Workbench = {
   myRisks: Array<{ id: string; projectName: string; description: string; severity: string; status: string; owner: string; dueDate: string; nextAction: string; source: string }>;
   todayTodos: Array<{ id: string; type: string; title: string; projectName: string; owner: string; dueDate: string; daysLeft: number | null; status: string; priority: string; source: string; action: string }>;
   businessReminders: Array<{ id: string; projectName: string; customer: string; amount: number; dueDate: string; daysLeft: number | null; status: string; source: string; action: string }>;
+  riskIntegration: {
+    summary: {
+      openRiskLinks: number;
+      highSeverity: number;
+      projectHealthImpacts: number;
+      taskImpacts: number;
+      milestoneImpacts: number;
+      paymentImpacts: number;
+      governanceEscalations: number;
+      pendingConfirmation: number;
+    };
+    links: Array<{
+      id: string;
+      projectName: string;
+      riskDescription: string;
+      severity: string;
+      status: string;
+      owner: string;
+      deadline: string;
+      impactedTargets: string[];
+      actions: Array<{ id: string; title: string; owner: string; dueDate: string; priority: string; targetModule: string; sourceReason: string; confirmationRequired: boolean }>;
+      reportFact: string;
+      writebackMode: string;
+    }>;
+    boundary: string;
+  };
   evidence: {
     userScope: string;
     matchedBy: string[];
@@ -201,6 +227,61 @@ export default function WorkbenchPage() {
                   <p style={{ color: "var(--text2)", fontSize: "0.8rem", lineHeight: 1.5, marginTop: 8 }}>{kpi.hint}</p>
                 </div>
               ))}
+            </section>
+
+            <section className="card" style={{ marginBottom: 18 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", marginBottom: 12 }}>
+                <div>
+                  <div className="section-title">🔗 风险联动提醒</div>
+                  <p style={{ color: "var(--text2)", lineHeight: 1.6, fontSize: "0.84rem" }}>
+                    将风险登记册与项目健康、任务、里程碑、回款、治理流程和报告工厂统一成今日可处理动作；所有写回建议均需人工确认。
+                  </p>
+                </div>
+                <Link href="/risk" className="btn-secondary" style={{ textDecoration: "none", whiteSpace: "nowrap" }}>进入风险管理</Link>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 10, marginBottom: 12 }}>
+                {[
+                  ["联动风险", workbench.riskIntegration.summary.openRiskLinks],
+                  ["高风险", workbench.riskIntegration.summary.highSeverity],
+                  ["项目健康", workbench.riskIntegration.summary.projectHealthImpacts],
+                  ["任务", workbench.riskIntegration.summary.taskImpacts],
+                  ["里程碑", workbench.riskIntegration.summary.milestoneImpacts],
+                  ["回款", workbench.riskIntegration.summary.paymentImpacts],
+                  ["治理升级", workbench.riskIntegration.summary.governanceEscalations],
+                  ["待确认写回", workbench.riskIntegration.summary.pendingConfirmation],
+                ].map(([label, value]) => (
+                  <div key={label} style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 10, padding: 12 }}>
+                    <div style={{ color: "var(--text2)", fontSize: "0.74rem" }}>{label}</div>
+                    <strong>{value}</strong>
+                  </div>
+                ))}
+              </div>
+              {workbench.riskIntegration.links.length === 0 ? (
+                <p style={{ color: "var(--text2)", lineHeight: 1.7 }}>暂无风险联动提醒。若实际存在风险，请检查风险登记册和飞书项目台账字段是否已配置。</p>
+              ) : (
+                <div style={{ display: "grid", gap: 10 }}>
+                  {workbench.riskIntegration.links.slice(0, 4).map(link => (
+                    <div key={link.id} style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 10, padding: 14 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "flex-start" }}>
+                        <div>
+                          <strong>{link.projectName}</strong>
+                          <p style={{ color: "var(--text2)", fontSize: "0.8rem", lineHeight: 1.6, marginTop: 6 }}>
+                            {link.riskDescription} · {link.status} · 责任人：{link.owner} · deadline：{link.deadline}
+                          </p>
+                        </div>
+                        <StatusTag value={link.severity} />
+                      </div>
+                      <p style={{ color: "var(--accent2)", fontSize: "0.8rem", lineHeight: 1.6, marginTop: 6 }}>
+                        影响：{link.impactedTargets.join(" / ")}；建议动作：{link.actions[0]?.title || "补齐风险应对动作"}
+                      </p>
+                      <p style={{ color: "var(--amber)", fontSize: "0.76rem", lineHeight: 1.6, marginTop: 4 }}>
+                        写回模式：{link.writebackMode === "manual_confirmation_required" ? "需人工确认" : "仅审计记录"}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <p style={{ color: "var(--text2)", fontSize: "0.76rem", lineHeight: 1.6, marginTop: 10 }}>{workbench.riskIntegration.boundary}</p>
             </section>
 
             <section className="card" style={{ marginBottom: 18 }}>

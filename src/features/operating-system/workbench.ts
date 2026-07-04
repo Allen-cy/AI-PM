@@ -3,7 +3,9 @@ import type { DashboardData } from "../dashboard/types.ts";
 import { FeishuBaseClient } from "../feishu/client.ts";
 import type { FeishuConfig } from "../feishu/config.ts";
 import { deriveWorkbenchSummary, type HealthStatus, type WorkbenchSummary } from "../pmo-operating-system.ts";
+import { buildRiskIntegrationDashboard, type RiskIntegrationDashboard } from "../risk/integration.ts";
 import { recordMatchesProjectGrant, type ProjectAccessGrant } from "../security/authorization.ts";
+import type { Risk, RiskImpactArea } from "../../lib/risk.ts";
 
 export interface WorkbenchUser {
   id?: string;
@@ -89,6 +91,7 @@ export interface OperationalWorkbench extends WorkbenchSummary {
   myRisks: MyWorkbenchRisk[];
   todayTodos: MyWorkbenchTodo[];
   businessReminders: MyBusinessReminder[];
+  riskIntegration: RiskIntegrationDashboard;
   evidence: WorkbenchEvidence;
 }
 
@@ -345,6 +348,49 @@ function mapRiskReviewTodo(risk: MyWorkbenchRisk): MyWorkbenchTodo {
   };
 }
 
+function riskImpactAreaFromText(value: string): RiskImpactArea {
+  if (/回款|合同|应收|付款/.test(value)) return "回款";
+  if (/进度|延期|里程碑|工期/.test(value)) return "工期";
+  if (/质量|验收|缺陷/.test(value)) return "质量";
+  if (/成本|费用|预算/.test(value)) return "费用";
+  return "范围";
+}
+
+function workbenchRiskToRisk(risk: MyWorkbenchRisk): Risk {
+  const impactArea = riskImpactAreaFromText(`${risk.description}${risk.nextAction}`);
+  const piScore = risk.severity === "高" ? 20 : risk.severity === "中" ? 12 : 4;
+  const urgency = risk.severity === "高" ? 5 : risk.severity === "中" ? 3 : 2;
+  return {
+    id: risk.id,
+    riskCode: risk.id,
+    projectName: risk.projectName,
+    description: risk.description,
+    category: impactArea === "回款" ? "财务" : impactArea === "工期" ? "进度" : impactArea === "质量" ? "质量" : "管理",
+    stage: "监控",
+    source: risk.source,
+    impactArea,
+    probability: risk.severity === "高" ? 4 : risk.severity === "中" ? 3 : 2,
+    impact: risk.severity === "高" ? 5 : risk.severity === "中" ? 4 : 2,
+    urgency,
+    piScore,
+    priorityScore: piScore * urgency,
+    status: "tracking",
+    responseStrategyType: risk.severity === "高" ? "上报" : "缓解",
+    responseStrategy: risk.nextAction,
+    preventiveAction: risk.nextAction,
+    contingencyPlan: risk.nextAction,
+    trigger: "工作台从风险登记册、任务、里程碑或回款数据中识别。",
+    trackingMethod: "PM/PMO每日工作台复核。",
+    owner: risk.owner,
+    dueDate: risk.dueDate,
+    nextReviewDate: risk.dueDate,
+    closingCriteria: "应对动作完成并补充关闭证据。",
+    linkedModule: impactArea === "回款" ? "合同回款" : "监控",
+    evidence: risk.source,
+    createdAt: new Date().toISOString().slice(0, 10),
+  };
+}
+
 function mapPayment(record: RawRecord, index: number): MyBusinessReminder {
   const dueDate = dateText(record, ["到期日期", "回款到期日", "计划回款日期", "截止日期"]);
   const daysLeft = daysLeftFromDate(dueDate);
@@ -491,6 +537,7 @@ function buildFallbackWorkbench(user?: WorkbenchUser | null): OperationalWorkben
     myRisks: [],
     todayTodos: [],
     businessReminders: [],
+    riskIntegration: buildRiskIntegrationDashboard({ risks: [], dashboard: null }),
     evidence: {
       source: "missing",
       generatedAt: new Date().toISOString(),
@@ -566,6 +613,11 @@ export function buildOperationalWorkbench(input: {
     .sort((a, b) => (a.daysLeft ?? 99) - (b.daysLeft ?? 99))
     .slice(0, 8);
 
+  const riskIntegration = buildRiskIntegrationDashboard({
+    risks: myRisks.map(workbenchRiskToRisk),
+    dashboard,
+    limit: 12,
+  });
   const base = deriveWorkbenchSummary(dashboard);
   const evidence: WorkbenchEvidence = {
     source: "feishu",
@@ -608,6 +660,7 @@ export function buildOperationalWorkbench(input: {
     myRisks,
     todayTodos,
     businessReminders,
+    riskIntegration,
     evidence,
     aiSuggestions: buildAiSuggestions({ projects: myProjects, risks: myRisks, todos: todayTodos, reminders: businessReminders, evidence }),
   };

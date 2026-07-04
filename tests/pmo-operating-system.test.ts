@@ -52,6 +52,7 @@ import {
   buildRiskScanEvidence,
 } from '../src/features/ai/evidence.ts';
 import { buildFinanceCockpit } from '../src/features/finance/cockpit.ts';
+import { buildRiskIntegrationDashboard } from '../src/features/risk/integration.ts';
 import {
   buildReportEvidence,
   buildReportFactoryPackage,
@@ -797,6 +798,9 @@ test('operational workbench filters projects risks todos and reminders for curre
   assert.equal(workbench.todayTodos.some(item => item.id === 'T-1'), true);
   assert.equal(workbench.todayTodos.some(item => item.id === 'M-1'), false);
   assert.equal(workbench.businessReminders.length >= 1, true);
+  assert.equal(workbench.riskIntegration.summary.openRiskLinks >= 1, true);
+  assert.equal(workbench.riskIntegration.summary.paymentImpacts >= 1, true);
+  assert.equal(workbench.riskIntegration.links.some(link => link.writebackMode === 'manual_confirmation_required'), true);
   assert.match(workbench.aiSuggestions[0].basis, /任务1条/);
 });
 
@@ -983,6 +987,40 @@ test('report factory cites data sources and turns meeting minutes into actions',
     ],
   };
   const finance = buildFinanceCockpit(dashboard, { asOf: new Date('2026-07-02T00:00:00.000Z') });
+  const riskIntegration = buildRiskIntegrationDashboard({
+    dashboard,
+    risks: [
+      {
+        id: 'R-RPT-1',
+        riskCode: 'R-RPT-1',
+        projectName: '智慧校园一期',
+        description: '验收阻塞导致回款延期',
+        category: '财务',
+        stage: '监控',
+        source: '风险登记册',
+        impactArea: '回款',
+        probability: 4,
+        impact: 5,
+        urgency: 5,
+        piScore: 20,
+        priorityScore: 100,
+        status: 'tracking',
+        responseStrategyType: '上报',
+        responseStrategy: '升级PMO协调验收和付款路径',
+        preventiveAction: '补齐验收材料',
+        contingencyPlan: '必要时发起风险升级评审',
+        trigger: '客户验收签字依赖缺陷修复和付款材料确认。',
+        trackingMethod: '周会跟踪',
+        owner: '项目经理',
+        dueDate: '2026-07-04',
+        nextReviewDate: '2026-07-03',
+        closingCriteria: '验收签字并确认付款计划',
+        linkedModule: '合同回款',
+        createdAt: '2026-07-01',
+      },
+    ],
+    asOf: new Date('2026-07-02T00:00:00.000Z'),
+  });
   const request = {
     type: 'meeting' as const,
     projectName: '智慧校园一期',
@@ -998,6 +1036,7 @@ test('report factory cites data sources and turns meeting minutes into actions',
     sourceLabel: '飞书项目台账',
     sourceStatus: 'live' as const,
     model: 'MiniMax-M3',
+    riskIntegration,
     governanceImpact: buildGovernanceImpactDashboard([{
       id: 'gov-rpt-1',
       workflowId: 'project-closure',
@@ -1023,17 +1062,120 @@ test('report factory cites data sources and turns meeting minutes into actions',
   const markdown = fallbackReportContent(request, dataPackage, actionItems);
 
   assert.equal(dataPackage.dataSources.some(source => source.source === 'feishu'), true);
+  assert.equal(dataPackage.dataSources.some(source => source.label === '风险联动包'), true);
   assert.equal(dataPackage.dataSources.some(source => source.label === '治理工作流与审批联动'), true);
   assert.equal(dataPackage.financeFacts.some(item => item.includes('验收阻塞回款')), true);
+  assert.equal(dataPackage.riskFacts.some(item => item.includes('风险联动')), true);
   assert.equal(dataPackage.riskFacts.some(item => item.includes('治理联动')), true);
   assert.equal(actionItems.length, 2);
   assert.equal(actionItems[1].priority, 'P0');
   assert.equal(evidence.scene, 'report');
   assert.equal(evidence.citations.includes('飞书项目台账'), true);
+  assert.equal(evidence.citations.includes('风险联动包'), true);
   assert.equal(evidence.citations.includes('治理工作流与审批联动'), true);
   assert.equal(evidence.suggestedActions.length, 2);
   assert.match(markdown, /数据来源与生成边界/);
   assert.match(markdown, /补齐客户付款条件清单/);
+});
+
+test('risk integration links register risks to project health milestones payments governance and reports', () => {
+  const dashboard: DashboardData = {
+    source: { type: 'feishu', name: '飞书项目台账', generatedAt: '2026-07-04T00:00:00.000Z' },
+    kpi: {
+      totalProjects: 1,
+      totalContract: 300,
+      totalCollection: 120,
+      collectionRate: 40,
+      receivable: 180,
+    },
+    statusDistribution: [],
+    monthlyTrend: [],
+    regionDistribution: [],
+    paymentGroups: [],
+    projectLevels: [],
+    healthMatrix: [],
+    keyProjects: [],
+    riskProjects: [
+      { id: 'R-INT-1', name: '智慧校园一期', riskType: '回款风险', severity: '高', status: '应对中', trend: '恶化' },
+    ],
+    upcomingPayments: [
+      { project: '智慧校园一期', party: '客户A', amount: 180, dueDate: '2026-07-01', daysLeft: -3 },
+    ],
+    records: [
+      {
+        项目编号: 'P-INT-1',
+        项目名称: '智慧校园一期',
+        省份: '上海',
+        客户名称: '客户A',
+        项目状态: '验收中',
+        项目等级: 'A',
+        项目类型: '信息化',
+        产品类别: '平台',
+        项目经理: '张三',
+        当前进度: 0.92,
+        合同金额: 300,
+        已回款金额: 120,
+        应收金额: 180,
+        回款率: 0.4,
+        成本健康度: 70,
+        进度偏差: -8,
+        风险类型: '回款风险',
+        风险等级: '高',
+        风险状态: '应对中',
+        风险趋势: '恶化',
+        到期日期: '2026-07-01',
+      },
+    ],
+  };
+  const dashboardOnly = buildRiskIntegrationDashboard({
+    dashboard,
+    risks: [],
+    asOf: new Date('2026-07-04T00:00:00.000Z'),
+  });
+  const fromRegister = buildRiskIntegrationDashboard({
+    dashboard,
+    asOf: new Date('2026-07-04T00:00:00.000Z'),
+    risks: [
+      {
+        id: 'R-INT-1',
+        riskCode: 'R-INT-1',
+        projectName: '智慧校园一期',
+        description: '验收阻塞导致回款延期',
+        category: '财务',
+        stage: '监控',
+        source: '风险登记册',
+        impactArea: '回款',
+        probability: 4,
+        impact: 5,
+        urgency: 5,
+        piScore: 20,
+        priorityScore: 100,
+        status: 'tracking',
+        responseStrategyType: '上报',
+        responseStrategy: '升级PMO协调验收和付款路径',
+        preventiveAction: '补齐验收材料',
+        contingencyPlan: '必要时发起风险升级评审',
+        trigger: '客户验收签字依赖缺陷修复和付款材料确认。',
+        trackingMethod: '周会跟踪',
+        owner: '张三',
+        dueDate: '2026-07-04',
+        nextReviewDate: '2026-07-04',
+        closingCriteria: '验收签字并确认付款计划',
+        linkedModule: '合同回款',
+        createdAt: '2026-07-01',
+      },
+    ],
+  });
+
+  assert.equal(dashboardOnly.summary.openRiskLinks, 1);
+  assert.equal(fromRegister.summary.highSeverity, 1);
+  assert.equal(fromRegister.summary.paymentImpacts, 1);
+  assert.equal(fromRegister.summary.milestoneImpacts, 1);
+  assert.equal(fromRegister.summary.governanceEscalations, 1);
+  assert.equal(fromRegister.links[0].suggestedWritebacks.every(item => item.requiresConfirmation), true);
+  assert.equal(fromRegister.links[0].actions.some(action => action.targetModule === '治理工作流' && action.priority === 'P0'), true);
+  assert.match(fromRegister.reportFacts[0], /智慧校园一期/);
+  assert.match(fromRegister.reportFacts[0], /回款/);
 });
 
 test('enterprise security permissions and project access scope data', () => {

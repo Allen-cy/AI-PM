@@ -5,6 +5,7 @@ import { getEffectiveFeishuConfig } from "@/features/feishu/user-config";
 import { buildFinanceCockpit } from "@/features/finance/cockpit";
 import { persistAiEvidence } from "@/features/ai/evidence-repository";
 import { withAuditResult } from "@/features/ai/evidence";
+import { buildRiskIntegrationDashboard } from "@/features/risk/integration";
 import { filterDashboardByProjectAccess, projectAccessMode } from "@/features/security/authorization";
 import { loadProjectAccessGrantsForUser, writeOperationAudit } from "@/features/security/repository";
 import { buildGovernanceImpactDashboard } from "@/features/governance/impact";
@@ -19,6 +20,8 @@ import {
 } from "@/features/reports/factory";
 import { llmComplete } from "@/lib/llm";
 import { REPORT_TYPE_LABELS, type ReportActionItem, type ReportRequest } from "@/lib/reports";
+import { initialRisks } from "@/lib/risk";
+import { listRisks } from "@/lib/risk-repository";
 
 export const runtime = "nodejs";
 
@@ -82,13 +85,24 @@ function actionItemsFor(request: ReportRequest, context: ReportFactoryContext): 
   if (request.type === "meeting") {
     return extractMeetingActionItems([request.completedWork, request.nextPlans, request.issues].filter(Boolean).join("\n"), request.projectName);
   }
-  return context.finance.alerts.slice(0, 6).map(alert => ({
+  const financeActions = context.finance.alerts.slice(0, 4).map(alert => ({
     title: alert.title,
     owner: alert.owner,
     dueDate: alert.dueDate,
     priority: alert.priority,
     sourceReason: alert.reason,
   }));
+  const riskActions = context.riskIntegration?.links
+    .flatMap(link => link.actions.slice(0, 2))
+    .slice(0, 4)
+    .map(action => ({
+      title: action.title,
+      owner: action.owner,
+      dueDate: action.dueDate,
+      priority: action.priority,
+      sourceReason: action.sourceReason,
+    })) ?? [];
+  return [...financeActions, ...riskActions].slice(0, 8);
 }
 
 export async function POST(request: Request): Promise<Response> {
@@ -125,6 +139,11 @@ export async function POST(request: Request): Promise<Response> {
   const governanceImpact = governanceResult.status === "succeeded"
     ? buildGovernanceImpactDashboard(governanceResult.instances)
     : undefined;
+  const riskResult = await listRisks().catch(() => ({ risks: initialRisks, events: [], source: "memory" as const }));
+  const riskIntegration = buildRiskIntegrationDashboard({
+    risks: riskResult.risks,
+    dashboard,
+  });
   const context: ReportFactoryContext = {
     dashboard,
     finance,
@@ -132,6 +151,7 @@ export async function POST(request: Request): Promise<Response> {
     sourceStatus: effective.config ? "live" : "fallback",
     model: "configured-llm",
     governanceImpact,
+    riskIntegration,
   };
   const dataPackage = buildReportFactoryPackage(body, context);
   const actionItems = actionItemsFor(body, context);
