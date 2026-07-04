@@ -1,5 +1,6 @@
 import { getCurrentUser } from "@/features/auth/server";
 import {
+  buildRiskRetrospectiveAssetDuplicateWarnings,
   confirmRiskRetrospectiveAsset,
   listRiskRetrospectiveAssets,
   updateRiskRetrospectiveAssetStatus,
@@ -29,6 +30,7 @@ export async function GET(request: Request): Promise<Response> {
     request_id: requestId,
     status: result.status,
     assets: result.assets,
+    duplicate_warnings: buildRiskRetrospectiveAssetDuplicateWarnings(result.assets),
     warning: "warning" in result ? result.warning : undefined,
   }, result.status === "failed" ? 500 : 200, requestId);
 }
@@ -60,6 +62,9 @@ export async function POST(request: Request): Promise<Response> {
       request_id: requestId,
       status: result.status,
       asset: result.status === "succeeded" ? result.asset : undefined,
+      duplicate_warnings: result.status === "succeeded"
+        ? buildRiskRetrospectiveAssetDuplicateWarnings((await listRiskRetrospectiveAssets("all", 100)).assets)
+        : [],
       warning: result.status !== "succeeded" ? result.warning : undefined,
     }, result.status === "failed" ? 500 : result.status === "not_configured" ? 503 : 200, requestId);
   }
@@ -80,6 +85,9 @@ export async function POST(request: Request): Promise<Response> {
     request_id: requestId,
     status: result.status,
     asset: result.status === "succeeded" ? result.asset : undefined,
+    duplicate_warnings: result.status === "succeeded"
+      ? buildRiskRetrospectiveAssetDuplicateWarnings((await listRiskRetrospectiveAssets("all", 100)).assets)
+      : [],
     warning: result.status !== "succeeded" ? result.warning : undefined,
   }, result.status === "failed" ? 500 : result.status === "not_configured" ? 503 : 200, requestId);
 }

@@ -614,6 +614,15 @@ V5.3.31 落地说明：
 - 本版本需要先在 Supabase 执行 `supabase-v5331-risk-retrospective-knowledge-sync.sql` 后才能持久化导出审计；未执行时仍可下载 Markdown，但会提示审计未持久化。
 - 由于 Vercel 线上服务不能直接写入用户本机 `/Volumes/创见/...` 路径，本版本提供下载式知识页和审计记录；自动写本机目录需要后续桌面端/本地代理或网盘 API 授权。
 
+V5.3.32 落地说明：
+
+- 新增 `supabase-v5332-risk-retrospective-value.sql`，为风险复盘资产增加 RAG 引用次数、最后引用时间、最近导出时间、最近导出 SHA256，并创建 `risk_retrospective_asset_usage_logs`。
+- `/api/rag/query` 在引用 `RISK-RETRO-*` 来源时尝试回写引用日志，形成“哪些复盘资产被真正复用”的知识价值指标；回写失败不阻断问答主流程。
+- `/api/risk/retrospective/assets` 返回同标题、同来源风险、同复盘内容、同导出哈希的重复资产提示。
+- `/api/risk/retrospective/assets/export` 在导出前检测当前知识页 SHA256 是否与历史导出一致，并通过响应头提示重复导出。
+- `/risk` 的“复盘资产”页签展示重复资产提示、每条资产的 RAG 引用次数、最后引用时间、最近导出时间和导出哈希。
+- 本版本需要先在 Supabase 执行 `supabase-v5332-risk-retrospective-value.sql` 后才能持久化价值指标；未执行时资产确认、发布、RAG 检索和 Markdown 导出主流程仍可继续使用。
+
 V5.3.7 落地说明：
 
 - 新增 `/blueprint-v3/delivery-management`「项目全流程交付管理蓝图」子页面，将原附件业务流程图结构化为销售管理、项目管理、监控管理、成本管理和工具支撑五类泳道。

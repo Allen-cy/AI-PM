@@ -62,6 +62,7 @@ import {
 } from '../src/features/risk/closure.ts';
 import { buildRiskRetrospectiveDashboard } from '../src/features/risk/retrospective.ts';
 import {
+  buildRiskRetrospectiveAssetDuplicateWarnings,
   buildRiskRetrospectiveRecommendations,
   buildRiskRetrospectiveAssetDraft,
   riskRetrospectiveAssetToRagDocument,
@@ -746,6 +747,7 @@ test('risk sensitivity impact is discoverable from api dashboard and sensitivity
   const retrospectiveExportApiSource = readFileSync(new URL('../src/app/api/risk/retrospective/assets/export/route.ts', import.meta.url), 'utf8');
   const retrospectiveAssetsSql = readFileSync(new URL('../supabase-v5330-risk-retrospective-assets.sql', import.meta.url), 'utf8');
   const retrospectiveExportSql = readFileSync(new URL('../supabase-v5331-risk-retrospective-knowledge-sync.sql', import.meta.url), 'utf8');
+  const retrospectiveValueSql = readFileSync(new URL('../supabase-v5332-risk-retrospective-value.sql', import.meta.url), 'utf8');
   const ragQueryRouteSource = readFileSync(new URL('../src/app/api/rag/query/route.ts', import.meta.url), 'utf8');
   const riskPageSource = readFileSync(new URL('../src/app/risk/page.tsx', import.meta.url), 'utf8');
   const trackingPageSource = readFileSync(new URL('../src/app/risk/tracking/page.tsx', import.meta.url), 'utf8');
@@ -763,7 +765,9 @@ test('risk sensitivity impact is discoverable from api dashboard and sensitivity
   assert.match(retrospectiveExportApiSource, /buildRiskRetrospectiveKnowledgeExport/);
   assert.match(retrospectiveAssetsSql, /risk_retrospective_assets/);
   assert.match(retrospectiveExportSql, /risk_retrospective_asset_sync_logs/);
+  assert.match(retrospectiveValueSql, /risk_retrospective_asset_usage_logs/);
   assert.match(ragQueryRouteSource, /listPublishedRiskRetrospectiveRagDocuments/);
+  assert.match(ragQueryRouteSource, /recordRiskRetrospectiveRagUsage/);
   assert.match(riskPageSource, /关闭证据/);
   assert.match(riskPageSource, /\/api\/risk\/closure/);
   assert.match(riskPageSource, /复盘资产/);
@@ -771,6 +775,8 @@ test('risk sensitivity impact is discoverable from api dashboard and sensitivity
   assert.match(riskPageSource, /发布到RAG/);
   assert.match(riskPageSource, /同类项目预警推荐/);
   assert.match(riskPageSource, /导出AI-PMO-SYS知识页/);
+  assert.match(riskPageSource, /重复资产提示/);
+  assert.match(riskPageSource, /RAG引用/);
   assert.match(reportRouteSource, /riskRetrospective/);
   assert.match(trackingPageSource, /关闭证据与复核意见/);
 });
@@ -1073,6 +1079,60 @@ test('risk retrospective assets export to AI PMO SYS markdown with audit hash', 
   assert.match(exported.targetPath, /AI-PMO/);
   assert.equal(exported.assetCount, 1);
   assert.equal(exported.sha256.length, 64);
+});
+
+test('risk retrospective assets expose usage references and duplicate warnings', () => {
+  const risk: Risk = {
+    id: 'R-DUP-RETRO',
+    riskCode: 'R-DUP-RETRO',
+    projectName: '重复资产项目',
+    description: '客户验收标准反复变化造成验收风险',
+    category: '客户',
+    stage: '结项',
+    source: '风险登记册',
+    impactArea: '回款',
+    probability: 4,
+    impact: 4,
+    urgency: 4,
+    piScore: 16,
+    priorityScore: 64,
+    status: 'closed',
+    responseStrategyType: '缓解',
+    responseStrategy: '冻结验收标准并拉通客户确认人',
+    preventiveAction: '评审验收口径',
+    contingencyPlan: '升级客户决策人',
+    trigger: '客户连续两次调整验收口径。',
+    trackingMethod: '复盘会',
+    owner: '项目经理',
+    dueDate: '2026-07-04',
+    nextReviewDate: '2026-07-03',
+    closingCriteria: '客户签署验收标准',
+    linkedModule: '合同回款',
+    evidence: '关闭证据：验收标准确认单\n复核意见：同意关闭\n复核人：PMO\n复核日期：2026-07-04\n依赖处置：回款提醒已建立\n经验教训：客户验收口径要在启动和规划阶段双重冻结。',
+    createdAt: '2026-07-01',
+  };
+  const retrospective = buildRiskRetrospectiveDashboard([risk], []);
+  const asset = buildRiskRetrospectiveAssetDraft(retrospective.knowledgeCards[0], {
+    status: 'published',
+    sourceRiskCode: risk.riskCode,
+  });
+  const duplicated = {
+    ...asset,
+    id: 'R-DUP-RETRO-COPY',
+    assetKey: 'risk-retrospective:R-DUP-RETRO-COPY',
+    projectName: '重复资产项目二',
+    lastExportSha256: 'same-export-hash',
+  };
+  const exportedOnce = { ...asset, lastExportSha256: 'same-export-hash' };
+  const warnings = buildRiskRetrospectiveAssetDuplicateWarnings([exportedOnce, duplicated]);
+  const document = riskRetrospectiveAssetToRagDocument(asset);
+
+  assert.equal(document.source_refs.includes(asset.id), true);
+  assert.equal(document.source_refs.includes(asset.assetKey), true);
+  assert.equal(warnings.some(item => item.type === 'same_title'), true);
+  assert.equal(warnings.some(item => item.type === 'same_source_risk'), true);
+  assert.equal(warnings.some(item => item.type === 'same_content'), true);
+  assert.equal(warnings.some(item => item.type === 'same_export_hash'), true);
 });
 
 test('field mapping diagnostics detect missing Chinese fields and aliases', () => {

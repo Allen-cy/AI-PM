@@ -4,7 +4,11 @@ import {
   listRiskRetrospectiveSyncLogs,
   persistRiskRetrospectiveSyncLog,
 } from "@/features/risk/retrospective-knowledge-sync";
-import { listRiskRetrospectiveAssets } from "@/features/risk/retrospective-assets";
+import {
+  buildRiskRetrospectiveAssetDuplicateWarnings,
+  listRiskRetrospectiveAssets,
+  recordRiskRetrospectiveAssetExportMetrics,
+} from "@/features/risk/retrospective-assets";
 
 export const runtime = "nodejs";
 
@@ -44,8 +48,15 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   const knowledgeExport = buildRiskRetrospectiveKnowledgeExport(assetResult.assets, payload.targetPath);
+  const duplicateWarnings = buildRiskRetrospectiveAssetDuplicateWarnings(assetResult.assets);
+  const repeatedExport = assetResult.assets.some(asset => asset.lastExportSha256 === knowledgeExport.sha256);
   const audit = await persistRiskRetrospectiveSyncLog({ knowledgeExport, user, requestId });
+  const metrics = await recordRiskRetrospectiveAssetExportMetrics({
+    assetIds: knowledgeExport.assetIds,
+    sha256: knowledgeExport.sha256,
+  });
   const warning = audit.status === "succeeded" ? "" : audit.warning;
+  const metricWarning = metrics.status === "succeeded" ? "" : metrics.warning;
   return new Response(knowledgeExport.markdown, {
     status: 200,
     headers: {
@@ -57,6 +68,12 @@ export async function POST(request: Request): Promise<Response> {
       "X-Risk-Retrospective-Sha256": knowledgeExport.sha256,
       "X-Risk-Retrospective-Audit-Status": audit.status,
       "X-Risk-Retrospective-Audit-Warning": encodeURIComponent(warning),
+      "X-Risk-Retrospective-Metrics-Status": metrics.status,
+      "X-Risk-Retrospective-Metrics-Warning": encodeURIComponent(metricWarning),
+      "X-Risk-Retrospective-Duplicate-Warnings": encodeURIComponent([
+        ...duplicateWarnings.map(item => item.message),
+        repeatedExport ? "当前知识页 SHA256 与历史导出一致，可能是重复导出；如内容无变化，可不再写入新的知识页。" : "",
+      ].filter(Boolean).join("；")),
     },
   });
 }

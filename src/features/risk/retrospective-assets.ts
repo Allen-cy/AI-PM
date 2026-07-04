@@ -1,5 +1,6 @@
+import { createHash } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
-import type { RagDocument } from "../rag/types.ts";
+import type { RagCitation, RagDocument } from "../rag/types.ts";
 import type { Risk } from "../../lib/risk.ts";
 import type { RiskRetrospectiveKnowledgeCard } from "./retrospective.ts";
 
@@ -24,6 +25,10 @@ export interface RiskRetrospectiveAssetRecord extends RiskRetrospectiveKnowledge
   confirmedAt: string | null;
   publishedAt: string | null;
   archivedAt: string | null;
+  ragReferenceCount: number;
+  lastRagReferencedAt: string | null;
+  lastExportedAt: string | null;
+  lastExportSha256: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -56,7 +61,21 @@ export interface RiskRetrospectiveRecommendation {
   score: number;
 }
 
+export interface RiskRetrospectiveAssetDuplicateWarning {
+  type: "same_title" | "same_source_risk" | "same_content" | "same_export_hash";
+  groupKey: string;
+  assetIds: string[];
+  titles: string[];
+  message: string;
+}
+
+export type RiskRetrospectiveAssetUsageResult =
+  | { status: "succeeded"; recorded: number }
+  | { status: "skipped"; warning: string; recorded: number }
+  | { status: "failed"; warning: string; recorded: number };
+
 const SQL_FILE = "supabase-v5330-risk-retrospective-assets.sql";
+const VALUE_SQL_FILE = "supabase-v5332-risk-retrospective-value.sql";
 
 function isRiskRetrospectiveAssetStorageConfigured(): boolean {
   return Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
@@ -82,6 +101,18 @@ function clean(value: unknown): string {
   return String(value ?? "").trim();
 }
 
+function normalizeForDuplicate(value: string): string {
+  return value
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[^\p{Script=Han}a-z0-9]+/gu, "")
+    .trim();
+}
+
+function hashText(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
 function assetKey(sourceRiskId: string): string {
   return `risk-retrospective:${sourceRiskId}`;
 }
@@ -97,7 +128,18 @@ function isMissingAssetTableError(message?: string): boolean {
     );
 }
 
-function selectColumns(): string {
+function isMissingValueMetricColumnsError(message?: string): boolean {
+  const normalized = (message ?? "").toLowerCase();
+  return valueMetricColumns().some(column => normalized.includes(column))
+    && (
+      normalized.includes("does not exist")
+      || normalized.includes("schema cache")
+      || normalized.includes("could not find")
+      || normalized.includes("column")
+    );
+}
+
+function baseSelectColumns(): string[] {
   return [
     "id",
     "asset_key",
@@ -127,11 +169,61 @@ function selectColumns(): string {
     "archived_at",
     "created_at",
     "updated_at",
+  ];
+}
+
+function valueMetricColumns(): string[] {
+  return [
+    "rag_reference_count",
+    "last_rag_referenced_at",
+    "last_exported_at",
+    "last_export_sha256",
+  ];
+}
+
+function selectColumns(includeValueMetrics = true): string {
+  return [
+    ...baseSelectColumns(),
+    ...(includeValueMetrics ? valueMetricColumns() : []),
   ].join(",");
 }
 
 function asTags(value: unknown): string[] {
   return Array.isArray(value) ? value.map(String).filter(Boolean) : [];
+}
+
+function assetContentFingerprint(asset: RiskRetrospectiveAssetRecord): string {
+  return hashText([
+    asset.riskDescription,
+    asset.trigger,
+    asset.effectiveResponse,
+    asset.lessonLearned,
+    asset.earlyWarningRule,
+    asset.reusablePractice,
+  ].map(normalizeForDuplicate).filter(Boolean).join("|"));
+}
+
+function duplicateWarningsBy(
+  assets: RiskRetrospectiveAssetRecord[],
+  type: RiskRetrospectiveAssetDuplicateWarning["type"],
+  getGroupKey: (asset: RiskRetrospectiveAssetRecord) => string,
+  label: string,
+): RiskRetrospectiveAssetDuplicateWarning[] {
+  const groups = new Map<string, RiskRetrospectiveAssetRecord[]>();
+  for (const asset of assets) {
+    const groupKey = getGroupKey(asset);
+    if (!groupKey) continue;
+    groups.set(groupKey, [...(groups.get(groupKey) ?? []), asset]);
+  }
+  return [...groups.entries()]
+    .filter(([, group]) => group.length > 1)
+    .map(([groupKey, group]) => ({
+      type,
+      groupKey,
+      assetIds: group.map(asset => asset.id),
+      titles: [...new Set(group.map(asset => asset.title))],
+      message: `${label}重复：${group.map(asset => `${asset.title}（${asset.projectName}）`).join("、")}。建议合并同源经验，或撤回低质量重复资产。`,
+    }));
 }
 
 function mapAsset(row: Record<string, unknown>): RiskRetrospectiveAssetRecord {
@@ -162,6 +254,10 @@ function mapAsset(row: Record<string, unknown>): RiskRetrospectiveAssetRecord {
     confirmedAt: row.confirmed_at ? String(row.confirmed_at) : null,
     publishedAt: row.published_at ? String(row.published_at) : null,
     archivedAt: row.archived_at ? String(row.archived_at) : null,
+    ragReferenceCount: Number(row.rag_reference_count ?? 0),
+    lastRagReferencedAt: row.last_rag_referenced_at ? String(row.last_rag_referenced_at) : null,
+    lastExportedAt: row.last_exported_at ? String(row.last_exported_at) : null,
+    lastExportSha256: row.last_export_sha256 ? String(row.last_export_sha256) : null,
     createdAt: String(row.created_at ?? ""),
     updatedAt: String(row.updated_at ?? ""),
   };
@@ -197,6 +293,10 @@ export function buildRiskRetrospectiveAssetDraft(
     confirmedAt: input?.confirmedAt ?? null,
     publishedAt: input?.publishedAt ?? null,
     archivedAt: input?.archivedAt ?? null,
+    ragReferenceCount: 0,
+    lastRagReferencedAt: null,
+    lastExportedAt: null,
+    lastExportSha256: null,
     createdAt: input?.createdAt ?? now,
     updatedAt: input?.updatedAt ?? now,
   };
@@ -220,7 +320,7 @@ export function riskRetrospectiveAssetToRagDocument(asset: RiskRetrospectiveAsse
       "同类项目预警",
     ].filter(Boolean),
     tags: asset.tags,
-    source_refs: [asset.sourceRiskId, asset.sourceRiskCode].filter(Boolean) as string[],
+    source_refs: [asset.id, asset.assetKey, asset.sourceRiskId, asset.sourceRiskCode].filter(Boolean) as string[],
     content: [
       `# ${asset.title}`,
       "",
@@ -286,13 +386,29 @@ export async function listRiskRetrospectiveAssets(
 
   try {
     const supabase = getRiskRetrospectiveAssetSupabase();
-    let query = supabase
-      .from("risk_retrospective_assets")
-      .select(selectColumns())
-      .order("updated_at", { ascending: false })
-      .limit(limit);
-    if (status && status !== "all") query = query.eq("status", status);
-    const { data, error } = await query;
+    const buildQuery = (includeValueMetrics: boolean) => {
+      let query = supabase
+        .from("risk_retrospective_assets")
+        .select(selectColumns(includeValueMetrics))
+        .order("updated_at", { ascending: false })
+        .limit(limit);
+      if (status && status !== "all") query = query.eq("status", status);
+      return query;
+    };
+    const query = buildQuery(true);
+    let { data, error } = await query;
+
+    if (error && isMissingValueMetricColumnsError(error.message)) {
+      const fallback = await buildQuery(false);
+      data = fallback.data;
+      error = fallback.error;
+      if (!error) {
+        return {
+          status: "succeeded",
+          assets: (data ?? []).map(row => mapAsset(row as unknown as Record<string, unknown>)),
+        };
+      }
+    }
 
     if (error) {
       return {
@@ -300,7 +416,9 @@ export async function listRiskRetrospectiveAssets(
         assets: [],
         warning: isMissingAssetTableError(error.message)
           ? `风险复盘资产 SQL 未执行：请在 Supabase SQL Editor 执行 ${SQL_FILE}。`
-          : error.message,
+          : isMissingValueMetricColumnsError(error.message)
+            ? `风险复盘资产价值度量 SQL 未执行：请在 Supabase SQL Editor 执行 ${VALUE_SQL_FILE}。`
+            : error.message,
       };
     }
 
@@ -312,6 +430,17 @@ export async function listRiskRetrospectiveAssets(
       warning: error instanceof Error ? error.message : "读取风险复盘资产失败。",
     };
   }
+}
+
+async function selectAssetById(id: string): Promise<RiskRetrospectiveAssetRecord | null> {
+  const supabase = getRiskRetrospectiveAssetSupabase();
+  const { data, error } = await supabase
+    .from("risk_retrospective_assets")
+    .select(selectColumns())
+    .eq("id", id)
+    .maybeSingle();
+  if (error || !data) return null;
+  return mapAsset(data as unknown as Record<string, unknown>);
 }
 
 export async function confirmRiskRetrospectiveAsset(
@@ -327,7 +456,7 @@ export async function confirmRiskRetrospectiveAsset(
     const { data, error } = await supabase
       .from("risk_retrospective_assets")
       .upsert(payloadFromCard(card, user, "reviewed"), { onConflict: "asset_key" })
-      .select(selectColumns())
+      .select(selectColumns(false))
       .single();
 
     if (error) {
@@ -372,7 +501,7 @@ export async function updateRiskRetrospectiveAssetStatus(
       .from("risk_retrospective_assets")
       .update(update)
       .eq("id", id)
-      .select(selectColumns())
+      .select(selectColumns(false))
       .single();
 
     if (error) {
@@ -401,6 +530,154 @@ export async function listPublishedRiskRetrospectiveRagDocuments(): Promise<Risk
     status: "succeeded",
     documents: result.assets.map(riskRetrospectiveAssetToRagDocument),
   };
+}
+
+export function buildRiskRetrospectiveAssetDuplicateWarnings(
+  assets: RiskRetrospectiveAssetRecord[],
+): RiskRetrospectiveAssetDuplicateWarning[] {
+  const reusableAssets = assets.filter(asset => asset.status !== "archived");
+  return [
+    ...duplicateWarningsBy(
+      reusableAssets,
+      "same_title",
+      asset => normalizeForDuplicate(asset.title),
+      "标题",
+    ),
+    ...duplicateWarningsBy(
+      reusableAssets,
+      "same_source_risk",
+      asset => normalizeForDuplicate(asset.sourceRiskCode || asset.sourceRiskId),
+      "来源风险",
+    ),
+    ...duplicateWarningsBy(
+      reusableAssets,
+      "same_content",
+      assetContentFingerprint,
+      "复盘内容",
+    ),
+    ...duplicateWarningsBy(
+      reusableAssets,
+      "same_export_hash",
+      asset => asset.lastExportSha256 ?? "",
+      "最近导出哈希",
+    ),
+  ];
+}
+
+function citationAssetId(citation: RagCitation): string | null {
+  const candidate = citation.source_ids.find(source => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(source));
+  return candidate ?? null;
+}
+
+export async function recordRiskRetrospectiveRagUsage(input: {
+  query: string;
+  citations: RagCitation[];
+  requestId: string;
+  user?: AssetActor | null;
+}): Promise<RiskRetrospectiveAssetUsageResult> {
+  const citations = input.citations.filter(citation => citation.page_id.startsWith("RISK-RETRO-"));
+  if (citations.length === 0) return { status: "succeeded", recorded: 0 };
+  if (!isRiskRetrospectiveAssetStorageConfigured()) {
+    return { status: "skipped", warning: "Supabase 未配置，无法记录风险复盘资产 RAG 引用。", recorded: 0 };
+  }
+
+  try {
+    const supabase = getRiskRetrospectiveAssetSupabase();
+    let recorded = 0;
+    for (const citation of citations) {
+      const assetId = citationAssetId(citation);
+      const assetKeyRef = citation.source_ids.find(source => source.startsWith("risk-retrospective:")) ?? null;
+      if (!assetId) continue;
+      const current = await selectAssetById(assetId);
+      if (!current) continue;
+      const now = new Date().toISOString();
+      const { error: updateError } = await supabase
+        .from("risk_retrospective_assets")
+        .update({
+          rag_reference_count: current.ragReferenceCount + 1,
+          last_rag_referenced_at: now,
+        })
+        .eq("id", assetId);
+      if (updateError) {
+        return {
+          status: isMissingValueMetricColumnsError(updateError.message) ? "skipped" : "failed",
+          warning: isMissingValueMetricColumnsError(updateError.message)
+            ? `风险复盘资产价值度量 SQL 未执行：请在 Supabase SQL Editor 执行 ${VALUE_SQL_FILE}。`
+            : updateError.message,
+          recorded,
+        };
+      }
+      const { error: insertError } = await supabase
+        .from("risk_retrospective_asset_usage_logs")
+        .insert({
+          asset_id: assetId,
+          asset_key: assetKeyRef ?? current.assetKey,
+          page_id: citation.page_id,
+          title: citation.document,
+          query: input.query,
+          trace_id: input.requestId,
+          relevance: citation.relevance,
+          excerpt: citation.excerpt,
+          referenced_by: input.user?.id ?? null,
+          referenced_by_name: actorName(input.user ?? null),
+        });
+      if (insertError) {
+        return {
+          status: isMissingValueMetricColumnsError(insertError.message) || insertError.message.toLowerCase().includes("risk_retrospective_asset_usage_logs") ? "skipped" : "failed",
+          warning: insertError.message.toLowerCase().includes("risk_retrospective_asset_usage_logs")
+            ? `风险复盘资产价值度量 SQL 未执行：请在 Supabase SQL Editor 执行 ${VALUE_SQL_FILE}。`
+            : insertError.message,
+          recorded,
+        };
+      }
+      recorded += 1;
+    }
+    return { status: "succeeded", recorded };
+  } catch (error) {
+    return {
+      status: "failed",
+      warning: error instanceof Error ? error.message : "记录风险复盘资产 RAG 引用失败。",
+      recorded: 0,
+    };
+  }
+}
+
+export async function recordRiskRetrospectiveAssetExportMetrics(input: {
+  assetIds: string[];
+  sha256: string;
+}): Promise<RiskRetrospectiveAssetUsageResult> {
+  const assetIds = input.assetIds.filter(id => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(id));
+  if (assetIds.length === 0) return { status: "succeeded", recorded: 0 };
+  if (!isRiskRetrospectiveAssetStorageConfigured()) {
+    return { status: "skipped", warning: "Supabase 未配置，无法记录风险复盘资产导出指标。", recorded: 0 };
+  }
+
+  try {
+    const supabase = getRiskRetrospectiveAssetSupabase();
+    const { error } = await supabase
+      .from("risk_retrospective_assets")
+      .update({
+        last_exported_at: new Date().toISOString(),
+        last_export_sha256: input.sha256,
+      })
+      .in("id", assetIds);
+    if (error) {
+      return {
+        status: isMissingValueMetricColumnsError(error.message) ? "skipped" : "failed",
+        warning: isMissingValueMetricColumnsError(error.message)
+          ? `风险复盘资产价值度量 SQL 未执行：请在 Supabase SQL Editor 执行 ${VALUE_SQL_FILE}。`
+          : error.message,
+        recorded: 0,
+      };
+    }
+    return { status: "succeeded", recorded: assetIds.length };
+  } catch (error) {
+    return {
+      status: "failed",
+      warning: error instanceof Error ? error.message : "记录风险复盘资产导出指标失败。",
+      recorded: 0,
+    };
+  }
 }
 
 export function buildRiskRetrospectiveRecommendations(

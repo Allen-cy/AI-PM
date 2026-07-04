@@ -1,5 +1,8 @@
 import { queryRagWithAdditionalDocuments } from '../../../../features/rag/provider.ts';
-import { listPublishedRiskRetrospectiveRagDocuments } from '../../../../features/risk/retrospective-assets.ts';
+import {
+  listPublishedRiskRetrospectiveRagDocuments,
+  recordRiskRetrospectiveRagUsage,
+} from '../../../../features/risk/retrospective-assets.ts';
 import { RagValidationError, validateRagQuery } from '../../../../features/rag/validation.ts';
 
 export const runtime = 'nodejs';
@@ -30,6 +33,15 @@ function problem(status: number, title: string, detail: string, id: string): Res
   );
 }
 
+async function getOptionalCurrentUser() {
+  try {
+    const auth = await import('../../../../features/auth/server.ts');
+    return await auth.getCurrentUser();
+  } catch {
+    return null;
+  }
+}
+
 export async function POST(request: Request): Promise<Response> {
   const id = requestId(request);
   let body: unknown;
@@ -45,6 +57,20 @@ export async function POST(request: Request): Promise<Response> {
     const dynamicDocuments = await listPublishedRiskRetrospectiveRagDocuments();
     const result = queryRagWithAdditionalDocuments(input, dynamicDocuments.documents);
     result.trace_id = id;
+    const usage = await recordRiskRetrospectiveRagUsage({
+      query: input.query,
+      citations: result.citations,
+      requestId: id,
+      user: await getOptionalCurrentUser(),
+    });
+    if (usage.status === 'failed') {
+      console.error(JSON.stringify({
+        level: 'warn',
+        event: 'risk.retrospective.usage.failed',
+        request_id: id,
+        warning: usage.warning,
+      }));
+    }
     return Response.json(result, {
       status: 200,
       headers: {

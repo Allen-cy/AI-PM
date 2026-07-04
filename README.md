@@ -67,6 +67,10 @@ npm run build
 - 飞书端已建立8张业务表；公开项目记录API会等用户登录和授权模型完成后再开放。
 - 全仓历史 ESLint 基线仍有旧问题；V4新增/改动文件执行独立零错误门禁。
 
+## AI-PMO System V5.3.32
+
+V5.3.32 将风险复盘资产从“可发布到 RAG / 可导出知识页”继续推进到“可度量复用价值、可识别重复资产”：新增 `supabase-v5332-risk-retrospective-value.sql`，为 `risk_retrospective_assets` 增加 RAG 引用次数、最后引用时间、最近导出时间和最近导出 SHA256，并新增 `risk_retrospective_asset_usage_logs` 记录 RAG 引用日志。`/api/rag/query` 在引用 `RISK-RETRO-*` 来源时会尝试回写引用记录，不影响问答主流程；`/api/risk/retrospective/assets` 会返回同标题、同来源风险、同复盘内容、同导出哈希的重复提示；`/risk` 的“复盘资产”页签展示重复资产提示、每条资产的 RAG 引用次数和最近导出信息。本版本需要执行 `supabase-v5332-risk-retrospective-value.sql` 后才能持久化价值指标；未执行时核心资产确认/发布/导出仍可继续使用。
+
 ## AI-PMO System V5.3.31
 
 V5.3.31 将已发布风险复盘资产进一步导出为 AI-PMO-SYS 知识库 Markdown，并增加导出审计：新增 `supabase-v5331-risk-retrospective-knowledge-sync.sql`、`src/features/risk/retrospective-knowledge-sync.ts` 和 `/api/risk/retrospective/assets/export`。`/risk` 的“复盘资产”页签新增“导出AI-PMO-SYS知识页”按钮，可下载结构化 Markdown，包含 YAML 元数据、资产目录、触发器、有效应对、经验教训、预警规则、可复用做法、关闭与复核证据；右侧新增“知识库导出审计”，展示最近导出的目标路径、资产数、人员、日期和 SHA256 摘要。本版本需要执行 `supabase-v5331-risk-retrospective-knowledge-sync.sql` 后才能保存导出审计；未执行时仍可下载 Markdown，但页面会提示审计未持久化。
