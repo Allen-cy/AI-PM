@@ -630,6 +630,14 @@ V5.3.33 落地说明：
 - `/risk` 的“复盘资产”页签新增“资产质量与治理队列”，展示平均分、待治理数量、重复风险数量，并给出治理动作、责任人和 deadline。
 - 本版本不新增 SQL，复用 V5.3.30-5.3.32 的复盘资产、RAG 引用和重复检测数据；治理队列不自动删除、合并或撤回资产。
 
+V5.3.34 落地说明：
+
+- 新增 `supabase-v5334-risk-retrospective-governance.sql`，创建 `risk_retrospective_asset_governance_logs`，用于记录补充、合并、发布、撤回、恢复等治理动作。
+- `/api/risk/retrospective/assets` 新增 `update` 和 `merge` 动作，支持补充标题、适用范围、经验教训、早期预警规则、可复用做法和标签。
+- 重复资产可以合并到主资产：系统会把源资产归档，主资产保留合并标签，RAG 只继续引用未归档主资产。
+- `/risk` 的“已确认资产库”新增“补充资产”和“合并到主资产”操作。
+- 本版本需要执行 `supabase-v5334-risk-retrospective-governance.sql` 后才能持久化治理动作审计；未执行时编辑/合并主流程仍可执行，但会提示审计未持久化。
+
 V5.3.7 落地说明：
 
 - 新增 `/blueprint-v3/delivery-management`「项目全流程交付管理蓝图」子页面，将原附件业务流程图结构化为销售管理、项目管理、监控管理、成本管理和工具支撑五类泳道。

@@ -63,6 +63,8 @@ import {
 import { buildRiskRetrospectiveDashboard } from '../src/features/risk/retrospective.ts';
 import {
   buildRiskRetrospectiveAssetDuplicateWarnings,
+  buildRiskRetrospectiveAssetMergePreview,
+  buildRiskRetrospectiveAssetUpdatePayload,
   buildRiskRetrospectiveRecommendations,
   buildRiskRetrospectiveAssetDraft,
   riskRetrospectiveAssetToRagDocument,
@@ -750,6 +752,7 @@ test('risk sensitivity impact is discoverable from api dashboard and sensitivity
   const retrospectiveAssetsSql = readFileSync(new URL('../supabase-v5330-risk-retrospective-assets.sql', import.meta.url), 'utf8');
   const retrospectiveExportSql = readFileSync(new URL('../supabase-v5331-risk-retrospective-knowledge-sync.sql', import.meta.url), 'utf8');
   const retrospectiveValueSql = readFileSync(new URL('../supabase-v5332-risk-retrospective-value.sql', import.meta.url), 'utf8');
+  const retrospectiveGovernanceSql = readFileSync(new URL('../supabase-v5334-risk-retrospective-governance.sql', import.meta.url), 'utf8');
   const ragQueryRouteSource = readFileSync(new URL('../src/app/api/rag/query/route.ts', import.meta.url), 'utf8');
   const riskPageSource = readFileSync(new URL('../src/app/risk/page.tsx', import.meta.url), 'utf8');
   const trackingPageSource = readFileSync(new URL('../src/app/risk/tracking/page.tsx', import.meta.url), 'utf8');
@@ -763,12 +766,15 @@ test('risk sensitivity impact is discoverable from api dashboard and sensitivity
   assert.match(closureApiSource, /buildRiskClosureDashboard/);
   assert.match(retrospectiveApiSource, /buildRiskRetrospectiveDashboard/);
   assert.match(retrospectiveAssetsApiSource, /confirmRiskRetrospectiveAsset/);
+  assert.match(retrospectiveAssetsApiSource, /updateRiskRetrospectiveAssetDetails/);
+  assert.match(retrospectiveAssetsApiSource, /mergeRiskRetrospectiveAssets/);
   assert.match(retrospectiveRecommendationsApiSource, /buildRiskRetrospectiveRecommendations/);
   assert.match(retrospectiveExportApiSource, /buildRiskRetrospectiveKnowledgeExport/);
   assert.match(retrospectiveQualityApiSource, /buildRiskRetrospectiveQualityDashboard/);
   assert.match(retrospectiveAssetsSql, /risk_retrospective_assets/);
   assert.match(retrospectiveExportSql, /risk_retrospective_asset_sync_logs/);
   assert.match(retrospectiveValueSql, /risk_retrospective_asset_usage_logs/);
+  assert.match(retrospectiveGovernanceSql, /risk_retrospective_asset_governance_logs/);
   assert.match(ragQueryRouteSource, /listPublishedRiskRetrospectiveRagDocuments/);
   assert.match(ragQueryRouteSource, /recordRiskRetrospectiveRagUsage/);
   assert.match(riskPageSource, /关闭证据/);
@@ -781,6 +787,8 @@ test('risk sensitivity impact is discoverable from api dashboard and sensitivity
   assert.match(riskPageSource, /重复资产提示/);
   assert.match(riskPageSource, /RAG引用/);
   assert.match(riskPageSource, /资产质量与治理队列/);
+  assert.match(riskPageSource, /补充资产/);
+  assert.match(riskPageSource, /合并到主资产/);
   assert.match(reportRouteSource, /riskRetrospective/);
   assert.match(trackingPageSource, /关闭证据与复核意见/);
 });
@@ -1173,6 +1181,51 @@ test('risk retrospective quality dashboard prioritizes low quality and duplicate
   assert.equal(dashboard.governanceQueue.length, 2);
   assert.equal(dashboard.governanceQueue[0].suggestedActions.some(action => action.includes('补充')), true);
   assert.match(dashboard.boundary, /不自动删除/);
+});
+
+test('risk retrospective asset governance builds edit payload and merge preview', () => {
+  const baseCard = {
+    id: 'R-GOV-1',
+    sourceRiskId: 'R-GOV-1',
+    projectName: '治理动作项目',
+    title: '供应商交付延期复盘',
+    riskDescription: '供应商交付延期',
+    category: '供应商',
+    impactArea: '进度',
+    severity: 'medium' as const,
+    trigger: '供应商延期',
+    effectiveResponse: '建立周度交付看板',
+    closingEvidence: '补交验收单',
+    reviewOpinion: '同意关闭',
+    lessonLearned: '提前准备备选供应商',
+    earlyWarningRule: '连续一周未交付即预警',
+    reusablePractice: '供应商交付拆成周粒度验收',
+    tags: ['供应商', '进度'],
+  };
+  const source = buildRiskRetrospectiveAssetDraft(baseCard, { status: 'reviewed' });
+  const target = buildRiskRetrospectiveAssetDraft({
+    ...baseCard,
+    id: 'R-GOV-2',
+    sourceRiskId: 'R-GOV-2',
+    title: '供应商里程碑延期复盘',
+    tags: ['供应商', '里程碑'],
+  }, { status: 'published' });
+  const payload = buildRiskRetrospectiveAssetUpdatePayload({
+    title: ' 供应商交付延期复盘 ',
+    applicability: ' 软件外包供应商项目 ',
+    lessonLearned: '',
+    tags: ['供应商', '进度', '供应商'],
+  });
+  const preview = buildRiskRetrospectiveAssetMergePreview(source, target);
+
+  assert.equal(payload.title, '供应商交付延期复盘');
+  assert.equal(payload.applicability, '软件外包供应商项目');
+  assert.deepEqual(payload.tags, ['供应商', '进度']);
+  assert.equal('lesson_learned' in payload, false);
+  assert.equal(preview.sourceAssetId, source.id);
+  assert.equal(preview.targetAssetId, target.id);
+  assert.equal(preview.mergedTags.includes('里程碑'), true);
+  assert.match(preview.actionSummary, /合并到主资产/);
 });
 
 test('field mapping diagnostics detect missing Chinese fields and aliases', () => {

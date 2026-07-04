@@ -67,6 +67,10 @@ npm run build
 - 飞书端已建立8张业务表；公开项目记录API会等用户登录和授权模型完成后再开放。
 - 全仓历史 ESLint 基线仍有旧问题；V4新增/改动文件执行独立零错误门禁。
 
+## AI-PMO System V5.3.34
+
+V5.3.34 将风险复盘资产治理从“评分建议队列”推进到“可编辑、可合并、可审计”：新增 `supabase-v5334-risk-retrospective-governance.sql`，创建 `risk_retrospective_asset_governance_logs` 治理动作审计表；`/api/risk/retrospective/assets` 新增 `update` 和 `merge` 动作，支持补充资产标题、适用范围、经验教训、早期预警规则、可复用做法和标签，也支持将重复资产合并到主资产并把源资产归档。`/risk` 的“已确认资产库”新增“补充资产”和“合并到主资产”操作。本版本需要执行 `supabase-v5334-risk-retrospective-governance.sql` 后才能持久化治理动作日志；未执行时编辑/合并主流程仍可执行，但会提示审计未持久化。
+
 ## AI-PMO System V5.3.33
 
 V5.3.33 为风险复盘资产增加质量评分和人工治理队列：新增 `src/features/risk/retrospective-quality.ts` 和 `/api/risk/retrospective/assets/quality`，从关闭证据完整度、PMO复核意见、经验教训、早期预警规则、可复用做法、适用范围、重复风险和 RAG 引用价值计算 A/B/C/D 质量等级。`/risk` 的“复盘资产”页签新增“资产质量与治理队列”，展示平均分、待治理数量、重复风险数量，并为低质量或重复资产给出治理动作、责任人和 deadline。本版本不新增 SQL，复用 V5.3.30-5.3.32 的资产、引用和重复检测数据。

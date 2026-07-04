@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { AiEvidence, AiSuggestedAction } from "@/features/ai/evidence";
 import type { RiskClosureDashboard, RiskClosureDecision } from "@/features/risk/closure";
 import type { RiskRetrospectiveSyncLog } from "@/features/risk/retrospective-knowledge-sync";
-import type { RiskRetrospectiveAssetDuplicateWarning, RiskRetrospectiveAssetRecord, RiskRetrospectiveRecommendation } from "@/features/risk/retrospective-assets";
+import type { RiskRetrospectiveAssetDuplicateWarning, RiskRetrospectiveAssetEditPatch, RiskRetrospectiveAssetRecord, RiskRetrospectiveRecommendation } from "@/features/risk/retrospective-assets";
 import type { RiskRetrospectiveQualityDashboard } from "@/features/risk/retrospective-quality";
 import type { RiskRetrospectiveDashboard } from "@/features/risk/retrospective";
 import {
@@ -60,6 +60,10 @@ type TransitionForm = {
   followUpOwner: string;
   followUpDeadline: string;
   lessonsLearned: string;
+};
+
+type RetrospectiveAssetEditForm = Required<Pick<RiskRetrospectiveAssetEditPatch, "title" | "applicability" | "lessonLearned" | "earlyWarningRule" | "reusablePractice">> & {
+  tagsText: string;
 };
 
 interface DashboardRiskRecord {
@@ -388,6 +392,15 @@ export default function RiskPage() {
   const [retrospectiveAssetWarning, setRetrospectiveAssetWarning] = useState("");
   const [retrospectiveSyncWarning, setRetrospectiveSyncWarning] = useState("");
   const [savingRetrospectiveAsset, setSavingRetrospectiveAsset] = useState<string | null>(null);
+  const [editingRetrospectiveAssetId, setEditingRetrospectiveAssetId] = useState<string | null>(null);
+  const [retrospectiveAssetEditForm, setRetrospectiveAssetEditForm] = useState<RetrospectiveAssetEditForm>({
+    title: "",
+    applicability: "",
+    lessonLearned: "",
+    earlyWarningRule: "",
+    reusablePractice: "",
+    tagsText: "",
+  });
   const [exportingRetrospectiveAssets, setExportingRetrospectiveAssets] = useState(false);
   const [confirmingEscalationDraft, setConfirmingEscalationDraft] = useState<string | null>(null);
   const [confirmedEscalationDrafts, setConfirmedEscalationDrafts] = useState<Set<string>>(() => new Set());
@@ -485,6 +498,21 @@ export default function RiskPage() {
     for (const asset of riskRetrospectiveAssets) {
       map.set(asset.sourceRiskId, asset);
     }
+    return map;
+  }, [riskRetrospectiveAssets]);
+  const duplicateMergeTargetByAssetId = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const warning of riskRetrospectiveDuplicateWarnings) {
+      const targetId = warning.assetIds[0];
+      for (const assetId of warning.assetIds.slice(1)) {
+        if (!map.has(assetId)) map.set(assetId, targetId);
+      }
+    }
+    return map;
+  }, [riskRetrospectiveDuplicateWarnings]);
+  const retrospectiveAssetById = useMemo(() => {
+    const map = new Map<string, RiskRetrospectiveAssetRecord>();
+    for (const asset of riskRetrospectiveAssets) map.set(asset.id, asset);
     return map;
   }, [riskRetrospectiveAssets]);
 
@@ -722,6 +750,7 @@ export default function RiskPage() {
       const payload = await response.json().catch(() => ({})) as {
         asset?: RiskRetrospectiveAssetRecord;
         duplicate_warnings?: RiskRetrospectiveAssetDuplicateWarning[];
+        governance_warning?: string;
         warning?: string;
         error?: string;
         status?: string;
@@ -731,6 +760,7 @@ export default function RiskPage() {
       }
       await refreshRetrospectiveAssets();
       if (Array.isArray(payload.duplicate_warnings)) setRiskRetrospectiveDuplicateWarnings(payload.duplicate_warnings);
+      if (payload.governance_warning) setRetrospectiveAssetWarning(payload.governance_warning);
       const actionLabel = input.action === "confirm"
         ? "已确认为组织过程资产"
         : input.action === "publish"
@@ -741,6 +771,93 @@ export default function RiskPage() {
       setMessage(actionLabel);
     } catch (e: unknown) {
       setError(`风险复盘资产操作失败：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSavingRetrospectiveAsset(null);
+    }
+  };
+
+  const openRetrospectiveAssetEdit = (asset: RiskRetrospectiveAssetRecord) => {
+    setEditingRetrospectiveAssetId(asset.id);
+    setRetrospectiveAssetEditForm({
+      title: asset.title,
+      applicability: asset.applicability,
+      lessonLearned: asset.lessonLearned,
+      earlyWarningRule: asset.earlyWarningRule,
+      reusablePractice: asset.reusablePractice,
+      tagsText: asset.tags.join("、"),
+    });
+    setError("");
+  };
+
+  const saveRetrospectiveAssetEdit = async (assetId: string) => {
+    setSavingRetrospectiveAsset(assetId);
+    setError("");
+    setMessage("");
+    try {
+      const patch: RiskRetrospectiveAssetEditPatch = {
+        title: retrospectiveAssetEditForm.title,
+        applicability: retrospectiveAssetEditForm.applicability,
+        lessonLearned: retrospectiveAssetEditForm.lessonLearned,
+        earlyWarningRule: retrospectiveAssetEditForm.earlyWarningRule,
+        reusablePractice: retrospectiveAssetEditForm.reusablePractice,
+        tags: retrospectiveAssetEditForm.tagsText.split(/[、,，\n]/u).map(item => item.trim()).filter(Boolean),
+      };
+      const response = await fetch("/api/risk/retrospective/assets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "update", id: assetId, patch }),
+      });
+      const payload = await response.json().catch(() => ({})) as {
+        asset?: RiskRetrospectiveAssetRecord;
+        duplicate_warnings?: RiskRetrospectiveAssetDuplicateWarning[];
+        governance_warning?: string;
+        warning?: string;
+        error?: string;
+        status?: string;
+      };
+      if (!response.ok || payload.status === "failed" || payload.status === "not_configured") {
+        throw new Error(payload.warning || payload.error || "风险复盘资产编辑失败");
+      }
+      await refreshRetrospectiveAssets();
+      if (Array.isArray(payload.duplicate_warnings)) setRiskRetrospectiveDuplicateWarnings(payload.duplicate_warnings);
+      if (payload.governance_warning) setRetrospectiveAssetWarning(payload.governance_warning);
+      setEditingRetrospectiveAssetId(null);
+      setMessage("复盘资产已补充并写入治理审计。");
+    } catch (e: unknown) {
+      setError(`风险复盘资产编辑失败：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSavingRetrospectiveAsset(null);
+    }
+  };
+
+  const mergeRetrospectiveAsset = async (assetId: string, targetId: string) => {
+    setSavingRetrospectiveAsset(assetId);
+    setError("");
+    setMessage("");
+    try {
+      const response = await fetch("/api/risk/retrospective/assets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "merge", id: assetId, targetId }),
+      });
+      const payload = await response.json().catch(() => ({})) as {
+        asset?: RiskRetrospectiveAssetRecord;
+        target_asset?: RiskRetrospectiveAssetRecord;
+        duplicate_warnings?: RiskRetrospectiveAssetDuplicateWarning[];
+        governance_warning?: string;
+        warning?: string;
+        error?: string;
+        status?: string;
+      };
+      if (!response.ok || payload.status === "failed" || payload.status === "not_configured") {
+        throw new Error(payload.warning || payload.error || "风险复盘资产合并失败");
+      }
+      await refreshRetrospectiveAssets();
+      if (Array.isArray(payload.duplicate_warnings)) setRiskRetrospectiveDuplicateWarnings(payload.duplicate_warnings);
+      if (payload.governance_warning) setRetrospectiveAssetWarning(payload.governance_warning);
+      setMessage(`复盘资产已合并到主资产「${payload.target_asset?.title || "主资产"}」，源资产已归档。`);
+    } catch (e: unknown) {
+      setError(`风险复盘资产合并失败：${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setSavingRetrospectiveAsset(null);
     }
@@ -1876,7 +1993,11 @@ export default function RiskPage() {
                     <div style={{ fontWeight: 800, marginBottom: 8 }}>已确认资产库</div>
                     {riskRetrospectiveAssets.length === 0 ? (
                       <div style={{ color: "var(--text2)", fontSize: "0.78rem", lineHeight: 1.7 }}>暂无已确认资产。先在左侧确认知识卡，确认后可发布到 RAG。</div>
-                    ) : riskRetrospectiveAssets.slice(0, 8).map(asset => (
+                    ) : riskRetrospectiveAssets.slice(0, 8).map(asset => {
+                      const mergeTargetId = duplicateMergeTargetByAssetId.get(asset.id);
+                      const mergeTarget = mergeTargetId ? retrospectiveAssetById.get(mergeTargetId) : null;
+                      const isEditing = editingRetrospectiveAssetId === asset.id;
+                      return (
                       <article key={asset.id} style={{ padding: 12, border: "1px solid var(--border)", borderRadius: 10, background: "var(--surface2)", marginBottom: 8 }}>
                         <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 6 }}>
                           <strong style={{ fontSize: "0.8rem" }}>{asset.title}</strong>
@@ -1891,8 +2012,45 @@ export default function RiskPage() {
                           <div>RAG引用：{asset.ragReferenceCount || 0} 次{asset.lastRagReferencedAt ? ` · 最近 ${asset.lastRagReferencedAt.slice(0, 10)}` : ""}</div>
                           {asset.lastExportedAt && <div>最近导出：{asset.lastExportedAt.slice(0, 10)} · {asset.lastExportSha256 ? `${asset.lastExportSha256.slice(0, 12)}...` : "无哈希"}</div>}
                         </div>
+                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 10 }}>
+                          <button className="btn-secondary" disabled={savingRetrospectiveAsset === asset.id} onClick={() => openRetrospectiveAssetEdit(asset)}>补充资产</button>
+                          {mergeTarget && asset.status !== "archived" && (
+                            <button className="btn-secondary" disabled={savingRetrospectiveAsset === asset.id} onClick={() => void mergeRetrospectiveAsset(asset.id, mergeTarget.id)}>
+                              合并到主资产：{mergeTarget.title.slice(0, 8)}
+                            </button>
+                          )}
+                        </div>
+                        {isEditing && (
+                          <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
+                            {[
+                              ["title", "资产标题"],
+                              ["applicability", "适用范围"],
+                              ["lessonLearned", "经验教训"],
+                              ["earlyWarningRule", "早期预警规则"],
+                              ["reusablePractice", "可复用做法"],
+                              ["tagsText", "标签（用顿号/逗号分隔）"],
+                            ].map(([field, label]) => (
+                              <label key={field} style={{ display: "grid", gap: 4, color: "var(--text2)", fontSize: "0.72rem" }}>
+                                {label}
+                                <textarea
+                                  value={retrospectiveAssetEditForm[field as keyof RetrospectiveAssetEditForm]}
+                                  onChange={event => setRetrospectiveAssetEditForm(prev => ({ ...prev, [field]: event.target.value }))}
+                                  rows={field === "title" || field === "tagsText" ? 1 : 2}
+                                  style={{ width: "100%", border: "1px solid var(--border)", borderRadius: 8, padding: 8, background: "var(--surface)", color: "var(--text)", resize: "vertical" }}
+                                />
+                              </label>
+                            ))}
+                            <div style={{ display: "flex", gap: 8 }}>
+                              <button className="btn-primary" disabled={savingRetrospectiveAsset === asset.id} onClick={() => void saveRetrospectiveAssetEdit(asset.id)}>
+                                {savingRetrospectiveAsset === asset.id ? "保存中..." : "保存补充"}
+                              </button>
+                              <button className="btn-secondary" onClick={() => setEditingRetrospectiveAssetId(null)}>取消</button>
+                            </div>
+                          </div>
+                        )}
                       </article>
-                    ))}
+                      );
+                    })}
                   </div>
 
                   <div>

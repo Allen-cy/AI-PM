@@ -3,7 +3,10 @@ import {
   buildRiskRetrospectiveAssetDuplicateWarnings,
   confirmRiskRetrospectiveAsset,
   listRiskRetrospectiveAssets,
+  mergeRiskRetrospectiveAssets,
+  updateRiskRetrospectiveAssetDetails,
   updateRiskRetrospectiveAssetStatus,
+  type RiskRetrospectiveAssetEditPatch,
   type RiskRetrospectiveAssetStatus,
 } from "@/features/risk/retrospective-assets";
 import type { RiskRetrospectiveKnowledgeCard } from "@/features/risk/retrospective";
@@ -43,9 +46,11 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   let body: {
-    action?: "confirm" | "publish" | "archive" | "review";
+    action?: "confirm" | "publish" | "archive" | "review" | "update" | "merge";
     card?: RiskRetrospectiveKnowledgeCard;
     id?: string;
+    targetId?: string;
+    patch?: RiskRetrospectiveAssetEditPatch;
   };
   try {
     body = await request.json();
@@ -62,6 +67,42 @@ export async function POST(request: Request): Promise<Response> {
       request_id: requestId,
       status: result.status,
       asset: result.status === "succeeded" ? result.asset : undefined,
+      governance_warning: result.status === "succeeded" ? result.warning : undefined,
+      duplicate_warnings: result.status === "succeeded"
+        ? buildRiskRetrospectiveAssetDuplicateWarnings((await listRiskRetrospectiveAssets("all", 100)).assets)
+        : [],
+      warning: result.status !== "succeeded" ? result.warning : undefined,
+    }, result.status === "failed" ? 500 : result.status === "not_configured" ? 503 : 200, requestId);
+  }
+
+  if (body.action === "update") {
+    if (!body.id || !body.patch) {
+      return jsonResponse({ request_id: requestId, status: "failed", error: "缺少资产 ID 或编辑内容。" }, 400, requestId);
+    }
+    const result = await updateRiskRetrospectiveAssetDetails({ id: body.id, patch: body.patch, user, requestId });
+    return jsonResponse({
+      request_id: requestId,
+      status: result.status,
+      asset: result.status === "succeeded" ? result.asset : undefined,
+      governance_warning: result.status === "succeeded" ? result.warning : undefined,
+      duplicate_warnings: result.status === "succeeded"
+        ? buildRiskRetrospectiveAssetDuplicateWarnings((await listRiskRetrospectiveAssets("all", 100)).assets)
+        : [],
+      warning: result.status !== "succeeded" ? result.warning : undefined,
+    }, result.status === "failed" ? 500 : result.status === "not_configured" ? 503 : 200, requestId);
+  }
+
+  if (body.action === "merge") {
+    if (!body.id || !body.targetId) {
+      return jsonResponse({ request_id: requestId, status: "failed", error: "缺少源资产 ID 或主资产 ID。" }, 400, requestId);
+    }
+    const result = await mergeRiskRetrospectiveAssets({ sourceAssetId: body.id, targetAssetId: body.targetId, user, requestId });
+    return jsonResponse({
+      request_id: requestId,
+      status: result.status,
+      asset: result.status === "succeeded" ? result.asset : undefined,
+      target_asset: result.status === "succeeded" ? result.targetAsset : undefined,
+      governance_warning: result.status === "succeeded" ? result.warning : undefined,
       duplicate_warnings: result.status === "succeeded"
         ? buildRiskRetrospectiveAssetDuplicateWarnings((await listRiskRetrospectiveAssets("all", 100)).assets)
         : [],
@@ -85,6 +126,7 @@ export async function POST(request: Request): Promise<Response> {
     request_id: requestId,
     status: result.status,
     asset: result.status === "succeeded" ? result.asset : undefined,
+    governance_warning: result.status === "succeeded" ? result.warning : undefined,
     duplicate_warnings: result.status === "succeeded"
       ? buildRiskRetrospectiveAssetDuplicateWarnings((await listRiskRetrospectiveAssets("all", 100)).assets)
       : [],

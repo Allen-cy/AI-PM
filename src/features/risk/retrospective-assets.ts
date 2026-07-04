@@ -39,7 +39,7 @@ export type RiskRetrospectiveAssetListResult =
   | { status: "failed"; assets: RiskRetrospectiveAssetRecord[]; warning: string };
 
 export type RiskRetrospectiveAssetMutationResult =
-  | { status: "succeeded"; asset: RiskRetrospectiveAssetRecord }
+  | { status: "succeeded"; asset: RiskRetrospectiveAssetRecord; warning?: string }
   | { status: "not_configured"; warning: string }
   | { status: "failed"; warning: string };
 
@@ -69,13 +69,37 @@ export interface RiskRetrospectiveAssetDuplicateWarning {
   message: string;
 }
 
+export interface RiskRetrospectiveAssetEditPatch {
+  title?: string;
+  applicability?: string;
+  lessonLearned?: string;
+  earlyWarningRule?: string;
+  reusablePractice?: string;
+  tags?: string[];
+}
+
+export interface RiskRetrospectiveAssetMergePreview {
+  sourceAssetId: string;
+  targetAssetId: string;
+  sourceTitle: string;
+  targetTitle: string;
+  mergedTags: string[];
+  actionSummary: string;
+}
+
 export type RiskRetrospectiveAssetUsageResult =
   | { status: "succeeded"; recorded: number }
   | { status: "skipped"; warning: string; recorded: number }
   | { status: "failed"; warning: string; recorded: number };
 
+export type RiskRetrospectiveAssetGovernanceResult =
+  | { status: "succeeded"; asset: RiskRetrospectiveAssetRecord; warning?: string; targetAsset?: RiskRetrospectiveAssetRecord }
+  | { status: "not_configured"; warning: string }
+  | { status: "failed"; warning: string };
+
 const SQL_FILE = "supabase-v5330-risk-retrospective-assets.sql";
 const VALUE_SQL_FILE = "supabase-v5332-risk-retrospective-value.sql";
+const GOVERNANCE_SQL_FILE = "supabase-v5334-risk-retrospective-governance.sql";
 
 function isRiskRetrospectiveAssetStorageConfigured(): boolean {
   return Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
@@ -136,6 +160,17 @@ function isMissingValueMetricColumnsError(message?: string): boolean {
       || normalized.includes("schema cache")
       || normalized.includes("could not find")
       || normalized.includes("column")
+    );
+}
+
+function isMissingGovernanceLogTableError(message?: string): boolean {
+  const normalized = (message ?? "").toLowerCase();
+  return normalized.includes("risk_retrospective_asset_governance_logs")
+    && (
+      normalized.includes("does not exist")
+      || normalized.includes("relation")
+      || normalized.includes("schema cache")
+      || normalized.includes("could not find")
     );
 }
 
@@ -432,11 +467,11 @@ export async function listRiskRetrospectiveAssets(
   }
 }
 
-async function selectAssetById(id: string): Promise<RiskRetrospectiveAssetRecord | null> {
+async function selectAssetById(id: string, includeValueMetrics = true): Promise<RiskRetrospectiveAssetRecord | null> {
   const supabase = getRiskRetrospectiveAssetSupabase();
   const { data, error } = await supabase
     .from("risk_retrospective_assets")
-    .select(selectColumns())
+    .select(selectColumns(includeValueMetrics))
     .eq("id", id)
     .maybeSingle();
   if (error || !data) return null;
@@ -496,6 +531,7 @@ export async function updateRiskRetrospectiveAssetStatus(
   }
 
   try {
+    const before = await selectAssetById(id, false);
     const supabase = getRiskRetrospectiveAssetSupabase();
     const { data, error } = await supabase
       .from("risk_retrospective_assets")
@@ -512,11 +548,170 @@ export async function updateRiskRetrospectiveAssetStatus(
           : error.message,
       };
     }
-    return { status: "succeeded", asset: mapAsset(data as unknown as Record<string, unknown>) };
+    const asset = mapAsset(data as unknown as Record<string, unknown>);
+    const warning = before
+      ? await persistGovernanceLog({
+        assetId: id,
+        action: status === "published" ? "publish" : status === "archived" ? "archive" : "review",
+        actionSummary: `复盘资产状态变更为 ${status}：${asset.title}`,
+        beforeSnapshot: before,
+        afterSnapshot: asset,
+        user,
+      })
+      : null;
+    return { status: "succeeded", asset, warning: warning ?? undefined };
   } catch (error) {
     return {
       status: "failed",
       warning: error instanceof Error ? error.message : "更新风险复盘资产失败。",
+    };
+  }
+}
+
+async function persistGovernanceLog(input: {
+  assetId: string;
+  targetAssetId?: string | null;
+  action: "edit" | "merge" | "archive" | "review" | "publish";
+  actionSummary: string;
+  beforeSnapshot: unknown;
+  afterSnapshot: unknown;
+  user: AssetActor | null;
+  requestId?: string;
+}): Promise<string | null> {
+  try {
+    const supabase = getRiskRetrospectiveAssetSupabase();
+    const { error } = await supabase
+      .from("risk_retrospective_asset_governance_logs")
+      .insert({
+        asset_id: input.assetId,
+        target_asset_id: input.targetAssetId ?? null,
+        action: input.action,
+        action_summary: input.actionSummary,
+        before_snapshot: input.beforeSnapshot,
+        after_snapshot: input.afterSnapshot,
+        performed_by: input.user?.id ?? null,
+        performed_by_name: actorName(input.user),
+        request_id: input.requestId ?? null,
+      });
+    if (!error) return null;
+    return isMissingGovernanceLogTableError(error.message)
+      ? `风险复盘资产治理审计 SQL 未执行：请在 Supabase SQL Editor 执行 ${GOVERNANCE_SQL_FILE}。`
+      : error.message;
+  } catch (error) {
+    return error instanceof Error ? error.message : "风险复盘资产治理审计写入失败。";
+  }
+}
+
+export async function updateRiskRetrospectiveAssetDetails(input: {
+  id: string;
+  patch: RiskRetrospectiveAssetEditPatch;
+  user: AssetActor | null;
+  requestId?: string;
+}): Promise<RiskRetrospectiveAssetGovernanceResult> {
+  if (!isRiskRetrospectiveAssetStorageConfigured()) {
+    return { status: "not_configured", warning: "Supabase 未配置，无法编辑风险复盘资产。" };
+  }
+  const update = buildRiskRetrospectiveAssetUpdatePayload(input.patch);
+  if (Object.keys(update).length === 0) {
+    return { status: "failed", warning: "没有可更新的复盘资产字段。" };
+  }
+
+  try {
+    const before = await selectAssetById(input.id, false);
+    if (!before) return { status: "failed", warning: "未找到要编辑的风险复盘资产。" };
+    const supabase = getRiskRetrospectiveAssetSupabase();
+    const { data, error } = await supabase
+      .from("risk_retrospective_assets")
+      .update(update)
+      .eq("id", input.id)
+      .select(selectColumns(false))
+      .single();
+    if (error) {
+      return {
+        status: isMissingAssetTableError(error.message) ? "not_configured" : "failed",
+        warning: isMissingAssetTableError(error.message)
+          ? `风险复盘资产 SQL 未执行：请在 Supabase SQL Editor 执行 ${SQL_FILE}。`
+          : error.message,
+      };
+    }
+    const asset = mapAsset(data as unknown as Record<string, unknown>);
+    const warning = await persistGovernanceLog({
+      assetId: input.id,
+      action: "edit",
+      actionSummary: `补充/编辑复盘资产：${asset.title}`,
+      beforeSnapshot: before,
+      afterSnapshot: asset,
+      user: input.user,
+      requestId: input.requestId,
+    });
+    return { status: "succeeded", asset, warning: warning ?? undefined };
+  } catch (error) {
+    return {
+      status: "failed",
+      warning: error instanceof Error ? error.message : "编辑风险复盘资产失败。",
+    };
+  }
+}
+
+export async function mergeRiskRetrospectiveAssets(input: {
+  sourceAssetId: string;
+  targetAssetId: string;
+  user: AssetActor | null;
+  requestId?: string;
+}): Promise<RiskRetrospectiveAssetGovernanceResult> {
+  if (!isRiskRetrospectiveAssetStorageConfigured()) {
+    return { status: "not_configured", warning: "Supabase 未配置，无法合并风险复盘资产。" };
+  }
+  if (input.sourceAssetId === input.targetAssetId) {
+    return { status: "failed", warning: "源资产和主资产不能相同。" };
+  }
+
+  try {
+    const source = await selectAssetById(input.sourceAssetId, false);
+    const target = await selectAssetById(input.targetAssetId, false);
+    if (!source || !target) return { status: "failed", warning: "未找到要合并的风险复盘资产。" };
+    const preview = buildRiskRetrospectiveAssetMergePreview(source, target);
+    const supabase = getRiskRetrospectiveAssetSupabase();
+    const { data: targetData, error: targetError } = await supabase
+      .from("risk_retrospective_assets")
+      .update({
+        tags: preview.mergedTags,
+        applicability: target.applicability || source.applicability,
+      })
+      .eq("id", target.id)
+      .select(selectColumns(false))
+      .single();
+    if (targetError) return { status: "failed", warning: targetError.message };
+
+    const { data: sourceData, error: sourceError } = await supabase
+      .from("risk_retrospective_assets")
+      .update({
+        status: "archived",
+        archived_at: new Date().toISOString(),
+        applicability: `${source.applicability || "已合并"}\n\n已合并到主资产：${target.title}`,
+      })
+      .eq("id", source.id)
+      .select(selectColumns(false))
+      .single();
+    if (sourceError) return { status: "failed", warning: sourceError.message };
+
+    const archivedSource = mapAsset(sourceData as unknown as Record<string, unknown>);
+    const updatedTarget = mapAsset(targetData as unknown as Record<string, unknown>);
+    const warning = await persistGovernanceLog({
+      assetId: source.id,
+      targetAssetId: target.id,
+      action: "merge",
+      actionSummary: preview.actionSummary,
+      beforeSnapshot: { source, target },
+      afterSnapshot: { source: archivedSource, target: updatedTarget },
+      user: input.user,
+      requestId: input.requestId,
+    });
+    return { status: "succeeded", asset: archivedSource, targetAsset: updatedTarget, warning: warning ?? undefined };
+  } catch (error) {
+    return {
+      status: "failed",
+      warning: error instanceof Error ? error.message : "合并风险复盘资产失败。",
     };
   }
 }
@@ -562,6 +757,33 @@ export function buildRiskRetrospectiveAssetDuplicateWarnings(
       "最近导出哈希",
     ),
   ];
+}
+
+export function buildRiskRetrospectiveAssetUpdatePayload(patch: RiskRetrospectiveAssetEditPatch): Record<string, unknown> {
+  const update: Record<string, unknown> = {};
+  if (patch.title !== undefined) update.title = clean(patch.title);
+  if (patch.applicability !== undefined) update.applicability = clean(patch.applicability);
+  if (patch.lessonLearned !== undefined) update.lesson_learned = clean(patch.lessonLearned);
+  if (patch.earlyWarningRule !== undefined) update.early_warning_rule = clean(patch.earlyWarningRule);
+  if (patch.reusablePractice !== undefined) update.reusable_practice = clean(patch.reusablePractice);
+  if (patch.tags !== undefined) update.tags = [...new Set(patch.tags.map(clean).filter(Boolean))];
+  return Object.fromEntries(Object.entries(update).filter(([, value]) => (
+    Array.isArray(value) ? value.length > 0 : value !== ""
+  )));
+}
+
+export function buildRiskRetrospectiveAssetMergePreview(
+  source: RiskRetrospectiveAssetRecord,
+  target: RiskRetrospectiveAssetRecord,
+): RiskRetrospectiveAssetMergePreview {
+  return {
+    sourceAssetId: source.id,
+    targetAssetId: target.id,
+    sourceTitle: source.title,
+    targetTitle: target.title,
+    mergedTags: [...new Set([...target.tags, ...source.tags].map(clean).filter(Boolean))],
+    actionSummary: `将「${source.title}」合并到主资产「${target.title}」，来源风险 ${source.sourceRiskCode || source.sourceRiskId} 将保留在治理审计中，源资产进入 archived 状态。`,
+  };
 }
 
 function citationAssetId(citation: RagCitation): string | null {
