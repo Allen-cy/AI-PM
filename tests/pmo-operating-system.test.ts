@@ -68,6 +68,7 @@ import {
   riskRetrospectiveAssetToRagDocument,
 } from '../src/features/risk/retrospective-assets.ts';
 import { buildRiskRetrospectiveKnowledgeExport } from '../src/features/risk/retrospective-knowledge-sync.ts';
+import { buildRiskRetrospectiveQualityDashboard } from '../src/features/risk/retrospective-quality.ts';
 import {
   buildReportEvidence,
   buildReportFactoryPackage,
@@ -745,6 +746,7 @@ test('risk sensitivity impact is discoverable from api dashboard and sensitivity
   const retrospectiveAssetsApiSource = readFileSync(new URL('../src/app/api/risk/retrospective/assets/route.ts', import.meta.url), 'utf8');
   const retrospectiveRecommendationsApiSource = readFileSync(new URL('../src/app/api/risk/retrospective/recommendations/route.ts', import.meta.url), 'utf8');
   const retrospectiveExportApiSource = readFileSync(new URL('../src/app/api/risk/retrospective/assets/export/route.ts', import.meta.url), 'utf8');
+  const retrospectiveQualityApiSource = readFileSync(new URL('../src/app/api/risk/retrospective/assets/quality/route.ts', import.meta.url), 'utf8');
   const retrospectiveAssetsSql = readFileSync(new URL('../supabase-v5330-risk-retrospective-assets.sql', import.meta.url), 'utf8');
   const retrospectiveExportSql = readFileSync(new URL('../supabase-v5331-risk-retrospective-knowledge-sync.sql', import.meta.url), 'utf8');
   const retrospectiveValueSql = readFileSync(new URL('../supabase-v5332-risk-retrospective-value.sql', import.meta.url), 'utf8');
@@ -763,6 +765,7 @@ test('risk sensitivity impact is discoverable from api dashboard and sensitivity
   assert.match(retrospectiveAssetsApiSource, /confirmRiskRetrospectiveAsset/);
   assert.match(retrospectiveRecommendationsApiSource, /buildRiskRetrospectiveRecommendations/);
   assert.match(retrospectiveExportApiSource, /buildRiskRetrospectiveKnowledgeExport/);
+  assert.match(retrospectiveQualityApiSource, /buildRiskRetrospectiveQualityDashboard/);
   assert.match(retrospectiveAssetsSql, /risk_retrospective_assets/);
   assert.match(retrospectiveExportSql, /risk_retrospective_asset_sync_logs/);
   assert.match(retrospectiveValueSql, /risk_retrospective_asset_usage_logs/);
@@ -777,6 +780,7 @@ test('risk sensitivity impact is discoverable from api dashboard and sensitivity
   assert.match(riskPageSource, /导出AI-PMO-SYS知识页/);
   assert.match(riskPageSource, /重复资产提示/);
   assert.match(riskPageSource, /RAG引用/);
+  assert.match(riskPageSource, /资产质量与治理队列/);
   assert.match(reportRouteSource, /riskRetrospective/);
   assert.match(trackingPageSource, /关闭证据与复核意见/);
 });
@@ -1133,6 +1137,42 @@ test('risk retrospective assets expose usage references and duplicate warnings',
   assert.equal(warnings.some(item => item.type === 'same_source_risk'), true);
   assert.equal(warnings.some(item => item.type === 'same_content'), true);
   assert.equal(warnings.some(item => item.type === 'same_export_hash'), true);
+});
+
+test('risk retrospective quality dashboard prioritizes low quality and duplicate assets', () => {
+  const baseCard = {
+    id: 'R-QUALITY-1',
+    sourceRiskId: 'R-QUALITY-1',
+    projectName: '质量评分项目',
+    title: '验收标准不清导致回款延期复盘',
+    riskDescription: '验收标准不清导致回款延期',
+    category: '客户',
+    impactArea: '回款',
+    severity: 'high' as const,
+    trigger: '客户未确认验收标准',
+    effectiveResponse: '补充验收标准评审会',
+    closingEvidence: '',
+    reviewOpinion: '',
+    lessonLearned: '',
+    earlyWarningRule: '',
+    reusablePractice: '',
+    tags: ['验收', '回款'],
+  };
+  const weakAsset = buildRiskRetrospectiveAssetDraft(baseCard, { status: 'published' });
+  const duplicateAsset = {
+    ...weakAsset,
+    id: 'R-QUALITY-2',
+    assetKey: 'risk-retrospective:R-QUALITY-2',
+    sourceRiskId: 'R-QUALITY-1',
+  };
+  const dashboard = buildRiskRetrospectiveQualityDashboard([weakAsset, duplicateAsset], new Date('2026-07-04T00:00:00.000Z'));
+
+  assert.equal(dashboard.summary.totalAssets, 2);
+  assert.equal(dashboard.summary.needsGovernance, 2);
+  assert.equal(dashboard.summary.duplicateRiskAssets, 2);
+  assert.equal(dashboard.governanceQueue.length, 2);
+  assert.equal(dashboard.governanceQueue[0].suggestedActions.some(action => action.includes('补充')), true);
+  assert.match(dashboard.boundary, /不自动删除/);
 });
 
 test('field mapping diagnostics detect missing Chinese fields and aliases', () => {

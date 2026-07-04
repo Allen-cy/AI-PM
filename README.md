@@ -67,6 +67,10 @@ npm run build
 - 飞书端已建立8张业务表；公开项目记录API会等用户登录和授权模型完成后再开放。
 - 全仓历史 ESLint 基线仍有旧问题；V4新增/改动文件执行独立零错误门禁。
 
+## AI-PMO System V5.3.33
+
+V5.3.33 为风险复盘资产增加质量评分和人工治理队列：新增 `src/features/risk/retrospective-quality.ts` 和 `/api/risk/retrospective/assets/quality`，从关闭证据完整度、PMO复核意见、经验教训、早期预警规则、可复用做法、适用范围、重复风险和 RAG 引用价值计算 A/B/C/D 质量等级。`/risk` 的“复盘资产”页签新增“资产质量与治理队列”，展示平均分、待治理数量、重复风险数量，并为低质量或重复资产给出治理动作、责任人和 deadline。本版本不新增 SQL，复用 V5.3.30-5.3.32 的资产、引用和重复检测数据。
+
 ## AI-PMO System V5.3.32
 
 V5.3.32 将风险复盘资产从“可发布到 RAG / 可导出知识页”继续推进到“可度量复用价值、可识别重复资产”：新增 `supabase-v5332-risk-retrospective-value.sql`，为 `risk_retrospective_assets` 增加 RAG 引用次数、最后引用时间、最近导出时间和最近导出 SHA256，并新增 `risk_retrospective_asset_usage_logs` 记录 RAG 引用日志。`/api/rag/query` 在引用 `RISK-RETRO-*` 来源时会尝试回写引用记录，不影响问答主流程；`/api/risk/retrospective/assets` 会返回同标题、同来源风险、同复盘内容、同导出哈希的重复提示；`/risk` 的“复盘资产”页签展示重复资产提示、每条资产的 RAG 引用次数和最近导出信息。本版本需要执行 `supabase-v5332-risk-retrospective-value.sql` 后才能持久化价值指标；未执行时核心资产确认/发布/导出仍可继续使用。
