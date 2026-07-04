@@ -14,6 +14,7 @@ import {
   statusLabels,
   statusOrder,
 } from "@/lib/risk";
+import type { RiskClosureDecision } from "@/features/risk/closure";
 
 type RiskPayload = {
   risks?: Risk[];
@@ -23,7 +24,27 @@ type RiskPayload = {
   migrationHint?: string;
 };
 
-const defaultForm: RiskTrackingUpdate = {
+type RiskTrackingForm = RiskTrackingUpdate & {
+  closureEvidence: string;
+  reviewOpinion: string;
+  reviewer: string;
+  reviewedAt: string;
+  closureDecision: RiskClosureDecision;
+  dependencyDisposition: string;
+  residualRisk: string;
+  followUpAction: string;
+  followUpOwner: string;
+  followUpDeadline: string;
+  lessonsLearned: string;
+};
+
+function dateByOffset(days: number): string {
+  const date = new Date();
+  date.setDate(date.getDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+const defaultForm: RiskTrackingForm = {
   riskId: "",
   status: "tracking",
   progress: 50,
@@ -33,6 +54,17 @@ const defaultForm: RiskTrackingUpdate = {
   nextAction: "",
   blocker: "",
   evidence: "",
+  closureEvidence: "",
+  reviewOpinion: "",
+  reviewer: "PMO",
+  reviewedAt: new Date().toISOString().slice(0, 10),
+  closureDecision: "approved",
+  dependencyDisposition: "",
+  residualRisk: "",
+  followUpAction: "",
+  followUpOwner: "",
+  followUpDeadline: dateByOffset(7),
+  lessonsLearned: "",
 };
 
 function downloadText(filename: string, content: string) {
@@ -53,7 +85,7 @@ export default function RiskTrackingPage() {
   const [risks, setRisks] = useState<Risk[]>([]);
   const [events, setEvents] = useState<RiskWorkflowEvent[]>([]);
   const [updates, setUpdates] = useState<RiskTrackingUpdate[]>([]);
-  const [form, setForm] = useState<RiskTrackingUpdate>(defaultForm);
+  const [form, setForm] = useState<RiskTrackingForm>(defaultForm);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -110,6 +142,16 @@ export default function RiskTrackingPage() {
       setError("请补齐责任人、deadline、已完成动作和下一步动作。风险跟踪必须责任到人。");
       return;
     }
+    if (form.status === "closed") {
+      if (!form.closureEvidence.trim() || !form.reviewOpinion.trim() || !form.reviewer.trim() || !form.reviewedAt || !form.dependencyDisposition.trim()) {
+        setError("关闭风险必须补齐关闭证据、复核意见、复核人、复核日期和依赖处置说明。");
+        return;
+      }
+      if (form.closureDecision === "conditional" && (!form.followUpAction.trim() || !form.followUpOwner.trim() || !form.followUpDeadline)) {
+        setError("有条件关闭必须补齐后续动作、责任人和deadline。");
+        return;
+      }
+    }
 
     setSaving(true);
     setError("");
@@ -127,6 +169,19 @@ export default function RiskTrackingPage() {
           owner: form.owner,
           deadline: form.deadline,
           evidence: form.evidence,
+          closure: form.status === "closed" ? {
+            closureEvidence: form.closureEvidence,
+            reviewOpinion: form.reviewOpinion,
+            reviewer: form.reviewer,
+            reviewedAt: form.reviewedAt,
+            closureDecision: form.closureDecision,
+            dependencyDisposition: form.dependencyDisposition,
+            residualRisk: form.residualRisk,
+            followUpAction: form.followUpAction,
+            followUpOwner: form.followUpOwner,
+            followUpDeadline: form.followUpDeadline,
+            lessonsLearned: form.lessonsLearned,
+          } : undefined,
           actor: "风险跟踪管理页",
         }),
       });
@@ -203,6 +258,8 @@ export default function RiskTrackingPage() {
                       riskId: event.target.value,
                       owner: risk?.actionOwner || risk?.owner || prev.owner,
                       deadline: risk?.actionDeadline || risk?.dueDate || prev.deadline,
+                      reviewer: risk?.actionOwner || risk?.owner || prev.reviewer,
+                      followUpOwner: risk?.actionOwner || risk?.owner || prev.followUpOwner,
                     }));
                   }}>
                     <option value="">请选择</option>
@@ -249,6 +306,71 @@ export default function RiskTrackingPage() {
                   <label className="label">证据/附件说明</label>
                   <input className="input" value={form.evidence || ""} onChange={event => setForm(prev => ({ ...prev, evidence: event.target.value }))} placeholder="会议纪要链接、飞书记录、文件名等" />
                 </div>
+                {form.status === "closed" && (
+                  <div style={{ border: "1px solid rgba(16,185,129,0.28)", borderRadius: 12, padding: 14, background: "rgba(16,185,129,0.08)" }}>
+                    <div style={{ fontWeight: 800, marginBottom: 8 }}>关闭证据与复核意见</div>
+                    <div style={{ color: "var(--text2)", fontSize: "0.76rem", lineHeight: 1.6, marginBottom: 12 }}>
+                      选择“已关闭”时，必须提交关闭证据、复核意见和依赖处置说明。
+                    </div>
+                    <div style={{ display: "grid", gap: 12 }}>
+                      <div>
+                        <label className="label">关闭证据 *</label>
+                        <textarea className="input" rows={2} value={form.closureEvidence} onChange={event => setForm(prev => ({ ...prev, closureEvidence: event.target.value }))} placeholder="验收单、缺陷关闭记录、回款确认、治理评审纪要、附件链接等" />
+                      </div>
+                      <div>
+                        <label className="label">复核意见 *</label>
+                        <textarea className="input" rows={2} value={form.reviewOpinion} onChange={event => setForm(prev => ({ ...prev, reviewOpinion: event.target.value }))} />
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                        <div>
+                          <label className="label">复核人 *</label>
+                          <input className="input" value={form.reviewer} onChange={event => setForm(prev => ({ ...prev, reviewer: event.target.value }))} />
+                        </div>
+                        <div>
+                          <label className="label">复核日期 *</label>
+                          <input className="input" type="date" value={form.reviewedAt} onChange={event => setForm(prev => ({ ...prev, reviewedAt: event.target.value }))} />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="label">关闭结论 *</label>
+                        <select className="input" value={form.closureDecision} onChange={event => setForm(prev => ({ ...prev, closureDecision: event.target.value as RiskClosureDecision }))}>
+                          <option value="approved">批准关闭</option>
+                          <option value="conditional">有条件关闭</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="label">依赖处置说明 *</label>
+                        <textarea className="input" rows={2} value={form.dependencyDisposition} onChange={event => setForm(prev => ({ ...prev, dependencyDisposition: event.target.value }))} placeholder="关联行动项、治理流程、回款/里程碑影响已处理，或说明豁免原因" />
+                      </div>
+                      <div>
+                        <label className="label">剩余风险</label>
+                        <input className="input" value={form.residualRisk} onChange={event => setForm(prev => ({ ...prev, residualRisk: event.target.value }))} placeholder="无 / 转运维观察 / 后续复盘" />
+                      </div>
+                      {form.closureDecision === "conditional" && (
+                        <>
+                          <div>
+                            <label className="label">后续动作 *</label>
+                            <input className="input" value={form.followUpAction} onChange={event => setForm(prev => ({ ...prev, followUpAction: event.target.value }))} />
+                          </div>
+                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                            <div>
+                              <label className="label">后续责任人 *</label>
+                              <input className="input" value={form.followUpOwner} onChange={event => setForm(prev => ({ ...prev, followUpOwner: event.target.value }))} />
+                            </div>
+                            <div>
+                              <label className="label">后续deadline *</label>
+                              <input className="input" type="date" value={form.followUpDeadline} onChange={event => setForm(prev => ({ ...prev, followUpDeadline: event.target.value }))} />
+                            </div>
+                          </div>
+                        </>
+                      )}
+                      <div>
+                        <label className="label">经验教训/复盘要点</label>
+                        <textarea className="input" rows={2} value={form.lessonsLearned} onChange={event => setForm(prev => ({ ...prev, lessonsLearned: event.target.value }))} />
+                      </div>
+                    </div>
+                  </div>
+                )}
                 <button className="btn-primary" onClick={submitTracking} disabled={saving || !form.riskId}>
                   {saving ? "保存中..." : "保存本次跟踪并推进状态"}
                 </button>

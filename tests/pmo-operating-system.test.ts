@@ -56,6 +56,11 @@ import { buildRiskEscalationDraftDashboard } from '../src/features/risk/escalati
 import { buildRiskIntegrationDashboard } from '../src/features/risk/integration.ts';
 import { buildRiskSensitivityImpactDashboard } from '../src/features/risk/sensitivity-impact.ts';
 import {
+  buildRiskClosureDashboard,
+  buildRiskClosurePackage,
+  validateRiskClosureReview,
+} from '../src/features/risk/closure.ts';
+import {
   buildReportEvidence,
   buildReportFactoryPackage,
   extractMeetingActionItems,
@@ -726,6 +731,9 @@ test('risk sensitivity impact is discoverable from api dashboard and sensitivity
   const dashboardSource = readFileSync(new URL('../src/app/dashboard/page.tsx', import.meta.url), 'utf8');
   const sensitivityPageSource = readFileSync(new URL('../src/app/risk/sensitivity/page.tsx', import.meta.url), 'utf8');
   const reportRouteSource = readFileSync(new URL('../src/app/api/reports/route.ts', import.meta.url), 'utf8');
+  const closureApiSource = readFileSync(new URL('../src/app/api/risk/closure/route.ts', import.meta.url), 'utf8');
+  const riskPageSource = readFileSync(new URL('../src/app/risk/page.tsx', import.meta.url), 'utf8');
+  const trackingPageSource = readFileSync(new URL('../src/app/risk/tracking/page.tsx', import.meta.url), 'utf8');
 
   assert.match(apiSource, /buildRiskSensitivityImpactDashboard/);
   assert.match(dashboardSource, /buildRiskSensitivityImpactDashboard/);
@@ -733,6 +741,135 @@ test('risk sensitivity impact is discoverable from api dashboard and sensitivity
   assert.match(sensitivityPageSource, /系统联动口径/);
   assert.match(sensitivityPageSource, /\/api\/risk\/sensitivity-impact/);
   assert.match(reportRouteSource, /riskSensitivityImpact/);
+  assert.match(closureApiSource, /buildRiskClosureDashboard/);
+  assert.match(riskPageSource, /关闭证据/);
+  assert.match(riskPageSource, /\/api\/risk\/closure/);
+  assert.match(trackingPageSource, /关闭证据与复核意见/);
+});
+
+test('risk closure requires evidence review opinion reviewer date and dependency disposition', () => {
+  const risk: Risk = {
+    id: 'R-CLOSE-1',
+    riskCode: 'R-CLOSE-1',
+    projectName: '关闭门禁项目',
+    description: '客户验收和回款阻塞风险',
+    category: '合同',
+    stage: '验收',
+    source: '风险登记册',
+    impactArea: '回款',
+    probability: 4,
+    impact: 5,
+    urgency: 5,
+    piScore: 20,
+    priorityScore: 100,
+    status: 'resolved',
+    responseStrategyType: '上报',
+    responseStrategy: '完成验收材料和回款承诺复核',
+    preventiveAction: '周会跟踪验收材料',
+    contingencyPlan: '必要时升级PMO',
+    trigger: '验收签字延迟',
+    trackingMethod: '周会跟踪',
+    owner: '项目经理',
+    dueDate: '2026-07-10',
+    nextReviewDate: '2026-07-08',
+    closingCriteria: '验收签字并确认付款计划',
+    linkedModule: '合同回款',
+    createdAt: '2026-07-01',
+  };
+
+  const missing = validateRiskClosureReview(risk, {
+    closureEvidence: '',
+    reviewOpinion: '',
+    reviewer: '',
+    reviewedAt: '',
+    dependencyDisposition: '',
+  });
+  assert.equal(missing.length >= 5, true);
+
+  const closurePackage = buildRiskClosurePackage(risk, {
+    closureEvidence: '验收单与付款计划链接',
+    reviewOpinion: '已满足关闭条件，剩余回款动作进入经营提醒。',
+    reviewer: 'PMO',
+    reviewedAt: '2026-07-04',
+    closureDecision: 'conditional',
+    dependencyDisposition: '治理流程已完成；回款动作转入经营提醒。',
+    followUpAction: '7月10日前确认首笔回款',
+    followUpOwner: '商务负责人',
+    followUpDeadline: '2026-07-10',
+  });
+
+  assert.match(closurePackage.evidenceText, /关闭证据/);
+  assert.match(closurePackage.outputSummary, /复核意见/);
+  assert.match(closurePackage.actionRequired, /商务负责人/);
+});
+
+test('risk closure dashboard exposes evidence gaps and report facts', () => {
+  const risks: Risk[] = [
+    {
+      id: 'R-CLOSE-2',
+      riskCode: 'R-CLOSE-2',
+      projectName: '已证据关闭项目',
+      description: '高风险已完成关闭复核',
+      category: '质量',
+      stage: '结项',
+      source: '风险登记册',
+      impactArea: '质量',
+      probability: 4,
+      impact: 4,
+      urgency: 4,
+      piScore: 16,
+      priorityScore: 64,
+      status: 'closed',
+      responseStrategyType: '缓解',
+      responseStrategy: '关闭质量缺陷',
+      preventiveAction: '补充测试',
+      contingencyPlan: '保留支持窗口',
+      trigger: '缺陷复发',
+      trackingMethod: '复盘',
+      owner: '测试负责人',
+      dueDate: '2026-07-04',
+      nextReviewDate: '2026-07-04',
+      closingCriteria: '缺陷关闭并完成回归测试',
+      linkedModule: '质量',
+      evidence: '关闭证据：回归测试报告\n复核意见：同意关闭\n复核人：PMO\n复核日期：2026-07-04\n依赖处置：缺陷单已关闭',
+      createdAt: '2026-07-01',
+    },
+    {
+      id: 'R-CLOSE-3',
+      riskCode: 'R-CLOSE-3',
+      projectName: '待补证据项目',
+      description: '已解决但未关闭',
+      category: '进度',
+      stage: '监控',
+      source: '风险登记册',
+      impactArea: '工期',
+      probability: 3,
+      impact: 3,
+      urgency: 3,
+      piScore: 9,
+      priorityScore: 27,
+      status: 'resolved',
+      responseStrategyType: '缓解',
+      responseStrategy: '补齐计划',
+      preventiveAction: '更新计划',
+      contingencyPlan: '资源协调',
+      trigger: '里程碑延迟',
+      trackingMethod: '周会',
+      owner: '项目经理',
+      dueDate: '2026-07-06',
+      nextReviewDate: '2026-07-05',
+      closingCriteria: '里程碑恢复基线',
+      linkedModule: '监控',
+      createdAt: '2026-07-01',
+    },
+  ];
+  const dashboard = buildRiskClosureDashboard(risks, []);
+
+  assert.equal(dashboard.summary.closedRisks, 1);
+  assert.equal(dashboard.summary.closedWithEvidence, 1);
+  assert.equal(dashboard.summary.closureGaps, 1);
+  assert.equal(dashboard.reportFacts.some(item => item.includes('风险关闭')), true);
+  assert.equal(dashboard.closureGaps[0].nextAction.includes('提交关闭证据'), true);
 });
 
 test('field mapping diagnostics detect missing Chinese fields and aliases', () => {
@@ -1104,6 +1241,37 @@ test('report factory cites data sources and turns meeting minutes into actions',
     asOf: new Date('2026-07-02T00:00:00.000Z'),
   });
   const riskSensitivityImpact = buildRiskSensitivityImpactDashboard(dashboard);
+  const riskClosure = buildRiskClosureDashboard([
+    {
+      id: 'R-RPT-CLOSED',
+      riskCode: 'R-RPT-CLOSED',
+      projectName: '智慧校园一期',
+      description: '验收阻塞导致回款延期',
+      category: '财务',
+      stage: '验收',
+      source: '风险登记册',
+      impactArea: '回款',
+      probability: 4,
+      impact: 5,
+      urgency: 5,
+      piScore: 20,
+      priorityScore: 100,
+      status: 'closed',
+      responseStrategyType: '上报',
+      responseStrategy: '升级PMO协调验收和付款路径',
+      preventiveAction: '补齐验收材料',
+      contingencyPlan: '必要时发起风险升级评审',
+      trigger: '客户验收签字依赖缺陷修复和付款材料确认。',
+      trackingMethod: '周会跟踪',
+      owner: '项目经理',
+      dueDate: '2026-07-04',
+      nextReviewDate: '2026-07-03',
+      closingCriteria: '验收签字并确认付款计划',
+      linkedModule: '合同回款',
+      evidence: '关闭证据：验收单与付款计划链接\n复核意见：同意关闭但首笔回款继续跟踪\n复核人：PMO\n复核日期：2026-07-04\n依赖处置：治理流程已完成，回款动作转经营提醒',
+      createdAt: '2026-07-01',
+    },
+  ], []);
   const request = {
     type: 'meeting' as const,
     projectName: '智慧校园一期',
@@ -1121,6 +1289,7 @@ test('report factory cites data sources and turns meeting minutes into actions',
     model: 'MiniMax-M3',
     riskIntegration,
     riskSensitivityImpact,
+    riskClosure,
     governanceImpact: buildGovernanceImpactDashboard([{
       id: 'gov-rpt-1',
       workflowId: 'project-closure',
@@ -1148,10 +1317,12 @@ test('report factory cites data sources and turns meeting minutes into actions',
   assert.equal(dataPackage.dataSources.some(source => source.source === 'feishu'), true);
   assert.equal(dataPackage.dataSources.some(source => source.label === '风险联动包'), true);
   assert.equal(dataPackage.dataSources.some(source => source.label === '风险敏感性影响包'), true);
+  assert.equal(dataPackage.dataSources.some(source => source.label === '风险关闭证据包'), true);
   assert.equal(dataPackage.dataSources.some(source => source.label === '治理工作流与审批联动'), true);
   assert.equal(dataPackage.financeFacts.some(item => item.includes('验收阻塞回款')), true);
   assert.equal(dataPackage.riskFacts.some(item => item.includes('风险联动')), true);
   assert.equal(dataPackage.riskFacts.some(item => item.includes('敏感性分析')), true);
+  assert.equal(dataPackage.riskFacts.some(item => item.includes('风险关闭')), true);
   assert.equal(dataPackage.riskFacts.some(item => item.includes('治理联动')), true);
   assert.equal(actionItems.length, 2);
   assert.equal(actionItems[1].priority, 'P0');
@@ -1159,8 +1330,10 @@ test('report factory cites data sources and turns meeting minutes into actions',
   assert.equal(evidence.citations.includes('飞书项目台账'), true);
   assert.equal(evidence.citations.includes('风险联动包'), true);
   assert.equal(evidence.citations.includes('风险敏感性影响包'), true);
+  assert.equal(evidence.citations.includes('风险关闭证据包'), true);
   assert.equal(evidence.citations.includes('治理工作流与审批联动'), true);
   assert.equal(evidence.basis.some(item => item.label === '敏感性分析依据'), true);
+  assert.equal(evidence.basis.some(item => item.label === '风险关闭依据'), true);
   assert.equal(evidence.suggestedActions.length, 2);
   assert.match(markdown, /数据来源与生成边界/);
   assert.match(markdown, /补齐客户付款条件清单/);

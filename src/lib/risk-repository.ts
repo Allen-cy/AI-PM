@@ -1,5 +1,10 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import {
+  buildRiskClosurePackage,
+  validateRiskClosureReview,
+  type RiskClosureReviewInput,
+} from "@/features/risk/closure";
+import {
   buildWorkflowEvent,
   calculateRiskPriority,
   calculateRiskScore,
@@ -85,6 +90,7 @@ export interface RiskTransitionInput {
   deadline?: string;
   evidence?: string;
   actor?: string;
+  closure?: Partial<RiskClosureReviewInput>;
 }
 
 export interface RiskListResult {
@@ -350,13 +356,22 @@ export async function transitionRisk(input: RiskTransitionInput): Promise<{ risk
   if (!current) throw new Error("风险不存在或已被删除");
 
   const step = getWorkflowStepForStatus(input.toStatus);
+  const closurePackage = input.toStatus === "closed"
+    ? buildRiskClosurePackage(current, input.closure ?? {})
+    : null;
+  if (input.toStatus === "closed") {
+    const validationErrors = validateRiskClosureReview(current, input.closure);
+    if (validationErrors.length > 0) {
+      throw new Error(`风险关闭被拒绝：${validationErrors.join("；")}`);
+    }
+  }
   const event = buildWorkflowEvent(current, input.toStatus, {
-    inputSummary: input.inputSummary || current.currentInput || step.input,
-    outputSummary: input.outputSummary || step.output,
-    actionRequired: input.actionRequired || step.requiredAction,
-    owner: input.owner || current.owner || "项目经理",
-    deadline: input.deadline || current.dueDate || current.nextReviewDate,
-    evidence: input.evidence || current.evidence,
+    inputSummary: closurePackage?.inputSummary || input.inputSummary || current.currentInput || step.input,
+    outputSummary: closurePackage?.outputSummary || input.outputSummary || step.output,
+    actionRequired: closurePackage?.actionRequired || input.actionRequired || step.requiredAction,
+    owner: closurePackage?.reviewer || input.owner || current.owner || "项目经理",
+    deadline: closurePackage?.followUpDeadline || input.deadline || current.dueDate || current.nextReviewDate,
+    evidence: closurePackage?.evidenceText || input.evidence || current.evidence,
     actor: input.actor || "管理员",
   });
 

@@ -2,6 +2,7 @@ import { createAiEvidence, type AiEvidence } from "../ai/evidence.ts";
 import type { DashboardData } from "../dashboard/types.ts";
 import type { FinanceCockpit } from "../finance/cockpit.ts";
 import type { GovernanceImpactDashboard } from "../governance/impact.ts";
+import type { RiskClosureDashboard } from "../risk/closure.ts";
 import type { RiskIntegrationDashboard } from "../risk/integration.ts";
 import type { RiskSensitivityImpactDashboard } from "../risk/sensitivity-impact.ts";
 import {
@@ -22,6 +23,7 @@ export interface ReportFactoryContext {
   governanceImpact?: GovernanceImpactDashboard;
   riskIntegration?: RiskIntegrationDashboard;
   riskSensitivityImpact?: RiskSensitivityImpactDashboard;
+  riskClosure?: RiskClosureDashboard;
 }
 
 export interface ReportFactoryPackage {
@@ -106,6 +108,7 @@ export function buildReportFactoryPackage(request: ReportRequest, context: Repor
     ...(context.governanceImpact?.reportFacts.slice(0, 6).map(item => `治理联动：${item}`) ?? []),
     ...(context.riskIntegration?.reportFacts.slice(0, 6).map(item => `风险联动：${item}`) ?? []),
     ...(context.riskSensitivityImpact?.reportFacts.slice(0, 6).map(item => `敏感性分析：${item}`) ?? []),
+    ...(context.riskClosure?.reportFacts.slice(0, 6).map(item => `风险关闭：${item}`) ?? []),
   ];
 
   const dataSources: ReportDataSource[] = [
@@ -136,6 +139,13 @@ export function buildReportFactoryPackage(request: ReportRequest, context: Repor
       detail: context.riskSensitivityImpact
         ? `敏感性分析项目${context.riskSensitivityImpact.summary.analyzedProjects}个，高敏${context.riskSensitivityImpact.summary.highSensitivity}个，中敏${context.riskSensitivityImpact.summary.mediumSensitivity}个，健康矩阵建议${context.riskSensitivityImpact.summary.healthMatrixSuggestions}项，待人工确认${context.riskSensitivityImpact.summary.pendingConfirmation}项。`
         : "未读取到敏感性影响包；报告不引用敏感性分析建议。",
+      source: "system",
+    },
+    {
+      label: "风险关闭证据包",
+      detail: context.riskClosure
+        ? `已关闭风险${context.riskClosure.summary.closedRisks}项，证据完整${context.riskClosure.summary.closedWithEvidence}项，关闭缺口${context.riskClosure.summary.closureGaps}项，待关闭${context.riskClosure.summary.readyForClosure}项，条件关闭${context.riskClosure.summary.conditionalClosures}项。`
+        : "未读取到风险关闭证据包；报告不引用风险关闭证据状态。",
       source: "system",
     },
     {
@@ -222,6 +232,7 @@ export function buildReportEvidence(input: {
       { label: "业财口径", detail: input.dataPackage.financeFacts.slice(0, 4).join("；"), source: "rule" },
       { label: "风险联动依据", detail: input.context.riskIntegration?.reportFacts.slice(0, 4).join("；") || "当前无风险联动事实。", source: "rule" },
       { label: "敏感性分析依据", detail: input.context.riskSensitivityImpact?.reportFacts.slice(0, 4).join("；") || "当前无敏感性分析建议。", source: "rule" },
+      { label: "风险关闭依据", detail: input.context.riskClosure?.reportFacts.slice(0, 4).join("；") || "当前无风险关闭证据事实。", source: "rule" },
       { label: "治理审批依据", detail: input.context.governanceImpact?.reportFacts.slice(0, 4).join("；") || "当前无治理审批联动事实。", source: "rule" },
       { label: "生成边界", detail: "报告不编造财务结果；估算项必须保留口径说明，正式报告提交前需人工复核。", source: "rule" },
     ],

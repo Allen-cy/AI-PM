@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import type { AiEvidence, AiSuggestedAction } from "@/features/ai/evidence";
+import type { RiskClosureDashboard, RiskClosureDecision } from "@/features/risk/closure";
 import {
   type LinkedModule,
   type Risk,
@@ -32,7 +33,7 @@ import {
   statusOrder,
 } from "@/lib/risk";
 
-type ActiveTab = "overview" | "integration" | "list" | "checklist" | "matrix" | "workflow" | "response";
+type ActiveTab = "overview" | "integration" | "list" | "checklist" | "matrix" | "workflow" | "response" | "closure";
 
 type RiskForm = Omit<Risk, "id" | "piScore" | "priorityScore" | "createdAt">;
 
@@ -44,6 +45,17 @@ type TransitionForm = {
   owner: string;
   deadline: string;
   evidence: string;
+  closureEvidence: string;
+  reviewOpinion: string;
+  reviewer: string;
+  reviewedAt: string;
+  closureDecision: RiskClosureDecision;
+  dependencyDisposition: string;
+  residualRisk: string;
+  followUpAction: string;
+  followUpOwner: string;
+  followUpDeadline: string;
+  lessonsLearned: string;
 };
 
 interface DashboardRiskRecord {
@@ -329,6 +341,17 @@ export default function RiskPage() {
       owner: "项目经理",
       deadline: dateByOffset(7),
       evidence: "",
+      closureEvidence: "",
+      reviewOpinion: "",
+      reviewer: "PMO",
+      reviewedAt: new Date().toISOString().slice(0, 10),
+      closureDecision: "approved",
+      dependencyDisposition: "",
+      residualRisk: "",
+      followUpAction: "",
+      followUpOwner: "",
+      followUpDeadline: dateByOffset(7),
+      lessonsLearned: "",
     };
   });
   const [projectDesc, setProjectDesc] = useState("");
@@ -339,6 +362,7 @@ export default function RiskPage() {
   const [lastRiskEvidence, setLastRiskEvidence] = useState<AiEvidence | null>(null);
   const [riskIntegration, setRiskIntegration] = useState<RiskIntegration | null>(null);
   const [riskEscalation, setRiskEscalation] = useState<RiskEscalationDraftDashboard | null>(null);
+  const [riskClosure, setRiskClosure] = useState<RiskClosureDashboard | null>(null);
   const [confirmingEscalationDraft, setConfirmingEscalationDraft] = useState<string | null>(null);
   const [confirmedEscalationDrafts, setConfirmedEscalationDrafts] = useState<Set<string>>(() => new Set());
   const [savingEvidenceAction, setSavingEvidenceAction] = useState<string | null>(null);
@@ -356,17 +380,20 @@ export default function RiskPage() {
         const response = await fetch("/api/risk", { cache: "no-store" });
         const data = await response.json() as { risks?: Risk[]; events?: RiskWorkflowEvent[]; warning?: string; error?: string; migrationHint?: string };
         if (!response.ok) throw new Error([data.error, data.migrationHint].filter(Boolean).join("；") || "风险登记册读取失败");
-        const [integrationResponse, escalationResponse] = await Promise.all([
+        const [integrationResponse, escalationResponse, closureResponse] = await Promise.all([
           fetch("/api/risk/integration", { cache: "no-store" }),
           fetch("/api/risk/escalation-drafts", { cache: "no-store" }),
+          fetch("/api/risk/closure", { cache: "no-store" }),
         ]);
         const integrationData = await integrationResponse.json().catch(() => ({})) as { risk_integration?: RiskIntegration };
         const escalationData = await escalationResponse.json().catch(() => ({})) as { risk_escalation?: RiskEscalationDraftDashboard };
+        const closureData = await closureResponse.json().catch(() => ({})) as { risk_closure?: RiskClosureDashboard };
         if (cancelled) return;
         setRisks(Array.isArray(data.risks) ? data.risks : []);
         setWorkflowEvents(Array.isArray(data.events) ? data.events : []);
         setRiskIntegration(integrationData.risk_integration ?? null);
         setRiskEscalation(escalationData.risk_escalation ?? null);
+        setRiskClosure(closureData.risk_closure ?? null);
         setMessage(data.warning || "");
       } catch (e: unknown) {
         if (cancelled) return;
@@ -492,6 +519,17 @@ export default function RiskPage() {
       owner: risk.actionOwner || risk.owner || "项目经理",
       deadline: risk.actionDeadline || risk.dueDate || dateByOffset(7),
       evidence: risk.evidence || "",
+      closureEvidence: "",
+      reviewOpinion: "",
+      reviewer: risk.actionOwner || risk.owner || "PMO",
+      reviewedAt: new Date().toISOString().slice(0, 10),
+      closureDecision: "approved",
+      dependencyDisposition: "",
+      residualRisk: "",
+      followUpAction: "",
+      followUpOwner: risk.actionOwner || risk.owner || "",
+      followUpDeadline: dateByOffset(7),
+      lessonsLearned: "",
     });
     setError("");
   };
@@ -506,18 +544,56 @@ export default function RiskPage() {
       setError("请填写deadline");
       return;
     }
+    if (transitionForm.toStatus === "closed") {
+      if (!transitionForm.closureEvidence.trim() || !transitionForm.reviewOpinion.trim() || !transitionForm.reviewer.trim() || !transitionForm.reviewedAt || !transitionForm.dependencyDisposition.trim()) {
+        setError("关闭风险必须补齐关闭证据、复核意见、复核人、复核日期和依赖处置说明。");
+        return;
+      }
+      if (transitionForm.closureDecision === "conditional" && (!transitionForm.followUpAction.trim() || !transitionForm.followUpOwner.trim() || !transitionForm.followUpDeadline)) {
+        setError("有条件关闭必须补齐后续动作、责任人和deadline。");
+        return;
+      }
+    }
     setSaving(true);
     setError("");
     try {
       const response = await fetch("/api/risk", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: transitioningRisk.id, ...transitionForm }),
+        body: JSON.stringify({
+          id: transitioningRisk.id,
+          toStatus: transitionForm.toStatus,
+          inputSummary: transitionForm.inputSummary,
+          outputSummary: transitionForm.outputSummary,
+          actionRequired: transitionForm.actionRequired,
+          owner: transitionForm.owner,
+          deadline: transitionForm.deadline,
+          evidence: transitionForm.evidence,
+          closure: transitionForm.toStatus === "closed" ? {
+            closureEvidence: transitionForm.closureEvidence,
+            reviewOpinion: transitionForm.reviewOpinion,
+            reviewer: transitionForm.reviewer,
+            reviewedAt: transitionForm.reviewedAt,
+            closureDecision: transitionForm.closureDecision,
+            dependencyDisposition: transitionForm.dependencyDisposition,
+            residualRisk: transitionForm.residualRisk,
+            followUpAction: transitionForm.followUpAction,
+            followUpOwner: transitionForm.followUpOwner,
+            followUpDeadline: transitionForm.followUpDeadline,
+            lessonsLearned: transitionForm.lessonsLearned,
+          } : undefined,
+        }),
       });
       const data = await response.json() as { risk?: Risk; event?: RiskWorkflowEvent; warning?: string; error?: string; migrationHint?: string };
       if (!response.ok || !data.risk || !data.event) throw new Error([data.error, data.migrationHint].filter(Boolean).join("；") || "状态流转失败");
       setRisks(prev => prev.map(risk => risk.id === transitioningRisk.id || risk.riskCode === transitioningRisk.riskCode ? data.risk! : risk));
       setWorkflowEvents(prev => [data.event!, ...prev.filter(event => event.id !== data.event!.id)]);
+      if (data.risk.status === "closed") {
+        void fetch("/api/risk/closure", { cache: "no-store" })
+          .then(response => response.json())
+          .then((payload: { risk_closure?: RiskClosureDashboard }) => setRiskClosure(payload.risk_closure ?? null))
+          .catch(() => undefined);
+      }
       setTransitioningRisk(null);
       setMessage(data.warning || `风险已流转到「${statusLabels[data.risk.status]}」，并记录工作流动作。`);
     } catch (e: unknown) {
@@ -679,12 +755,13 @@ export default function RiskPage() {
       </header>
 
       <main style={{ flex: 1, padding: "32px", maxWidth: 1440, margin: "0 auto", width: "100%" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 16, marginBottom: 24 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 16, marginBottom: 24 }}>
           <StatCard label="风险总数" value={classified.total} sub="登记册总量" />
           <StatCard label="高风险" value={classified.high.length} color="#ef4444" sub="P×I ≥ 16" />
           <StatCard label="中风险" value={classified.medium.length} color="#f59e0b" sub="6 ≤ P×I < 16" />
           <StatCard label="待复核" value={overdueReviews} color="#8b5cf6" sub="复核日期已到期" />
           <StatCard label="应对缺口" value={responsePlanMissing} color="#ef4444" sub="缺责任人或应对计划" />
+          <StatCard label="关闭缺口" value={riskClosure?.summary.closureGaps ?? 0} color="#f59e0b" sub="缺证据或待关闭" />
         </div>
 
         {(message || error) && (
@@ -711,6 +788,7 @@ export default function RiskPage() {
             { key: "matrix", icon: "🎯", label: "P-I矩阵" },
             { key: "workflow", icon: "🔁", label: "工作流追踪" },
             { key: "response", icon: "🛡️", label: "应对跟踪" },
+            { key: "closure", icon: "🔒", label: "关闭证据" },
           ].map(tab => (
             <button
               key={tab.key}
@@ -1350,6 +1428,88 @@ export default function RiskPage() {
           </div>
         )}
 
+        {activeTab === "closure" && (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 420px", gap: 20 }}>
+            <div className="card">
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start", marginBottom: 16 }}>
+                <div>
+                  <div style={{ fontSize: "0.85rem", fontWeight: 800, color: "var(--text2)", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.08em" }}>风险关闭证据门禁</div>
+                  <p style={{ color: "var(--text2)", fontSize: "0.82rem", lineHeight: 1.7 }}>
+                    风险进入“已关闭”前必须提交关闭证据、复核意见、复核人、复核日期和依赖处置说明。系统不会自动关闭风险，所有关闭动作都写入工作流审计。
+                  </p>
+                </div>
+                <Link href="/risk/tracking" className="btn-secondary" style={{ textDecoration: "none" }}>进入跟踪页</Link>
+              </div>
+
+              {!riskClosure ? (
+                <div style={{ color: "var(--text2)", lineHeight: 1.7 }}>正在读取关闭证据包...</div>
+              ) : (
+                <>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 10, marginBottom: 16 }}>
+                    {[
+                      ["已关闭", riskClosure.summary.closedRisks],
+                      ["证据完整", riskClosure.summary.closedWithEvidence],
+                      ["关闭缺口", riskClosure.summary.closureGaps],
+                      ["待关闭", riskClosure.summary.readyForClosure],
+                      ["条件关闭", riskClosure.summary.conditionalClosures],
+                    ].map(([label, value]) => (
+                      <div key={label} style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 10, padding: 12 }}>
+                        <div style={{ color: "var(--text2)", fontSize: "0.74rem" }}>{label}</div>
+                        <strong>{value}</strong>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div style={{ display: "grid", gap: 12 }}>
+                    <div style={{ fontWeight: 800 }}>关闭缺口</div>
+                    {riskClosure.closureGaps.length === 0 ? (
+                      <div style={{ color: "var(--text2)", lineHeight: 1.7, padding: 14, border: "1px dashed var(--border)", borderRadius: 12 }}>
+                        当前没有关闭缺口。后续关闭风险仍需逐项提交证据和复核意见。
+                      </div>
+                    ) : riskClosure.closureGaps.map(item => (
+                      <article key={item.riskId} style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 12, padding: 14 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginBottom: 8 }}>
+                          <strong>{item.projectName}</strong>
+                          <StatusBadge status={item.status} />
+                        </div>
+                        <div style={{ color: "var(--text2)", fontSize: "0.78rem", lineHeight: 1.6 }}>{item.riskDescription}</div>
+                        <div style={{ marginTop: 8, color: "var(--amber)", fontSize: "0.76rem", lineHeight: 1.6 }}>{item.reason}</div>
+                        <div style={{ marginTop: 8, color: "var(--accent2)", fontSize: "0.76rem", lineHeight: 1.6 }}>{item.nextAction}</div>
+                      </article>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+
+            <div className="card">
+              <div style={{ fontSize: "0.85rem", fontWeight: 800, color: "var(--text2)", marginBottom: 14, textTransform: "uppercase", letterSpacing: "0.08em" }}>已形成关闭证据包</div>
+              {!riskClosure || riskClosure.closurePackages.length === 0 ? (
+                <div style={{ color: "var(--text2)", fontSize: "0.8rem", lineHeight: 1.7 }}>暂无结构化关闭证据包。</div>
+              ) : (
+                <div style={{ display: "grid", gap: 10 }}>
+                  {riskClosure.closurePackages.slice(0, 8).map(item => (
+                    <article key={item.riskId} style={{ padding: 12, border: "1px solid var(--border)", borderRadius: 10, background: "var(--surface2)" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 8 }}>
+                        <strong style={{ fontSize: "0.82rem" }}>{item.projectName}</strong>
+                        <span className={item.closureDecision === "conditional" ? "tag tag-amber" : "tag tag-green"}>{item.closureDecisionLabel}</span>
+                      </div>
+                      <div style={{ color: "var(--text2)", fontSize: "0.74rem", lineHeight: 1.6 }}>
+                        <div>证据：{item.closureEvidence}</div>
+                        <div>复核：{item.reviewer} · {item.reviewedAt}</div>
+                        <div>意见：{item.reviewOpinion}</div>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              )}
+              <div style={{ marginTop: 14, padding: 12, borderRadius: 10, background: "rgba(59,130,246,0.08)", color: "var(--text2)", fontSize: "0.74rem", lineHeight: 1.6 }}>
+                {riskClosure?.boundary || "关闭证据包必须由使用者提交并确认。"}
+              </div>
+            </div>
+          </div>
+        )}
+
         {activeTab === "response" && (
           <div style={{ display: "grid", gridTemplateColumns: "1fr 360px", gap: 20 }}>
             <div className="card">
@@ -1572,6 +1732,67 @@ export default function RiskPage() {
                 <label className="label">证据/备注</label>
                 <textarea className="input" rows={2} value={transitionForm.evidence} onChange={e => setTransitionForm(prev => ({ ...prev, evidence: e.target.value }))} />
               </div>
+              {transitionForm.toStatus === "closed" && (
+                <div style={{ gridColumn: "1 / -1", border: "1px solid rgba(16,185,129,0.28)", borderRadius: 12, padding: 14, background: "rgba(16,185,129,0.08)" }}>
+                  <div style={{ fontWeight: 800, marginBottom: 8 }}>关闭证据与复核意见</div>
+                  <div style={{ color: "var(--text2)", fontSize: "0.76rem", lineHeight: 1.6, marginBottom: 12 }}>
+                    关闭风险前必须提交证据和复核意见，并说明关联行动项、治理流程、回款/里程碑影响已处理或明确豁免。
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                    <div style={{ gridColumn: "1 / -1" }}>
+                      <label className="label">关闭证据 *</label>
+                      <textarea className="input" rows={2} value={transitionForm.closureEvidence} onChange={e => setTransitionForm(prev => ({ ...prev, closureEvidence: e.target.value }))} placeholder="验收单、缺陷关闭记录、回款确认、治理评审纪要、附件链接等" />
+                    </div>
+                    <div style={{ gridColumn: "1 / -1" }}>
+                      <label className="label">复核意见 *</label>
+                      <textarea className="input" rows={2} value={transitionForm.reviewOpinion} onChange={e => setTransitionForm(prev => ({ ...prev, reviewOpinion: e.target.value }))} placeholder="说明是否满足关闭条件、是否存在剩余风险、是否需要复盘或后续跟踪" />
+                    </div>
+                    <div>
+                      <label className="label">复核人 *</label>
+                      <input className="input" value={transitionForm.reviewer} onChange={e => setTransitionForm(prev => ({ ...prev, reviewer: e.target.value }))} />
+                    </div>
+                    <div>
+                      <label className="label">复核日期 *</label>
+                      <input className="input" type="date" value={transitionForm.reviewedAt} onChange={e => setTransitionForm(prev => ({ ...prev, reviewedAt: e.target.value }))} />
+                    </div>
+                    <div>
+                      <label className="label">关闭结论 *</label>
+                      <select className="input" value={transitionForm.closureDecision} onChange={e => setTransitionForm(prev => ({ ...prev, closureDecision: e.target.value as RiskClosureDecision }))}>
+                        <option value="approved">批准关闭</option>
+                        <option value="conditional">有条件关闭</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="label">剩余风险</label>
+                      <input className="input" value={transitionForm.residualRisk} onChange={e => setTransitionForm(prev => ({ ...prev, residualRisk: e.target.value }))} placeholder="无 / 转为运维风险 / 后续观察" />
+                    </div>
+                    <div style={{ gridColumn: "1 / -1" }}>
+                      <label className="label">依赖处置说明 *</label>
+                      <textarea className="input" rows={2} value={transitionForm.dependencyDisposition} onChange={e => setTransitionForm(prev => ({ ...prev, dependencyDisposition: e.target.value }))} placeholder="关联行动项、治理流程、回款/里程碑影响已处理，或说明豁免原因" />
+                    </div>
+                    {transitionForm.closureDecision === "conditional" && (
+                      <>
+                        <div style={{ gridColumn: "1 / -1" }}>
+                          <label className="label">后续动作 *</label>
+                          <input className="input" value={transitionForm.followUpAction} onChange={e => setTransitionForm(prev => ({ ...prev, followUpAction: e.target.value }))} placeholder="例如：继续跟踪首笔回款、沉淀复盘、转运维问题" />
+                        </div>
+                        <div>
+                          <label className="label">后续责任人 *</label>
+                          <input className="input" value={transitionForm.followUpOwner} onChange={e => setTransitionForm(prev => ({ ...prev, followUpOwner: e.target.value }))} />
+                        </div>
+                        <div>
+                          <label className="label">后续deadline *</label>
+                          <input className="input" type="date" value={transitionForm.followUpDeadline} onChange={e => setTransitionForm(prev => ({ ...prev, followUpDeadline: e.target.value }))} />
+                        </div>
+                      </>
+                    )}
+                    <div style={{ gridColumn: "1 / -1" }}>
+                      <label className="label">经验教训/复盘要点</label>
+                      <textarea className="input" rows={2} value={transitionForm.lessonsLearned} onChange={e => setTransitionForm(prev => ({ ...prev, lessonsLearned: e.target.value }))} placeholder="关闭后沉淀到项目复盘或组织过程资产的内容" />
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
             {error && <div style={{ marginTop: 16, color: "var(--red)", fontSize: "0.82rem" }}>{error}</div>}
