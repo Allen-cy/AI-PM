@@ -7,6 +7,7 @@ import { persistAiEvidence } from "@/features/ai/evidence-repository";
 import { withAuditResult } from "@/features/ai/evidence";
 import { buildRiskClosureDashboard } from "@/features/risk/closure";
 import { buildRiskIntegrationDashboard } from "@/features/risk/integration";
+import { buildRiskRetrospectiveDashboard } from "@/features/risk/retrospective";
 import { buildRiskSensitivityImpactDashboard } from "@/features/risk/sensitivity-impact";
 import { filterDashboardByProjectAccess, projectAccessMode } from "@/features/security/authorization";
 import { loadProjectAccessGrantsForUser, writeOperationAudit } from "@/features/security/repository";
@@ -148,6 +149,7 @@ export async function POST(request: Request): Promise<Response> {
   });
   const riskSensitivityImpact = buildRiskSensitivityImpactDashboard(dashboard);
   const riskClosure = buildRiskClosureDashboard(riskResult.risks, riskResult.events);
+  const riskRetrospective = buildRiskRetrospectiveDashboard(riskResult.risks, riskResult.events, riskClosure);
   const context: ReportFactoryContext = {
     dashboard,
     finance,
@@ -158,6 +160,7 @@ export async function POST(request: Request): Promise<Response> {
     riskIntegration,
     riskSensitivityImpact,
     riskClosure,
+    riskRetrospective,
   };
   const dataPackage = buildReportFactoryPackage(body, context);
   const actionItems = actionItemsFor(body, context);

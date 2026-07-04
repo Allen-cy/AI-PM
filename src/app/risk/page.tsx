@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import type { AiEvidence, AiSuggestedAction } from "@/features/ai/evidence";
 import type { RiskClosureDashboard, RiskClosureDecision } from "@/features/risk/closure";
+import type { RiskRetrospectiveDashboard } from "@/features/risk/retrospective";
 import {
   type LinkedModule,
   type Risk,
@@ -33,7 +34,7 @@ import {
   statusOrder,
 } from "@/lib/risk";
 
-type ActiveTab = "overview" | "integration" | "list" | "checklist" | "matrix" | "workflow" | "response" | "closure";
+type ActiveTab = "overview" | "integration" | "list" | "checklist" | "matrix" | "workflow" | "response" | "closure" | "retrospective";
 
 type RiskForm = Omit<Risk, "id" | "piScore" | "priorityScore" | "createdAt">;
 
@@ -150,6 +151,18 @@ function dateByOffset(days: number): string {
   const date = new Date();
   date.setUTCDate(date.getUTCDate() + days);
   return date.toISOString().slice(0, 10);
+}
+
+function downloadText(filename: string, content: string) {
+  const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
 }
 
 function defaultForm(): RiskForm {
@@ -363,6 +376,7 @@ export default function RiskPage() {
   const [riskIntegration, setRiskIntegration] = useState<RiskIntegration | null>(null);
   const [riskEscalation, setRiskEscalation] = useState<RiskEscalationDraftDashboard | null>(null);
   const [riskClosure, setRiskClosure] = useState<RiskClosureDashboard | null>(null);
+  const [riskRetrospective, setRiskRetrospective] = useState<RiskRetrospectiveDashboard | null>(null);
   const [confirmingEscalationDraft, setConfirmingEscalationDraft] = useState<string | null>(null);
   const [confirmedEscalationDrafts, setConfirmedEscalationDrafts] = useState<Set<string>>(() => new Set());
   const [savingEvidenceAction, setSavingEvidenceAction] = useState<string | null>(null);
@@ -380,20 +394,23 @@ export default function RiskPage() {
         const response = await fetch("/api/risk", { cache: "no-store" });
         const data = await response.json() as { risks?: Risk[]; events?: RiskWorkflowEvent[]; warning?: string; error?: string; migrationHint?: string };
         if (!response.ok) throw new Error([data.error, data.migrationHint].filter(Boolean).join("；") || "风险登记册读取失败");
-        const [integrationResponse, escalationResponse, closureResponse] = await Promise.all([
+        const [integrationResponse, escalationResponse, closureResponse, retrospectiveResponse] = await Promise.all([
           fetch("/api/risk/integration", { cache: "no-store" }),
           fetch("/api/risk/escalation-drafts", { cache: "no-store" }),
           fetch("/api/risk/closure", { cache: "no-store" }),
+          fetch("/api/risk/retrospective", { cache: "no-store" }),
         ]);
         const integrationData = await integrationResponse.json().catch(() => ({})) as { risk_integration?: RiskIntegration };
         const escalationData = await escalationResponse.json().catch(() => ({})) as { risk_escalation?: RiskEscalationDraftDashboard };
         const closureData = await closureResponse.json().catch(() => ({})) as { risk_closure?: RiskClosureDashboard };
+        const retrospectiveData = await retrospectiveResponse.json().catch(() => ({})) as { risk_retrospective?: RiskRetrospectiveDashboard };
         if (cancelled) return;
         setRisks(Array.isArray(data.risks) ? data.risks : []);
         setWorkflowEvents(Array.isArray(data.events) ? data.events : []);
         setRiskIntegration(integrationData.risk_integration ?? null);
         setRiskEscalation(escalationData.risk_escalation ?? null);
         setRiskClosure(closureData.risk_closure ?? null);
+        setRiskRetrospective(retrospectiveData.risk_retrospective ?? null);
         setMessage(data.warning || "");
       } catch (e: unknown) {
         if (cancelled) return;
@@ -589,9 +606,16 @@ export default function RiskPage() {
       setRisks(prev => prev.map(risk => risk.id === transitioningRisk.id || risk.riskCode === transitioningRisk.riskCode ? data.risk! : risk));
       setWorkflowEvents(prev => [data.event!, ...prev.filter(event => event.id !== data.event!.id)]);
       if (data.risk.status === "closed") {
-        void fetch("/api/risk/closure", { cache: "no-store" })
-          .then(response => response.json())
-          .then((payload: { risk_closure?: RiskClosureDashboard }) => setRiskClosure(payload.risk_closure ?? null))
+        void Promise.all([
+          fetch("/api/risk/closure", { cache: "no-store" }),
+          fetch("/api/risk/retrospective", { cache: "no-store" }),
+        ])
+          .then(async ([closureResponse, retrospectiveResponse]) => {
+            const closurePayload = await closureResponse.json().catch(() => ({})) as { risk_closure?: RiskClosureDashboard };
+            const retrospectivePayload = await retrospectiveResponse.json().catch(() => ({})) as { risk_retrospective?: RiskRetrospectiveDashboard };
+            setRiskClosure(closurePayload.risk_closure ?? null);
+            setRiskRetrospective(retrospectivePayload.risk_retrospective ?? null);
+          })
           .catch(() => undefined);
       }
       setTransitioningRisk(null);
@@ -789,6 +813,7 @@ export default function RiskPage() {
             { key: "workflow", icon: "🔁", label: "工作流追踪" },
             { key: "response", icon: "🛡️", label: "应对跟踪" },
             { key: "closure", icon: "🔒", label: "关闭证据" },
+            { key: "retrospective", icon: "📚", label: "复盘资产" },
           ].map(tab => (
             <button
               key={tab.key}
@@ -1505,6 +1530,117 @@ export default function RiskPage() {
               )}
               <div style={{ marginTop: 14, padding: 12, borderRadius: 10, background: "rgba(59,130,246,0.08)", color: "var(--text2)", fontSize: "0.74rem", lineHeight: 1.6 }}>
                 {riskClosure?.boundary || "关闭证据包必须由使用者提交并确认。"}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === "retrospective" && (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 420px", gap: 20 }}>
+            <div className="card">
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start", marginBottom: 16 }}>
+                <div>
+                  <div style={{ fontSize: "0.85rem", fontWeight: 800, color: "var(--text2)", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.08em" }}>风险复盘与组织过程资产</div>
+                  <p style={{ color: "var(--text2)", fontSize: "0.82rem", lineHeight: 1.7 }}>
+                    关闭后的风险不会停在“已关闭”。系统会基于关闭证据、复核意见和经验教训生成复盘知识卡、早期预警规则和待补复盘清单，供后续同类项目复用。
+                  </p>
+                </div>
+                <button
+                  className="btn-primary"
+                  onClick={() => downloadText("风险复盘清单与组织过程资产.md", riskRetrospective?.markdown || "# 风险复盘清单\n\n暂无风险复盘资产。")}
+                >
+                  下载复盘清单
+                </button>
+              </div>
+
+              {!riskRetrospective ? (
+                <div style={{ color: "var(--text2)", lineHeight: 1.7 }}>正在读取风险复盘资产包...</div>
+              ) : (
+                <>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 10, marginBottom: 16 }}>
+                    {[
+                      ["已关闭", riskRetrospective.summary.closedRisks],
+                      ["可复盘", riskRetrospective.summary.retrospectiveCandidates],
+                      ["高风险复盘", riskRetrospective.summary.highRiskRetrospectives],
+                      ["知识卡片", riskRetrospective.summary.knowledgeCards],
+                      ["预警规则", riskRetrospective.summary.warningRules],
+                      ["待补复盘", riskRetrospective.summary.missingLessons],
+                    ].map(([label, value]) => (
+                      <div key={label} style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 10, padding: 12 }}>
+                        <div style={{ color: "var(--text2)", fontSize: "0.74rem" }}>{label}</div>
+                        <strong>{value}</strong>
+                      </div>
+                    ))}
+                  </div>
+
+                  {riskRetrospective.knowledgeCards.length === 0 ? (
+                    <div style={{ color: "var(--text2)", lineHeight: 1.7, padding: 14, border: "1px dashed var(--border)", borderRadius: 12 }}>
+                      暂无可沉淀的复盘知识卡。关闭风险时补齐关闭证据、复核意见和经验教训后会自动出现在这里。
+                    </div>
+                  ) : (
+                    <div style={{ display: "grid", gap: 12 }}>
+                      {riskRetrospective.knowledgeCards.map(card => (
+                        <article key={card.id} style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 14, padding: 16 }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginBottom: 8 }}>
+                            <div>
+                              <strong>{card.title}</strong>
+                              <div style={{ marginTop: 4, color: "var(--text2)", fontSize: "0.74rem" }}>{card.category} · {card.impactArea} · {card.severity === "high" ? "高风险" : card.severity === "medium" ? "中风险" : "低风险"}</div>
+                            </div>
+                            <span className={card.severity === "high" ? "tag tag-red" : card.severity === "medium" ? "tag tag-amber" : "tag tag-green"}>{card.severity.toUpperCase()}</span>
+                          </div>
+                          <div style={{ color: "var(--text2)", fontSize: "0.78rem", lineHeight: 1.7 }}>
+                            <div><strong style={{ color: "var(--text)" }}>触发器：</strong>{card.trigger}</div>
+                            <div><strong style={{ color: "var(--text)" }}>有效应对：</strong>{card.effectiveResponse}</div>
+                            <div><strong style={{ color: "var(--text)" }}>经验教训：</strong>{card.lessonLearned}</div>
+                            <div><strong style={{ color: "var(--text)" }}>可复用做法：</strong>{card.reusablePractice}</div>
+                          </div>
+                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 10 }}>
+                            {card.tags.map(tag => <span key={tag} className="tag tag-purple">{tag}</span>)}
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+
+            <div className="card">
+              <div style={{ fontSize: "0.85rem", fontWeight: 800, color: "var(--text2)", marginBottom: 14, textTransform: "uppercase", letterSpacing: "0.08em" }}>预警规则与待补复盘</div>
+              {!riskRetrospective ? (
+                <div style={{ color: "var(--text2)", fontSize: "0.8rem", lineHeight: 1.7 }}>暂无复盘资产包。</div>
+              ) : (
+                <div style={{ display: "grid", gap: 14 }}>
+                  <div>
+                    <div style={{ fontWeight: 800, marginBottom: 8 }}>早期预警规则</div>
+                    {riskRetrospective.earlyWarningRules.length === 0 ? (
+                      <div style={{ color: "var(--text2)", fontSize: "0.78rem", lineHeight: 1.7 }}>暂无预警规则。</div>
+                    ) : riskRetrospective.earlyWarningRules.slice(0, 8).map(rule => (
+                      <article key={rule.id} style={{ padding: 12, border: "1px solid var(--border)", borderRadius: 10, background: "var(--surface2)", marginBottom: 8 }}>
+                        <div style={{ fontWeight: 800, fontSize: "0.82rem", marginBottom: 6 }}>{rule.title}</div>
+                        <div style={{ color: "var(--text2)", fontSize: "0.74rem", lineHeight: 1.6 }}>{rule.rule}</div>
+                        <div style={{ marginTop: 6, color: "var(--accent2)", fontSize: "0.72rem" }}>建议责任人：{rule.suggestedOwner}</div>
+                      </article>
+                    ))}
+                  </div>
+
+                  <div>
+                    <div style={{ fontWeight: 800, marginBottom: 8 }}>待补复盘事项</div>
+                    {riskRetrospective.missingLessons.length === 0 ? (
+                      <div style={{ color: "var(--text2)", fontSize: "0.78rem", lineHeight: 1.7 }}>当前没有待补复盘事项。</div>
+                    ) : riskRetrospective.missingLessons.slice(0, 8).map(item => (
+                      <article key={`${item.riskId}-${item.reason}`} style={{ padding: 12, border: "1px solid rgba(245,158,11,0.28)", borderRadius: 10, background: "rgba(245,158,11,0.08)", marginBottom: 8 }}>
+                        <div style={{ fontWeight: 800, fontSize: "0.82rem", marginBottom: 6 }}>{item.projectName}</div>
+                        <div style={{ color: "var(--text2)", fontSize: "0.74rem", lineHeight: 1.6 }}>{item.riskDescription}</div>
+                        <div style={{ marginTop: 6, color: "var(--amber)", fontSize: "0.72rem", lineHeight: 1.6 }}>{item.reason}</div>
+                        <div style={{ marginTop: 6, color: "var(--accent2)", fontSize: "0.72rem", lineHeight: 1.6 }}>{item.nextAction}</div>
+                      </article>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <div style={{ marginTop: 14, padding: 12, borderRadius: 10, background: "rgba(59,130,246,0.08)", color: "var(--text2)", fontSize: "0.74rem", lineHeight: 1.6 }}>
+                {riskRetrospective?.boundary || "风险复盘资产必须来自已关闭风险证据包。"}
               </div>
             </div>
           </div>

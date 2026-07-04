@@ -60,6 +60,7 @@ import {
   buildRiskClosurePackage,
   validateRiskClosureReview,
 } from '../src/features/risk/closure.ts';
+import { buildRiskRetrospectiveDashboard } from '../src/features/risk/retrospective.ts';
 import {
   buildReportEvidence,
   buildReportFactoryPackage,
@@ -732,6 +733,7 @@ test('risk sensitivity impact is discoverable from api dashboard and sensitivity
   const sensitivityPageSource = readFileSync(new URL('../src/app/risk/sensitivity/page.tsx', import.meta.url), 'utf8');
   const reportRouteSource = readFileSync(new URL('../src/app/api/reports/route.ts', import.meta.url), 'utf8');
   const closureApiSource = readFileSync(new URL('../src/app/api/risk/closure/route.ts', import.meta.url), 'utf8');
+  const retrospectiveApiSource = readFileSync(new URL('../src/app/api/risk/retrospective/route.ts', import.meta.url), 'utf8');
   const riskPageSource = readFileSync(new URL('../src/app/risk/page.tsx', import.meta.url), 'utf8');
   const trackingPageSource = readFileSync(new URL('../src/app/risk/tracking/page.tsx', import.meta.url), 'utf8');
 
@@ -742,8 +744,12 @@ test('risk sensitivity impact is discoverable from api dashboard and sensitivity
   assert.match(sensitivityPageSource, /\/api\/risk\/sensitivity-impact/);
   assert.match(reportRouteSource, /riskSensitivityImpact/);
   assert.match(closureApiSource, /buildRiskClosureDashboard/);
+  assert.match(retrospectiveApiSource, /buildRiskRetrospectiveDashboard/);
   assert.match(riskPageSource, /关闭证据/);
   assert.match(riskPageSource, /\/api\/risk\/closure/);
+  assert.match(riskPageSource, /复盘资产/);
+  assert.match(riskPageSource, /\/api\/risk\/retrospective/);
+  assert.match(reportRouteSource, /riskRetrospective/);
   assert.match(trackingPageSource, /关闭证据与复核意见/);
 });
 
@@ -870,6 +876,81 @@ test('risk closure dashboard exposes evidence gaps and report facts', () => {
   assert.equal(dashboard.summary.closureGaps, 1);
   assert.equal(dashboard.reportFacts.some(item => item.includes('风险关闭')), true);
   assert.equal(dashboard.closureGaps[0].nextAction.includes('提交关闭证据'), true);
+});
+
+test('risk retrospective dashboard turns closed risks into knowledge cards warning rules and markdown', () => {
+  const risks: Risk[] = [
+    {
+      id: 'R-RETRO-1',
+      riskCode: 'R-RETRO-1',
+      projectName: '复盘沉淀项目',
+      description: '验收阻塞导致回款延期',
+      category: '财务',
+      stage: '结项',
+      source: '风险登记册',
+      impactArea: '回款',
+      probability: 4,
+      impact: 5,
+      urgency: 5,
+      piScore: 20,
+      priorityScore: 100,
+      status: 'closed',
+      responseStrategyType: '上报',
+      responseStrategy: '升级PMO协调验收和付款路径',
+      preventiveAction: '提前冻结验收材料和付款条件',
+      contingencyPlan: '必要时发起风险升级评审',
+      trigger: '客户验收签字依赖缺陷修复和付款材料确认。',
+      trackingMethod: '复盘会',
+      owner: '项目经理',
+      dueDate: '2026-07-04',
+      nextReviewDate: '2026-07-03',
+      closingCriteria: '验收签字并确认付款计划',
+      linkedModule: '合同回款',
+      evidence: '关闭证据：验收单与付款计划链接\n复核意见：同意关闭但首笔回款继续跟踪\n复核人：PMO\n复核日期：2026-07-04\n依赖处置：治理流程已完成，回款动作转经营提醒\n经验教训：提前冻结验收标准、付款条件和缺陷关闭口径。',
+      createdAt: '2026-07-01',
+    },
+    {
+      id: 'R-RETRO-2',
+      riskCode: 'R-RETRO-2',
+      projectName: '待补复盘项目',
+      description: '质量缺陷关闭后缺少经验教训',
+      category: '质量',
+      stage: '结项',
+      source: '风险登记册',
+      impactArea: '质量',
+      probability: 3,
+      impact: 4,
+      urgency: 4,
+      piScore: 12,
+      priorityScore: 48,
+      status: 'closed',
+      responseStrategyType: '缓解',
+      responseStrategy: '补充回归测试',
+      preventiveAction: '增加测试准出检查',
+      contingencyPlan: '保留支持窗口',
+      trigger: '缺陷复发',
+      trackingMethod: '复盘会',
+      owner: '测试负责人',
+      dueDate: '2026-07-04',
+      nextReviewDate: '2026-07-03',
+      closingCriteria: '缺陷关闭并完成回归测试',
+      linkedModule: '质量',
+      evidence: '关闭证据：回归测试报告\n复核意见：同意关闭\n复核人：PMO\n复核日期：2026-07-04\n依赖处置：缺陷单已关闭',
+      createdAt: '2026-07-01',
+    },
+  ];
+  const closure = buildRiskClosureDashboard(risks, []);
+  const retrospective = buildRiskRetrospectiveDashboard(risks, [], closure);
+
+  assert.equal(retrospective.summary.closedRisks, 2);
+  assert.equal(retrospective.summary.knowledgeCards, 2);
+  assert.equal(retrospective.summary.warningRules, 2);
+  assert.equal(retrospective.summary.highRiskRetrospectives, 1);
+  assert.equal(retrospective.summary.missingLessons, 1);
+  assert.match(retrospective.knowledgeCards[0].earlyWarningRule, /下一次复核前/);
+  assert.match(retrospective.markdown, /风险复盘清单与组织过程资产/);
+  assert.equal(retrospective.reportFacts.some(item => item.includes('风险复盘资产')), true);
+  assert.equal(retrospective.missingLessons[0].nextAction.includes('补充触发器'), true);
 });
 
 test('field mapping diagnostics detect missing Chinese fields and aliases', () => {
@@ -1241,7 +1322,7 @@ test('report factory cites data sources and turns meeting minutes into actions',
     asOf: new Date('2026-07-02T00:00:00.000Z'),
   });
   const riskSensitivityImpact = buildRiskSensitivityImpactDashboard(dashboard);
-  const riskClosure = buildRiskClosureDashboard([
+  const closedReportRisks: Risk[] = [
     {
       id: 'R-RPT-CLOSED',
       riskCode: 'R-RPT-CLOSED',
@@ -1268,10 +1349,12 @@ test('report factory cites data sources and turns meeting minutes into actions',
       nextReviewDate: '2026-07-03',
       closingCriteria: '验收签字并确认付款计划',
       linkedModule: '合同回款',
-      evidence: '关闭证据：验收单与付款计划链接\n复核意见：同意关闭但首笔回款继续跟踪\n复核人：PMO\n复核日期：2026-07-04\n依赖处置：治理流程已完成，回款动作转经营提醒',
+      evidence: '关闭证据：验收单与付款计划链接\n复核意见：同意关闭但首笔回款继续跟踪\n复核人：PMO\n复核日期：2026-07-04\n依赖处置：治理流程已完成，回款动作转经营提醒\n经验教训：提前冻结验收标准、付款条件和缺陷关闭口径。',
       createdAt: '2026-07-01',
     },
-  ], []);
+  ];
+  const riskClosure = buildRiskClosureDashboard(closedReportRisks, []);
+  const riskRetrospective = buildRiskRetrospectiveDashboard(closedReportRisks, [], riskClosure);
   const request = {
     type: 'meeting' as const,
     projectName: '智慧校园一期',
@@ -1290,6 +1373,7 @@ test('report factory cites data sources and turns meeting minutes into actions',
     riskIntegration,
     riskSensitivityImpact,
     riskClosure,
+    riskRetrospective,
     governanceImpact: buildGovernanceImpactDashboard([{
       id: 'gov-rpt-1',
       workflowId: 'project-closure',
@@ -1318,11 +1402,13 @@ test('report factory cites data sources and turns meeting minutes into actions',
   assert.equal(dataPackage.dataSources.some(source => source.label === '风险联动包'), true);
   assert.equal(dataPackage.dataSources.some(source => source.label === '风险敏感性影响包'), true);
   assert.equal(dataPackage.dataSources.some(source => source.label === '风险关闭证据包'), true);
+  assert.equal(dataPackage.dataSources.some(source => source.label === '风险复盘资产包'), true);
   assert.equal(dataPackage.dataSources.some(source => source.label === '治理工作流与审批联动'), true);
   assert.equal(dataPackage.financeFacts.some(item => item.includes('验收阻塞回款')), true);
   assert.equal(dataPackage.riskFacts.some(item => item.includes('风险联动')), true);
   assert.equal(dataPackage.riskFacts.some(item => item.includes('敏感性分析')), true);
   assert.equal(dataPackage.riskFacts.some(item => item.includes('风险关闭')), true);
+  assert.equal(dataPackage.riskFacts.some(item => item.includes('风险复盘')), true);
   assert.equal(dataPackage.riskFacts.some(item => item.includes('治理联动')), true);
   assert.equal(actionItems.length, 2);
   assert.equal(actionItems[1].priority, 'P0');
@@ -1331,9 +1417,11 @@ test('report factory cites data sources and turns meeting minutes into actions',
   assert.equal(evidence.citations.includes('风险联动包'), true);
   assert.equal(evidence.citations.includes('风险敏感性影响包'), true);
   assert.equal(evidence.citations.includes('风险关闭证据包'), true);
+  assert.equal(evidence.citations.includes('风险复盘资产包'), true);
   assert.equal(evidence.citations.includes('治理工作流与审批联动'), true);
   assert.equal(evidence.basis.some(item => item.label === '敏感性分析依据'), true);
   assert.equal(evidence.basis.some(item => item.label === '风险关闭依据'), true);
+  assert.equal(evidence.basis.some(item => item.label === '风险复盘依据'), true);
   assert.equal(evidence.suggestedActions.length, 2);
   assert.match(markdown, /数据来源与生成边界/);
   assert.match(markdown, /补齐客户付款条件清单/);
