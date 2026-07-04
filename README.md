@@ -67,6 +67,10 @@ npm run build
 - 飞书端已建立8张业务表；公开项目记录API会等用户登录和授权模型完成后再开放。
 - 全仓历史 ESLint 基线仍有旧问题；V4新增/改动文件执行独立零错误门禁。
 
+## AI-PMO System V5.3.30
+
+V5.3.30 将 V5.3.29 的运行时“风险复盘资产包”升级为可确认、可发布、可撤回的组织过程资产：新增 `supabase-v5330-risk-retrospective-assets.sql`、`src/features/risk/retrospective-assets.ts`、`/api/risk/retrospective/assets` 和 `/api/risk/retrospective/recommendations`。`/risk` 的“复盘资产”页签现在支持把复盘知识卡确认为组织过程资产、发布到 RAG、从 RAG 撤回，并展示已确认资产库与同类项目预警推荐。RAG 查询和健康检查会动态读取已发布复盘资产，形成 `RISK-RETRO-*` 引用，不需要重建静态 corpus 即可让知识问答引用已发布风险复盘卡。本版本需要在 Supabase SQL Editor 执行 `supabase-v5330-risk-retrospective-assets.sql` 后才能保存/发布资产；脚本未执行时页面会提示，不影响风险复盘清单生成。
+
 ## AI-PMO System V5.3.29
 
 V5.3.29 将风险关闭后的信息继续沉淀为“风险复盘资产”：新增 `src/features/risk/retrospective.ts` 和 `/api/risk/retrospective`，基于已关闭风险的关闭证据、复核意见、触发器、应对动作和经验教训生成复盘知识卡、早期预警规则、待补复盘事项和可下载 Markdown 清单。`/risk` 新增“复盘资产”页签，展示复盘概览、知识卡、预警规则和待补复盘，并提供“下载复盘清单”入口。报告工厂新增“风险复盘资产包”数据源、风险事实和 AI 依据审计条目，周报/月报/会议纪要可引用复盘资产。本版本不新增 SQL，不自动写入知识库或飞书；AI 只整理和提炼，复盘结论仍需使用者在复盘会中确认。

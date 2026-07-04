@@ -66,6 +66,8 @@ export interface RagHealth {
   embedded_chunk_count: number;
   retrieval_mode: 'lexical-hybrid';
   generated_at: string;
+  dynamic_document_count?: number;
+  dynamic_warning?: string;
 }
 
 export interface RagService {

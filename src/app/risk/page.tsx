@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import type { AiEvidence, AiSuggestedAction } from "@/features/ai/evidence";
 import type { RiskClosureDashboard, RiskClosureDecision } from "@/features/risk/closure";
+import type { RiskRetrospectiveAssetRecord, RiskRetrospectiveRecommendation } from "@/features/risk/retrospective-assets";
 import type { RiskRetrospectiveDashboard } from "@/features/risk/retrospective";
 import {
   type LinkedModule,
@@ -377,6 +378,10 @@ export default function RiskPage() {
   const [riskEscalation, setRiskEscalation] = useState<RiskEscalationDraftDashboard | null>(null);
   const [riskClosure, setRiskClosure] = useState<RiskClosureDashboard | null>(null);
   const [riskRetrospective, setRiskRetrospective] = useState<RiskRetrospectiveDashboard | null>(null);
+  const [riskRetrospectiveAssets, setRiskRetrospectiveAssets] = useState<RiskRetrospectiveAssetRecord[]>([]);
+  const [riskRetrospectiveRecommendations, setRiskRetrospectiveRecommendations] = useState<RiskRetrospectiveRecommendation[]>([]);
+  const [retrospectiveAssetWarning, setRetrospectiveAssetWarning] = useState("");
+  const [savingRetrospectiveAsset, setSavingRetrospectiveAsset] = useState<string | null>(null);
   const [confirmingEscalationDraft, setConfirmingEscalationDraft] = useState<string | null>(null);
   const [confirmedEscalationDrafts, setConfirmedEscalationDrafts] = useState<Set<string>>(() => new Set());
   const [savingEvidenceAction, setSavingEvidenceAction] = useState<string | null>(null);
@@ -394,16 +399,20 @@ export default function RiskPage() {
         const response = await fetch("/api/risk", { cache: "no-store" });
         const data = await response.json() as { risks?: Risk[]; events?: RiskWorkflowEvent[]; warning?: string; error?: string; migrationHint?: string };
         if (!response.ok) throw new Error([data.error, data.migrationHint].filter(Boolean).join("；") || "风险登记册读取失败");
-        const [integrationResponse, escalationResponse, closureResponse, retrospectiveResponse] = await Promise.all([
+        const [integrationResponse, escalationResponse, closureResponse, retrospectiveResponse, retrospectiveAssetsResponse, retrospectiveRecommendationsResponse] = await Promise.all([
           fetch("/api/risk/integration", { cache: "no-store" }),
           fetch("/api/risk/escalation-drafts", { cache: "no-store" }),
           fetch("/api/risk/closure", { cache: "no-store" }),
           fetch("/api/risk/retrospective", { cache: "no-store" }),
+          fetch("/api/risk/retrospective/assets", { cache: "no-store" }),
+          fetch("/api/risk/retrospective/recommendations", { cache: "no-store" }),
         ]);
         const integrationData = await integrationResponse.json().catch(() => ({})) as { risk_integration?: RiskIntegration };
         const escalationData = await escalationResponse.json().catch(() => ({})) as { risk_escalation?: RiskEscalationDraftDashboard };
         const closureData = await closureResponse.json().catch(() => ({})) as { risk_closure?: RiskClosureDashboard };
         const retrospectiveData = await retrospectiveResponse.json().catch(() => ({})) as { risk_retrospective?: RiskRetrospectiveDashboard };
+        const retrospectiveAssetsData = await retrospectiveAssetsResponse.json().catch(() => ({})) as { assets?: RiskRetrospectiveAssetRecord[]; warning?: string };
+        const retrospectiveRecommendationsData = await retrospectiveRecommendationsResponse.json().catch(() => ({})) as { recommendations?: RiskRetrospectiveRecommendation[] };
         if (cancelled) return;
         setRisks(Array.isArray(data.risks) ? data.risks : []);
         setWorkflowEvents(Array.isArray(data.events) ? data.events : []);
@@ -411,6 +420,9 @@ export default function RiskPage() {
         setRiskEscalation(escalationData.risk_escalation ?? null);
         setRiskClosure(closureData.risk_closure ?? null);
         setRiskRetrospective(retrospectiveData.risk_retrospective ?? null);
+        setRiskRetrospectiveAssets(Array.isArray(retrospectiveAssetsData.assets) ? retrospectiveAssetsData.assets : []);
+        setRiskRetrospectiveRecommendations(Array.isArray(retrospectiveRecommendationsData.recommendations) ? retrospectiveRecommendationsData.recommendations : []);
+        setRetrospectiveAssetWarning(retrospectiveAssetsData.warning || "");
         setMessage(data.warning || "");
       } catch (e: unknown) {
         if (cancelled) return;
@@ -449,6 +461,13 @@ export default function RiskPage() {
     }
     return map;
   }, [workflowEvents]);
+  const retrospectiveAssetByRiskId = useMemo(() => {
+    const map = new Map<string, RiskRetrospectiveAssetRecord>();
+    for (const asset of riskRetrospectiveAssets) {
+      map.set(asset.sourceRiskId, asset);
+    }
+    return map;
+  }, [riskRetrospectiveAssets]);
 
   const handleSave = async () => {
     if (!formData.description.trim()) {
@@ -609,12 +628,19 @@ export default function RiskPage() {
         void Promise.all([
           fetch("/api/risk/closure", { cache: "no-store" }),
           fetch("/api/risk/retrospective", { cache: "no-store" }),
+          fetch("/api/risk/retrospective/assets", { cache: "no-store" }),
+          fetch("/api/risk/retrospective/recommendations", { cache: "no-store" }),
         ])
-          .then(async ([closureResponse, retrospectiveResponse]) => {
+          .then(async ([closureResponse, retrospectiveResponse, assetsResponse, recommendationsResponse]) => {
             const closurePayload = await closureResponse.json().catch(() => ({})) as { risk_closure?: RiskClosureDashboard };
             const retrospectivePayload = await retrospectiveResponse.json().catch(() => ({})) as { risk_retrospective?: RiskRetrospectiveDashboard };
+            const assetsPayload = await assetsResponse.json().catch(() => ({})) as { assets?: RiskRetrospectiveAssetRecord[]; warning?: string };
+            const recommendationsPayload = await recommendationsResponse.json().catch(() => ({})) as { recommendations?: RiskRetrospectiveRecommendation[] };
             setRiskClosure(closurePayload.risk_closure ?? null);
             setRiskRetrospective(retrospectivePayload.risk_retrospective ?? null);
+            setRiskRetrospectiveAssets(Array.isArray(assetsPayload.assets) ? assetsPayload.assets : []);
+            setRiskRetrospectiveRecommendations(Array.isArray(recommendationsPayload.recommendations) ? recommendationsPayload.recommendations : []);
+            setRetrospectiveAssetWarning(assetsPayload.warning || "");
           })
           .catch(() => undefined);
       }
@@ -624,6 +650,53 @@ export default function RiskPage() {
       setError(`状态流转失败：${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const refreshRetrospectiveAssets = async () => {
+    const [response, recommendationsResponse] = await Promise.all([
+      fetch("/api/risk/retrospective/assets", { cache: "no-store" }),
+      fetch("/api/risk/retrospective/recommendations", { cache: "no-store" }),
+    ]);
+    const payload = await response.json().catch(() => ({})) as { assets?: RiskRetrospectiveAssetRecord[]; warning?: string };
+    const recommendationsPayload = await recommendationsResponse.json().catch(() => ({})) as { recommendations?: RiskRetrospectiveRecommendation[] };
+    setRiskRetrospectiveAssets(Array.isArray(payload.assets) ? payload.assets : []);
+    setRiskRetrospectiveRecommendations(Array.isArray(recommendationsPayload.recommendations) ? recommendationsPayload.recommendations : []);
+    setRetrospectiveAssetWarning(payload.warning || "");
+  };
+
+  const mutateRetrospectiveAsset = async (input: {
+    action: "confirm" | "publish" | "archive" | "review";
+    card?: NonNullable<RiskRetrospectiveDashboard>["knowledgeCards"][number];
+    id?: string;
+    savingKey: string;
+  }) => {
+    setSavingRetrospectiveAsset(input.savingKey);
+    setError("");
+    setMessage("");
+    try {
+      const response = await fetch("/api/risk/retrospective/assets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: input.action, card: input.card, id: input.id }),
+      });
+      const payload = await response.json().catch(() => ({})) as { asset?: RiskRetrospectiveAssetRecord; warning?: string; error?: string; status?: string };
+      if (!response.ok || payload.status === "failed" || payload.status === "not_configured") {
+        throw new Error(payload.warning || payload.error || "风险复盘资产操作失败");
+      }
+      await refreshRetrospectiveAssets();
+      const actionLabel = input.action === "confirm"
+        ? "已确认为组织过程资产"
+        : input.action === "publish"
+          ? "已发布到 RAG 检索"
+          : input.action === "archive"
+            ? "已从 RAG 撤回"
+            : "已恢复为待发布";
+      setMessage(actionLabel);
+    } catch (e: unknown) {
+      setError(`风险复盘资产操作失败：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSavingRetrospectiveAsset(null);
     }
   };
 
@@ -1565,6 +1638,8 @@ export default function RiskPage() {
                       ["知识卡片", riskRetrospective.summary.knowledgeCards],
                       ["预警规则", riskRetrospective.summary.warningRules],
                       ["待补复盘", riskRetrospective.summary.missingLessons],
+                      ["已确认资产", riskRetrospectiveAssets.filter(asset => asset.status === "reviewed" || asset.status === "published").length],
+                      ["已发布RAG", riskRetrospectiveAssets.filter(asset => asset.status === "published").length],
                     ].map(([label, value]) => (
                       <div key={label} style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 10, padding: 12 }}>
                         <div style={{ color: "var(--text2)", fontSize: "0.74rem" }}>{label}</div>
@@ -1579,14 +1654,20 @@ export default function RiskPage() {
                     </div>
                   ) : (
                     <div style={{ display: "grid", gap: 12 }}>
-                      {riskRetrospective.knowledgeCards.map(card => (
+                      {riskRetrospective.knowledgeCards.map(card => {
+                        const asset = retrospectiveAssetByRiskId.get(card.sourceRiskId);
+                        const savingKey = asset?.id || card.sourceRiskId;
+                        return (
                         <article key={card.id} style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 14, padding: 16 }}>
                           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginBottom: 8 }}>
                             <div>
                               <strong>{card.title}</strong>
                               <div style={{ marginTop: 4, color: "var(--text2)", fontSize: "0.74rem" }}>{card.category} · {card.impactArea} · {card.severity === "high" ? "高风险" : card.severity === "medium" ? "中风险" : "低风险"}</div>
                             </div>
-                            <span className={card.severity === "high" ? "tag tag-red" : card.severity === "medium" ? "tag tag-amber" : "tag tag-green"}>{card.severity.toUpperCase()}</span>
+                            <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
+                              <span className={card.severity === "high" ? "tag tag-red" : card.severity === "medium" ? "tag tag-amber" : "tag tag-green"}>{card.severity.toUpperCase()}</span>
+                              {asset && <span className={asset.status === "published" ? "tag tag-green" : asset.status === "archived" ? "tag tag-amber" : "tag tag-purple"}>{asset.status === "published" ? "已发布RAG" : asset.status === "archived" ? "已撤回" : "已确认"}</span>}
+                            </div>
                           </div>
                           <div style={{ color: "var(--text2)", fontSize: "0.78rem", lineHeight: 1.7 }}>
                             <div><strong style={{ color: "var(--text)" }}>触发器：</strong>{card.trigger}</div>
@@ -1597,8 +1678,47 @@ export default function RiskPage() {
                           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 10 }}>
                             {card.tags.map(tag => <span key={tag} className="tag tag-purple">{tag}</span>)}
                           </div>
+                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
+                            {!asset && (
+                              <button
+                                className="btn-primary"
+                                disabled={savingRetrospectiveAsset === savingKey}
+                                onClick={() => mutateRetrospectiveAsset({ action: "confirm", card, savingKey })}
+                              >
+                                {savingRetrospectiveAsset === savingKey ? "保存中..." : "确认为组织过程资产"}
+                              </button>
+                            )}
+                            {asset?.status === "reviewed" && (
+                              <button
+                                className="btn-primary"
+                                disabled={savingRetrospectiveAsset === savingKey}
+                                onClick={() => mutateRetrospectiveAsset({ action: "publish", id: asset.id, savingKey })}
+                              >
+                                {savingRetrospectiveAsset === savingKey ? "发布中..." : "发布到RAG"}
+                              </button>
+                            )}
+                            {asset?.status === "published" && (
+                              <button
+                                className="btn-secondary"
+                                disabled={savingRetrospectiveAsset === savingKey}
+                                onClick={() => mutateRetrospectiveAsset({ action: "archive", id: asset.id, savingKey })}
+                              >
+                                {savingRetrospectiveAsset === savingKey ? "撤回中..." : "从RAG撤回"}
+                              </button>
+                            )}
+                            {asset?.status === "archived" && (
+                              <button
+                                className="btn-secondary"
+                                disabled={savingRetrospectiveAsset === savingKey}
+                                onClick={() => mutateRetrospectiveAsset({ action: "review", id: asset.id, savingKey })}
+                              >
+                                {savingRetrospectiveAsset === savingKey ? "恢复中..." : "恢复为待发布"}
+                              </button>
+                            )}
+                          </div>
                         </article>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </>
@@ -1607,10 +1727,56 @@ export default function RiskPage() {
 
             <div className="card">
               <div style={{ fontSize: "0.85rem", fontWeight: 800, color: "var(--text2)", marginBottom: 14, textTransform: "uppercase", letterSpacing: "0.08em" }}>预警规则与待补复盘</div>
+              {retrospectiveAssetWarning && (
+                <div style={{ marginBottom: 12, padding: 10, borderRadius: 10, background: "rgba(245,158,11,0.1)", color: "var(--amber)", fontSize: "0.74rem", lineHeight: 1.6 }}>
+                  {retrospectiveAssetWarning}
+                </div>
+              )}
               {!riskRetrospective ? (
                 <div style={{ color: "var(--text2)", fontSize: "0.8rem", lineHeight: 1.7 }}>暂无复盘资产包。</div>
               ) : (
                 <div style={{ display: "grid", gap: 14 }}>
+                  <div>
+                    <div style={{ fontWeight: 800, marginBottom: 8 }}>已确认资产库</div>
+                    {riskRetrospectiveAssets.length === 0 ? (
+                      <div style={{ color: "var(--text2)", fontSize: "0.78rem", lineHeight: 1.7 }}>暂无已确认资产。先在左侧确认知识卡，确认后可发布到 RAG。</div>
+                    ) : riskRetrospectiveAssets.slice(0, 8).map(asset => (
+                      <article key={asset.id} style={{ padding: 12, border: "1px solid var(--border)", borderRadius: 10, background: "var(--surface2)", marginBottom: 8 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 6 }}>
+                          <strong style={{ fontSize: "0.8rem" }}>{asset.title}</strong>
+                          <span className={asset.status === "published" ? "tag tag-green" : asset.status === "archived" ? "tag tag-amber" : "tag tag-purple"}>
+                            {asset.status === "published" ? "已发布" : asset.status === "archived" ? "已撤回" : "已确认"}
+                          </span>
+                        </div>
+                        <div style={{ color: "var(--text2)", fontSize: "0.72rem", lineHeight: 1.6 }}>
+                          <div>项目：{asset.projectName}</div>
+                          <div>确认：{asset.confirmedByName || asset.createdByName || "系统"} · {asset.confirmedAt?.slice(0, 10) || asset.createdAt?.slice(0, 10)}</div>
+                          {asset.publishedAt && <div>发布：{asset.publishedAt.slice(0, 10)}</div>}
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+
+                  <div>
+                    <div style={{ fontWeight: 800, marginBottom: 8 }}>同类项目预警推荐</div>
+                    {riskRetrospectiveRecommendations.length === 0 ? (
+                      <div style={{ color: "var(--text2)", fontSize: "0.78rem", lineHeight: 1.7 }}>暂无可推荐的历史复盘资产。发布资产到 RAG 后，系统会按当前未关闭风险的类别、影响领域和触发器匹配历史预警规则。</div>
+                    ) : riskRetrospectiveRecommendations.slice(0, 6).map(item => (
+                      <article key={item.id} style={{ padding: 12, border: "1px solid rgba(59,130,246,0.24)", borderRadius: 10, background: "rgba(59,130,246,0.08)", marginBottom: 8 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 6 }}>
+                          <strong style={{ fontSize: "0.8rem" }}>{item.projectName}</strong>
+                          <span className="tag tag-blue">匹配 {item.score}</span>
+                        </div>
+                        <div style={{ color: "var(--text2)", fontSize: "0.72rem", lineHeight: 1.6 }}>
+                          <div>当前风险：{item.currentRiskDescription}</div>
+                          <div>历史资产：{item.sourceAssetTitle} / {item.sourceProjectName}</div>
+                          <div>匹配原因：{item.matchReason}</div>
+                          <div style={{ marginTop: 6, color: "var(--accent2)" }}>建议预警：{item.recommendedWarningRule}</div>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+
                   <div>
                     <div style={{ fontWeight: 800, marginBottom: 8 }}>早期预警规则</div>
                     {riskRetrospective.earlyWarningRules.length === 0 ? (

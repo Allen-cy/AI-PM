@@ -596,6 +596,15 @@ V5.3.29 落地说明：
 - 对缺少明确经验教训的已关闭风险，系统会进入“待补复盘事项”，要求责任人补充触发器、有效动作、无效动作和下次预警阈值。
 - 本版本不新增数据库脚本，不自动写入飞书或知识库；复盘资产先作为运行时只读资产包和可下载成果，后续 V5.3.30 再进入知识库/RAG 持久化和同类项目预警推荐。
 
+V5.3.30 落地说明：
+
+- 新增 `supabase-v5330-risk-retrospective-assets.sql`，创建 `risk_retrospective_assets` 表，用于保存复盘资产、发布状态、适用范围、来源风险、版本、确认人、发布时间和撤回时间。
+- 新增 `src/features/risk/retrospective-assets.ts`、`/api/risk/retrospective/assets` 和 `/api/risk/retrospective/recommendations`，支持复盘知识卡确认、发布到 RAG、撤回、恢复待发布，以及同类项目预警推荐。
+- `/risk` 的“复盘资产”页签新增资产状态、确认/发布/撤回按钮、已确认资产库和同类项目预警推荐。
+- `/api/rag/query` 和 `/api/rag/health` 动态读取已发布风险复盘资产，RAG 回答可返回 `RISK-RETRO-*` 来源引用。
+- 本版本需要先在 Supabase 执行 `supabase-v5330-risk-retrospective-assets.sql` 后才能保存/发布资产；未执行时页面明确提示，不影响只读复盘资产包生成。
+- 动态 RAG 资产不改变静态 corpus 快照；长期回写 AI-PMO-SYS Markdown 知识页和同步审计进入 V5.3.31。
+
 V5.3.7 落地说明：
 
 - 新增 `/blueprint-v3/delivery-management`「项目全流程交付管理蓝图」子页面，将原附件业务流程图结构化为销售管理、项目管理、监控管理、成本管理和工具支撑五类泳道。

@@ -1,4 +1,5 @@
-import { getRagService } from '../../../../features/rag/provider.ts';
+import { queryRagWithAdditionalDocuments } from '../../../../features/rag/provider.ts';
+import { listPublishedRiskRetrospectiveRagDocuments } from '../../../../features/risk/retrospective-assets.ts';
 import { RagValidationError, validateRagQuery } from '../../../../features/rag/validation.ts';
 
 export const runtime = 'nodejs';
@@ -41,7 +42,8 @@ export async function POST(request: Request): Promise<Response> {
 
   try {
     const input = validateRagQuery(body);
-    const result = getRagService().query(input);
+    const dynamicDocuments = await listPublishedRiskRetrospectiveRagDocuments();
+    const result = queryRagWithAdditionalDocuments(input, dynamicDocuments.documents);
     result.trace_id = id;
     return Response.json(result, {
       status: 200,
