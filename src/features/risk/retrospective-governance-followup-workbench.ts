@@ -121,6 +121,37 @@ export interface RiskRetrospectiveGovernanceFollowupOwnerStat {
   evidenceGaps: number;
 }
 
+export interface RiskRetrospectiveGovernanceFollowupWeeklyTrend {
+  weekStart: string;
+  weekLabel: string;
+  created: number;
+  closed: number;
+  overdueOpen: number;
+  closedWithEvidence: number;
+  evidenceCompletenessRate: number;
+}
+
+export interface RiskRetrospectiveGovernanceFollowupReminderDraft {
+  id: string;
+  type: "overdue" | "waiting_acceptance" | "evidence_gap";
+  priority: "P0" | "P1" | "P2";
+  title: string;
+  ownerName: string;
+  dueDate: string;
+  assetTitle: string;
+  reason: string;
+  actionRequired: string;
+  confirmationRequired: true;
+  feishuMessage: string;
+}
+
+export interface RiskRetrospectiveGovernanceFollowupFeishuReminderDraft {
+  title: string;
+  message: string;
+  confirmationRequired: true;
+  target: "feishu_message";
+}
+
 export interface RiskRetrospectiveGovernanceFollowupOperationReport {
   filters: RiskRetrospectiveGovernanceFollowupOperationFilters;
   summary: {
@@ -145,6 +176,9 @@ export interface RiskRetrospectiveGovernanceFollowupOperationReport {
   priorityStats: Array<{ priority: RiskRetrospectiveGovernanceActionItemPriority; label: "P0" | "P1" | "P2"; count: number }>;
   feishuStats: Array<{ status: RiskRetrospectiveGovernanceFollowupFeishuSyncStatus; count: number }>;
   items: RiskRetrospectiveGovernanceFollowupOperationItem[];
+  weeklyTrend: RiskRetrospectiveGovernanceFollowupWeeklyTrend[];
+  reminderDrafts: RiskRetrospectiveGovernanceFollowupReminderDraft[];
+  feishuReminderDraft: RiskRetrospectiveGovernanceFollowupFeishuReminderDraft | null;
   reportFacts: string[];
   reportMarkdown: string;
   warning?: string;
@@ -162,6 +196,30 @@ function parseDateOnly(value: string): Date | null {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
   const parsed = new Date(`${value}T00:00:00+08:00`);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function parseDateTime(value: string | null | undefined): Date | null {
+  if (!value) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return parseDateOnly(value);
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function dateOnly(value: Date): string {
+  return value.toLocaleDateString("sv-SE", { timeZone: "Asia/Shanghai" });
+}
+
+function addDays(value: Date, days: number): Date {
+  const copy = new Date(value.getTime());
+  copy.setDate(copy.getDate() + days);
+  return copy;
+}
+
+function startOfWeekShanghai(value: Date): Date {
+  const local = new Date(`${dateOnly(value)}T00:00:00+08:00`);
+  const offset = (local.getDay() + 6) % 7;
+  local.setDate(local.getDate() - offset);
+  return local;
 }
 
 function daysLeft(value: string): number | null {
@@ -275,6 +333,111 @@ function markdownTable(rows: string[][]): string[] {
     `| ${header.map(() => "---").join(" |")} |`,
     ...body.map(row => `| ${row.map(cell => String(cell || "暂无").replace(/\|/g, "｜")).join(" |")} |`),
   ];
+}
+
+function buildWeeklyTrend(followups: RiskRetrospectiveGovernanceFollowupRecord[]): RiskRetrospectiveGovernanceFollowupWeeklyTrend[] {
+  const currentWeekStart = startOfWeekShanghai(todayShanghai());
+  return Array.from({ length: 6 }).map((_, index) => {
+    const weekStart = addDays(currentWeekStart, (index - 5) * 7);
+    const weekEnd = addDays(weekStart, 6);
+    const weekStartTime = weekStart.getTime();
+    const weekEndTime = addDays(weekEnd, 1).getTime();
+    const created = followups.filter(item => {
+      const parsed = parseDateTime(item.createdAt);
+      return parsed ? parsed.getTime() >= weekStartTime && parsed.getTime() < weekEndTime : false;
+    }).length;
+    const closedItems = followups.filter(item => {
+      const parsed = parseDateTime(item.closedAt);
+      return parsed ? parsed.getTime() >= weekStartTime && parsed.getTime() < weekEndTime : false;
+    });
+    const overdueOpen = followups.filter(item => {
+      if (item.status === "已关闭") return false;
+      const due = parseDateOnly(item.dueDate);
+      return due ? due.getTime() < addDays(weekEnd, 1).getTime() : false;
+    }).length;
+    const closedWithEvidence = closedItems.filter(item => Boolean(item.closureNote?.trim())).length;
+    return {
+      weekStart: dateOnly(weekStart),
+      weekLabel: `${dateOnly(weekStart).slice(5)}~${dateOnly(weekEnd).slice(5)}`,
+      created,
+      closed: closedItems.length,
+      overdueOpen,
+      closedWithEvidence,
+      evidenceCompletenessRate: evidenceCompletenessRate(closedWithEvidence, closedItems.length),
+    };
+  });
+}
+
+function reminderTypeLabel(type: RiskRetrospectiveGovernanceFollowupReminderDraft["type"]): string {
+  if (type === "overdue") return "逾期提醒";
+  if (type === "waiting_acceptance") return "待验收提醒";
+  return "证据缺口提醒";
+}
+
+function buildReminderDraft(
+  item: RiskRetrospectiveGovernanceFollowupOperationItem,
+  type: RiskRetrospectiveGovernanceFollowupReminderDraft["type"],
+): RiskRetrospectiveGovernanceFollowupReminderDraft {
+  const priority: "P0" | "P1" | "P2" = type === "overdue" || item.priorityLabel === "P0" ? "P0" : "P1";
+  const title = `[${reminderTypeLabel(type)}] ${item.assetTitle}`;
+  const feishuMessage = [
+    `【AI-PMO知识治理${reminderTypeLabel(type)}】${item.assetTitle}`,
+    `责任人：${item.ownerName}`,
+    `优先级：${priority}`,
+    `状态：${item.status}`,
+    `Deadline：${item.dueDate}`,
+    `原因：${item.reason}`,
+    `处理动作：${item.actionRequired}`,
+    `关闭标准：${item.closingCriteria}`,
+    "说明：该提醒由知识治理运营报表生成，发送前必须由用户显式确认。",
+  ].join("\n");
+  return {
+    id: `${type}-${item.id}`,
+    type,
+    priority,
+    title,
+    ownerName: item.ownerName,
+    dueDate: item.dueDate,
+    assetTitle: item.assetTitle,
+    reason: item.reason,
+    actionRequired: item.actionRequired,
+    confirmationRequired: true,
+    feishuMessage,
+  };
+}
+
+function buildReminderDrafts(items: RiskRetrospectiveGovernanceFollowupOperationItem[]): RiskRetrospectiveGovernanceFollowupReminderDraft[] {
+  const overdue = items
+    .filter(item => item.status !== "已关闭" && item.dueState === "overdue")
+    .map(item => buildReminderDraft(item, "overdue"));
+  const waitingAcceptance = items
+    .filter(item => item.status === "待验收" && item.dueState !== "overdue")
+    .map(item => buildReminderDraft(item, "waiting_acceptance"));
+  const evidenceGaps = items
+    .filter(item => item.evidenceGap)
+    .map(item => buildReminderDraft(item, "evidence_gap"));
+  return [...overdue, ...waitingAcceptance, ...evidenceGaps]
+    .sort((a, b) => WORKBENCH_PRIORITY_SCORE[b.priority] - WORKBENCH_PRIORITY_SCORE[a.priority] || a.dueDate.localeCompare(b.dueDate))
+    .slice(0, 20);
+}
+
+function buildFeishuReminderDraft(reportFacts: string[], reminderDrafts: RiskRetrospectiveGovernanceFollowupReminderDraft[]): RiskRetrospectiveGovernanceFollowupFeishuReminderDraft | null {
+  if (reminderDrafts.length === 0) return null;
+  const topReminders = reminderDrafts.slice(0, 5).map((item, index) => `${index + 1}. ${item.title}｜${item.ownerName}｜${item.dueDate}｜${item.actionRequired}`);
+  return {
+    title: "AI-PMO知识治理周运营提醒",
+    message: [
+      "【AI-PMO知识治理周运营提醒】",
+      ...reportFacts,
+      "",
+      "需处理提醒：",
+      ...topReminders,
+      "",
+      "请责任人在系统内补齐处理动作、关闭证据和验收结论。该消息由用户在系统中显式确认后发送。",
+    ].join("\n"),
+    confirmationRequired: true,
+    target: "feishu_message",
+  };
 }
 
 export function buildRiskRetrospectiveGovernanceFollowupWorkbench(input: {
@@ -456,12 +619,18 @@ export function buildRiskRetrospectiveGovernanceFollowupOperationReport(input: {
     .map(item => ({ priority: item.value, label: mapWorkbenchPriority(item.value), count: item.count }));
   const feishuStats = countBy(allItems, ["未同步", "待确认", "同步中", "已同步", "同步失败"] as const, item => item.feishuSyncStatus)
     .map(item => ({ status: item.value, count: item.count }));
+  const weeklyTrend = buildWeeklyTrend(input.followups);
+  const reminderDrafts = buildReminderDrafts(allItems);
+  const lastWeek = weeklyTrend[weeklyTrend.length - 1];
   const reportFacts = [
     `知识治理周运营：已保存${summary.total}项，未关闭${summary.open}项，已关闭${summary.closed}项，关闭率${summary.closureRate.toFixed(1)}%。`,
     `知识治理责任追踪：逾期未关闭${summary.overdueOpen}项，7天内到期${summary.dueSoonOpen}项，P0未关闭${summary.highPriorityOpen}项。`,
     `知识治理证据质量：已关闭${summary.closed}项中${summary.closedWithEvidence}项有关闭证据，证据完整率${summary.evidenceCompletenessRate.toFixed(1)}%，证据缺口${summary.evidenceGaps}项。`,
     `知识治理飞书联动：待确认写入飞书任务${summary.waitingFeishuConfirmation}项。`,
+    `知识治理趋势：本周新增${lastWeek?.created ?? 0}项、关闭${lastWeek?.closed ?? 0}项、周末口径逾期未关闭${lastWeek?.overdueOpen ?? 0}项。`,
+    `知识治理提醒：已生成${reminderDrafts.length}条需人工确认的自动提醒草稿，其中P0 ${reminderDrafts.filter(item => item.priority === "P0").length}条。`,
   ];
+  const feishuReminderDraft = buildFeishuReminderDraft(reportFacts, reminderDrafts);
   const reportMarkdown = [
     "# 知识治理待办周运营清单",
     "",
@@ -495,10 +664,31 @@ export function buildRiskRetrospectiveGovernanceFollowupOperationReport(input: {
       item.closureNote || (item.evidenceGap ? "缺证据" : "未关闭"),
     ])]),
     "",
-    "## 四、使用边界",
+    "## 四、趋势与自动提醒草稿",
+    "",
+    ...markdownTable([["周", "新增", "关闭", "周末逾期未关闭", "有证据关闭", "证据完整率"], ...weeklyTrend.map(item => [
+      item.weekLabel,
+      String(item.created),
+      String(item.closed),
+      String(item.overdueOpen),
+      String(item.closedWithEvidence),
+      `${item.evidenceCompletenessRate.toFixed(1)}%`,
+    ])]),
+    "",
+    ...markdownTable([["优先级", "类型", "标题", "责任人", "Deadline", "需确认"], ...reminderDrafts.slice(0, 20).map(item => [
+      item.priority,
+      reminderTypeLabel(item.type),
+      item.title,
+      item.ownerName,
+      item.dueDate,
+      item.confirmationRequired ? "是" : "否",
+    ])]),
+    "",
+    "## 五、使用边界",
     "",
     "- 本清单只统计已保存的风险复盘资产二次治理待办。",
     "- 逾期、证据缺口和飞书待确认均用于 PMO 周运营，不自动改变业务主数据。",
+    "- 自动提醒草稿必须由用户显式确认后才能发送到飞书，不自动外发。",
     "- 正式关闭仍应由责任人补充证据，并由 PMO 或授权角色复核。",
   ].join("\n");
 
@@ -510,6 +700,9 @@ export function buildRiskRetrospectiveGovernanceFollowupOperationReport(input: {
     priorityStats,
     feishuStats,
     items: filteredItems,
+    weeklyTrend,
+    reminderDrafts,
+    feishuReminderDraft,
     reportFacts,
     reportMarkdown,
     warning: input.warning,

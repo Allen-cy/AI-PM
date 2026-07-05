@@ -67,6 +67,10 @@ npm run build
 - 飞书端已建立8张业务表；公开项目记录API会等用户登录和授权模型完成后再开放。
 - 全仓历史 ESLint 基线仍有旧问题；V4新增/改动文件执行独立零错误门禁。
 
+## AI-PMO System V5.3.43
+
+V5.3.43 将知识治理运营从“当前快照和周清单”推进到“趋势与提醒”：`buildRiskRetrospectiveGovernanceFollowupOperationReport` 新增最近 6 周趋势、逾期/待验收/证据缺口自动提醒草稿和飞书周运营提醒草稿；`/risk` 的“知识治理待办运营报表”新增趋势卡片、自动提醒草稿和“确认发送飞书提醒”入口，发送前必须填写 `chat_id` 或 `open_id` 并二次确认；新增 `/api/risk/retrospective/assets/governance/followups/weekly-reminder`，只有 `confirm=true` 且提供接收对象时才调用飞书消息接口；`/workbench` 新增“知识治理运营提醒草稿”，并把提醒数量纳入今日优先动作。本版本不新增 SQL，继续复用 V5.3.38 待办表。
+
 ## AI-PMO System V5.3.42
 
 V5.3.42 将知识治理待办进一步升级为 PMO 可运营的周报与负责人追踪能力：`/api/risk/retrospective/assets/governance/followups` 新增 `operation_report` 和 `format=markdown` 导出，支持按责任人、状态、优先级、逾期/7天内/待验收/证据缺口/本周关闭、飞书同步状态筛选，并生成“知识治理待办周运营清单”。风险管理页新增“知识治理待办运营报表”，展示关闭率、逾期、P0未关闭、证据缺口、负责人追踪和筛选结果，并可一键导出 Markdown 周清单；PMO治理中心新增“知识治理运营”指标卡，展示关闭率、证据完整率、逾期未关闭和飞书待确认。本版本不新增 SQL，继续复用 V5.3.38 待办表。

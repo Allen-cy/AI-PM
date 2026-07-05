@@ -765,6 +765,7 @@ test('risk sensitivity impact is discoverable from api dashboard and sensitivity
   const retrospectiveGovernanceApiSource = readFileSync(new URL('../src/app/api/risk/retrospective/assets/governance/route.ts', import.meta.url), 'utf8');
   const retrospectiveGovernanceFollowupsApiSource = readFileSync(new URL('../src/app/api/risk/retrospective/assets/governance/followups/route.ts', import.meta.url), 'utf8');
   const retrospectiveGovernanceFollowupsFeishuApiSource = readFileSync(new URL('../src/app/api/risk/retrospective/assets/governance/followups/feishu-sync/route.ts', import.meta.url), 'utf8');
+  const retrospectiveGovernanceWeeklyReminderApiSource = readFileSync(new URL('../src/app/api/risk/retrospective/assets/governance/followups/weekly-reminder/route.ts', import.meta.url), 'utf8');
   const issueChangeRepositorySource = readFileSync(new URL('../src/features/issue-change/repository.ts', import.meta.url), 'utf8');
   const retrospectiveAssetsSql = readFileSync(new URL('../supabase-v5330-risk-retrospective-assets.sql', import.meta.url), 'utf8');
   const retrospectiveExportSql = readFileSync(new URL('../supabase-v5331-risk-retrospective-knowledge-sync.sql', import.meta.url), 'utf8');
@@ -773,6 +774,7 @@ test('risk sensitivity impact is discoverable from api dashboard and sensitivity
   const retrospectiveGovernanceFollowupsSql = readFileSync(new URL('../supabase-v5338-risk-retrospective-governance-followups.sql', import.meta.url), 'utf8');
   const ragQueryRouteSource = readFileSync(new URL('../src/app/api/rag/query/route.ts', import.meta.url), 'utf8');
   const riskPageSource = readFileSync(new URL('../src/app/risk/page.tsx', import.meta.url), 'utf8');
+  const workbenchPageSource = readFileSync(new URL('../src/app/workbench/page.tsx', import.meta.url), 'utf8');
   const trackingPageSource = readFileSync(new URL('../src/app/risk/tracking/page.tsx', import.meta.url), 'utf8');
 
   assert.match(apiSource, /buildRiskSensitivityImpactDashboard/);
@@ -800,6 +802,14 @@ test('risk sensitivity impact is discoverable from api dashboard and sensitivity
   assert.match(retrospectiveGovernanceFollowupsApiSource, /format.*markdown/);
   assert.match(retrospectiveGovernanceFollowupsFeishuApiSource, /FeishuActionClient/);
   assert.match(retrospectiveGovernanceFollowupsFeishuApiSource, /confirm/);
+  assert.match(retrospectiveGovernanceWeeklyReminderApiSource, /confirmation_required/);
+  assert.match(retrospectiveGovernanceWeeklyReminderApiSource, /sendTextMessage/);
+  assert.match(retrospectiveGovernanceWeeklyReminderApiSource, /confirm/);
+  assert.match(riskPageSource, /知识治理周趋势/);
+  assert.match(riskPageSource, /确认发送飞书提醒/);
+  assert.match(riskPageSource, /\/api\/risk\/retrospective\/assets\/governance\/followups\/weekly-reminder/);
+  assert.match(workbenchPageSource, /知识治理运营提醒草稿/);
+  assert.match(workbenchPageSource, /riskRetrospectiveGovernanceFollowupOperation/);
   assert.match(issueChangeRepositorySource, /risk-retro-governance-followup-/);
   assert.match(issueChangeRepositorySource, /transitionRiskRetrospectiveGovernanceFollowup/);
   assert.match(retrospectiveAssetsSql, /risk_retrospective_assets/);
@@ -1536,7 +1546,7 @@ test('operational workbench filters projects risks todos and reminders for curre
         reason: '治理后质量分仍低于70分',
         actionRequired: '补充经验教训、早期预警规则和适用范围',
         ownerName: '张三',
-        dueDate: '2026-07-06',
+        dueDate: '2020-01-01',
         priority: 'high',
         status: '待复核',
         closingCriteria: '质量分提升到70分以上，并形成可引用知识卡',
@@ -1571,7 +1581,12 @@ test('operational workbench filters projects risks todos and reminders for curre
   assert.equal(workbench.riskRetrospectiveGovernanceFollowups.summary.highPriority, 1);
   assert.equal(workbench.riskRetrospectiveGovernanceFollowups.summary.waitingFeishuConfirmation, 1);
   assert.equal(workbench.riskRetrospectiveGovernanceFollowups.workItems[0]?.actionDraft.sourceType, 'governance');
+  assert.equal(workbench.riskRetrospectiveGovernanceFollowupOperation.reminderDrafts.length, 1);
+  assert.equal(workbench.riskRetrospectiveGovernanceFollowupOperation.reminderDrafts[0]?.type, 'overdue');
+  assert.equal(workbench.riskRetrospectiveGovernanceFollowupOperation.feishuReminderDraft?.confirmationRequired, true);
   assert.equal(workbench.kpis.some(item => item.label === '知识治理待办' && item.value === '1'), true);
+  assert.equal(workbench.kpis.some(item => item.label === '知识治理提醒' && item.value === '1'), true);
+  assert.equal(workbench.actions.some(action => action.id === 'p3-risk-retro-governance-reminders'), true);
   assert.equal(workbench.actions.some(action => action.id === 'p3-risk-retro-governance-followups'), true);
   assert.match(workbench.aiSuggestions[0].basis, /任务1条/);
 });
@@ -1780,9 +1795,18 @@ test('risk retrospective governance followup operation report filters owners and
   assert.equal(report.summary.evidenceGaps, 1);
   assert.equal(report.ownerStats.find(item => item.ownerName === '张三')?.overdue, 1);
   assert.equal(report.items[0]?.id, 'ops-open-overdue');
+  assert.equal(report.weeklyTrend.length, 6);
+  assert.equal(report.weeklyTrend.some(item => item.created >= 1 || item.closed >= 1), true);
+  assert.equal(report.reminderDrafts.some(item => item.type === 'overdue' && item.confirmationRequired), true);
+  assert.equal(report.reminderDrafts.some(item => item.type === 'evidence_gap' && item.confirmationRequired), true);
+  assert.equal(report.feishuReminderDraft?.confirmationRequired, true);
+  assert.equal(report.feishuReminderDraft?.target, 'feishu_message');
   assert.equal(report.reportFacts.some(item => item.includes('知识治理周运营')), true);
+  assert.equal(report.reportFacts.some(item => item.includes('知识治理提醒')), true);
   assert.match(report.reportMarkdown, /知识治理待办周运营清单/);
   assert.match(report.reportMarkdown, /负责人追踪/);
+  assert.match(report.reportMarkdown, /趋势与自动提醒草稿/);
+  assert.match(report.reportMarkdown, /自动提醒草稿必须由用户显式确认/);
   assert.match(report.boundary, /周运营/);
 });
 

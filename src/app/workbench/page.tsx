@@ -76,6 +76,28 @@ type Workbench = {
     warning?: string;
     boundary: string;
   };
+  riskRetrospectiveGovernanceFollowupOperation?: {
+    reminderDrafts: Array<{
+      id: string;
+      type: "overdue" | "waiting_acceptance" | "evidence_gap";
+      priority: "P0" | "P1" | "P2";
+      title: string;
+      ownerName: string;
+      dueDate: string;
+      assetTitle: string;
+      actionRequired: string;
+      confirmationRequired: true;
+    }>;
+    weeklyTrend: Array<{
+      weekStart: string;
+      weekLabel: string;
+      created: number;
+      closed: number;
+      overdueOpen: number;
+      evidenceCompletenessRate: number;
+    }>;
+    feishuReminderDraft: { title: string; message: string; confirmationRequired: true; target: "feishu_message" } | null;
+  };
   evidence: {
     userScope: string;
     matchedBy: string[];
@@ -491,6 +513,7 @@ export default function WorkbenchPage() {
                   ["7天内", workbench.riskRetrospectiveGovernanceFollowups.summary.dueSoon],
                   ["P0", workbench.riskRetrospectiveGovernanceFollowups.summary.highPriority],
                   ["飞书待确认", workbench.riskRetrospectiveGovernanceFollowups.summary.waitingFeishuConfirmation],
+                  ["自动提醒", workbench.riskRetrospectiveGovernanceFollowupOperation?.reminderDrafts.length ?? 0],
                 ].map(([label, value]) => (
                   <div key={label} style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 10, padding: 12 }}>
                     <div style={{ color: "var(--text2)", fontSize: "0.76rem" }}>{label}</div>
@@ -498,6 +521,30 @@ export default function WorkbenchPage() {
                   </div>
                 ))}
               </div>
+              {(workbench.riskRetrospectiveGovernanceFollowupOperation?.reminderDrafts.length ?? 0) > 0 && (
+                <div style={{ border: "1px solid rgba(245,158,11,0.32)", background: "rgba(245,158,11,0.08)", borderRadius: 12, padding: 14, marginBottom: 12 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 8 }}>
+                    <strong>知识治理运营提醒草稿</strong>
+                    <Link href="/risk" className="btn-secondary" style={{ textDecoration: "none", padding: "7px 10px", fontSize: "0.76rem" }}>进入风险页确认发送</Link>
+                  </div>
+                  <div style={{ display: "grid", gap: 8 }}>
+                    {workbench.riskRetrospectiveGovernanceFollowupOperation?.reminderDrafts.slice(0, 3).map(item => (
+                      <div key={item.id} style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 10, padding: 10 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                          <strong style={{ fontSize: "0.8rem" }}>{item.title}</strong>
+                          <span className="tag" style={{ background: `${priorityColor[item.priority]}22`, color: priorityColor[item.priority] }}>{item.priority}</span>
+                        </div>
+                        <p style={{ color: "var(--text2)", fontSize: "0.78rem", lineHeight: 1.6, marginTop: 6 }}>
+                          {item.ownerName} · {item.dueDate} · {item.actionRequired}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                  <p style={{ color: "var(--text2)", fontSize: "0.74rem", lineHeight: 1.6, marginTop: 8 }}>
+                    这些提醒来自逾期、待验收和证据缺口；飞书外发必须在风险页显式确认。
+                  </p>
+                </div>
+              )}
               {workbench.riskRetrospectiveGovernanceFollowups.workItems.length === 0 ? (
                 <p style={{ color: "var(--text2)", lineHeight: 1.7 }}>
                   暂无已保存的知识治理待办。若“知识治理效果”中已有运行时待办，请先到风险管理页点击“保存待办”。

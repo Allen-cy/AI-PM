@@ -4,7 +4,9 @@ import { FeishuBaseClient } from "../feishu/client.ts";
 import type { FeishuConfig } from "../feishu/config.ts";
 import { deriveWorkbenchSummary, type HealthStatus, type WorkbenchSummary } from "../pmo-operating-system.ts";
 import {
+  buildRiskRetrospectiveGovernanceFollowupOperationReport,
   buildRiskRetrospectiveGovernanceFollowupWorkbench,
+  type RiskRetrospectiveGovernanceFollowupOperationReport,
   type RiskRetrospectiveGovernanceFollowupRecord,
   type RiskRetrospectiveGovernanceFollowupWorkbench,
 } from "../risk/retrospective-governance-followup-workbench.ts";
@@ -98,6 +100,7 @@ export interface OperationalWorkbench extends WorkbenchSummary {
   businessReminders: MyBusinessReminder[];
   riskIntegration: RiskIntegrationDashboard;
   riskRetrospectiveGovernanceFollowups: RiskRetrospectiveGovernanceFollowupWorkbench;
+  riskRetrospectiveGovernanceFollowupOperation: RiskRetrospectiveGovernanceFollowupOperationReport;
   evidence: WorkbenchEvidence;
 }
 
@@ -427,6 +430,7 @@ function buildOperationalActions(input: {
   todos: MyWorkbenchTodo[];
   reminders: MyBusinessReminder[];
   riskRetrospectiveGovernanceFollowups?: RiskRetrospectiveGovernanceFollowupWorkbench;
+  riskRetrospectiveGovernanceFollowupOperation?: RiskRetrospectiveGovernanceFollowupOperationReport;
 }): OperationalWorkbench["actions"] {
   const actions: OperationalWorkbench["actions"] = [];
   const overdueTodos = input.todos.filter(item => item.daysLeft !== null && item.daysLeft < 0);
@@ -434,6 +438,19 @@ function buildOperationalActions(input: {
   const duePayments = input.reminders.filter(item => item.daysLeft !== null && item.daysLeft <= 7);
   const unhealthyProjects = input.projects.filter(item => item.health === "error" || item.health === "warning");
   const governanceFollowups = input.riskRetrospectiveGovernanceFollowups;
+  const governanceReminderDrafts = input.riskRetrospectiveGovernanceFollowupOperation?.reminderDrafts ?? [];
+
+  if (governanceReminderDrafts.length > 0) {
+    actions.push({
+      id: "p3-risk-retro-governance-reminders",
+      priority: governanceReminderDrafts.some(item => item.priority === "P0") ? "P0" : "P1",
+      title: `确认 ${governanceReminderDrafts.length} 条知识治理运营提醒`,
+      owner: "PMO",
+      due: governanceReminderDrafts.some(item => item.type === "overdue") ? "今天" : "本周",
+      source: "知识治理待办运营报表",
+      action: "复核逾期、待验收和证据缺口，确认是否发送飞书周运营提醒或转统一行动项。",
+    });
+  }
 
   if (overdueTodos.length > 0) {
     actions.push({
@@ -559,6 +576,10 @@ function buildFallbackWorkbench(
     user,
     warning: riskRetrospectiveGovernanceFollowupsWarning,
   });
+  const followupOperation = buildRiskRetrospectiveGovernanceFollowupOperationReport({
+    followups: riskRetrospectiveGovernanceFollowups,
+    warning: riskRetrospectiveGovernanceFollowupsWarning,
+  });
   const knowledgeGovernanceAction = followupWorkbench.summary.myPending > 0
     ? [{
         id: "p3-risk-retro-governance-followups",
@@ -568,6 +589,17 @@ function buildFallbackWorkbench(
         due: followupWorkbench.summary.overdue > 0 ? "今天" : "本周",
         source: "风险复盘资产二次治理待办",
         action: "复核低效果治理动作，确认补充编辑、合并、撤回、重新发布或转统一行动项。",
+      }]
+    : [];
+  const knowledgeGovernanceReminderAction = followupOperation.reminderDrafts.length > 0
+    ? [{
+        id: "p3-risk-retro-governance-reminders",
+        priority: followupOperation.reminderDrafts.some(item => item.priority === "P0") ? "P0" as const : "P1" as const,
+        title: `确认 ${followupOperation.reminderDrafts.length} 条知识治理运营提醒`,
+        owner: "PMO" as const,
+        due: followupOperation.reminderDrafts.some(item => item.type === "overdue") ? "今天" : "本周",
+        source: "知识治理待办运营报表",
+        action: "复核逾期、待验收和证据缺口，确认是否发送飞书周运营提醒或转统一行动项。",
       }]
     : [];
   return {
@@ -580,14 +612,21 @@ function buildFallbackWorkbench(
         hint: followupWorkbench.warning || "来自已保存的风险复盘资产二次治理待办。",
         status: followupWorkbench.warning ? "warning" : followupWorkbench.summary.highPriority > 0 || followupWorkbench.summary.overdue > 0 ? "error" : followupWorkbench.summary.myPending > 0 ? "warning" : "ok",
       },
+      {
+        label: "知识治理提醒",
+        value: String(followupOperation.reminderDrafts.length),
+        hint: "来自逾期、待验收和证据缺口的自动提醒草稿。",
+        status: followupOperation.reminderDrafts.some(item => item.priority === "P0") ? "error" : followupOperation.reminderDrafts.length > 0 ? "warning" : "ok",
+      },
     ],
-    actions: [...knowledgeGovernanceAction, ...base.actions],
+    actions: [...knowledgeGovernanceReminderAction, ...knowledgeGovernanceAction, ...base.actions],
     myProjects: [],
     myRisks: [],
     todayTodos: [],
     businessReminders: [],
     riskIntegration: buildRiskIntegrationDashboard({ risks: [], dashboard: null }),
     riskRetrospectiveGovernanceFollowups: followupWorkbench,
+    riskRetrospectiveGovernanceFollowupOperation: followupOperation,
     evidence: {
       source: "missing",
       generatedAt: new Date().toISOString(),
@@ -675,6 +714,10 @@ export function buildOperationalWorkbench(input: {
     user: input.user,
     warning: input.riskRetrospectiveGovernanceFollowupsWarning,
   });
+  const riskRetrospectiveGovernanceFollowupOperation = buildRiskRetrospectiveGovernanceFollowupOperationReport({
+    followups: input.riskRetrospectiveGovernanceFollowups ?? [],
+    warning: input.riskRetrospectiveGovernanceFollowupsWarning,
+  });
   const base = deriveWorkbenchSummary(dashboard);
   const evidence: WorkbenchEvidence = {
     source: "feishu",
@@ -712,14 +755,23 @@ export function buildOperationalWorkbench(input: {
       { label: "重点风险", value: String(myRisks.filter(item => item.severity === "高").length), hint: "来自飞书风险登记册。", status: myRisks.some(item => item.severity === "高") ? "error" : myRisks.length > 0 ? "warning" : "ok" },
       { label: "经营提醒", value: String(businessReminders.length), hint: "来自回款表和项目台账应收字段。", status: businessReminders.some(item => item.daysLeft !== null && item.daysLeft < 0) ? "error" : businessReminders.length > 0 ? "warning" : "ok" },
       { label: "知识治理待办", value: String(riskRetrospectiveGovernanceFollowups.summary.myPending), hint: "来自已保存的风险复盘资产二次治理待办。", status: riskRetrospectiveGovernanceFollowups.summary.highPriority > 0 || riskRetrospectiveGovernanceFollowups.summary.overdue > 0 ? "error" : riskRetrospectiveGovernanceFollowups.summary.myPending > 0 ? "warning" : "ok" },
+      { label: "知识治理提醒", value: String(riskRetrospectiveGovernanceFollowupOperation.reminderDrafts.length), hint: "来自逾期、待验收和证据缺口的自动提醒草稿。", status: riskRetrospectiveGovernanceFollowupOperation.reminderDrafts.some(item => item.priority === "P0") ? "error" : riskRetrospectiveGovernanceFollowupOperation.reminderDrafts.length > 0 ? "warning" : "ok" },
     ],
-    actions: buildOperationalActions({ projects: myProjects, risks: myRisks, todos: todayTodos, reminders: businessReminders, riskRetrospectiveGovernanceFollowups }),
+    actions: buildOperationalActions({
+      projects: myProjects,
+      risks: myRisks,
+      todos: todayTodos,
+      reminders: businessReminders,
+      riskRetrospectiveGovernanceFollowups,
+      riskRetrospectiveGovernanceFollowupOperation,
+    }),
     myProjects,
     myRisks,
     todayTodos,
     businessReminders,
     riskIntegration,
     riskRetrospectiveGovernanceFollowups,
+    riskRetrospectiveGovernanceFollowupOperation,
     evidence,
     aiSuggestions: buildAiSuggestions({ projects: myProjects, risks: myRisks, todos: todayTodos, reminders: businessReminders, evidence }),
   };

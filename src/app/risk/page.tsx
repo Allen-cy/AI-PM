@@ -401,6 +401,9 @@ export default function RiskPage() {
   const [governanceFollowupDueFilter, setGovernanceFollowupDueFilter] = useState("all");
   const [governanceFollowupFeishuFilter, setGovernanceFollowupFeishuFilter] = useState("all");
   const [loadingGovernanceFollowupReport, setLoadingGovernanceFollowupReport] = useState(false);
+  const [governanceWeeklyReminderReceiveIdType, setGovernanceWeeklyReminderReceiveIdType] = useState<"chat_id" | "open_id">("chat_id");
+  const [governanceWeeklyReminderReceiveId, setGovernanceWeeklyReminderReceiveId] = useState("");
+  const [sendingGovernanceWeeklyReminder, setSendingGovernanceWeeklyReminder] = useState(false);
   const [retrospectiveAssetWarning, setRetrospectiveAssetWarning] = useState("");
   const [retrospectiveSyncWarning, setRetrospectiveSyncWarning] = useState("");
   const [retrospectiveGovernanceWarning, setRetrospectiveGovernanceWarning] = useState("");
@@ -835,6 +838,48 @@ export default function RiskPage() {
     }
     downloadText(`知识治理待办周运营清单-${new Date().toISOString().slice(0, 10)}.md`, riskRetrospectiveGovernanceFollowupOperationReport.reportMarkdown);
     setMessage("知识治理待办周运营清单已导出。");
+  };
+
+  const sendGovernanceFollowupWeeklyReminder = async () => {
+    const draft = riskRetrospectiveGovernanceFollowupOperationReport?.feishuReminderDraft;
+    if (!draft) {
+      setMessage("当前没有需要发送的知识治理运营提醒。");
+      return;
+    }
+    if (!governanceWeeklyReminderReceiveId.trim()) {
+      setError("请先填写飞书接收对象ID：群聊使用 chat_id，个人使用 open_id。");
+      return;
+    }
+    if (!window.confirm("确认发送知识治理周运营提醒到飞书？该动作会真实外发消息。")) return;
+    setSendingGovernanceWeeklyReminder(true);
+    setError("");
+    setMessage("");
+    try {
+      const response = await fetch("/api/risk/retrospective/assets/governance/followups/weekly-reminder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          confirm: true,
+          receiveIdType: governanceWeeklyReminderReceiveIdType,
+          receiveId: governanceWeeklyReminderReceiveId.trim(),
+          message: draft.message,
+        }),
+      });
+      const payload = await response.json().catch(() => ({})) as {
+        status?: string;
+        warning?: string;
+        operation_report?: RiskRetrospectiveGovernanceFollowupOperationReport;
+      };
+      if (!response.ok || payload.status !== "succeeded") {
+        throw new Error(payload.warning || "飞书提醒发送失败。");
+      }
+      if (payload.operation_report) setRiskRetrospectiveGovernanceFollowupOperationReport(payload.operation_report);
+      setMessage("知识治理周运营提醒已发送到飞书。");
+    } catch (e: unknown) {
+      setError(`知识治理周运营飞书提醒发送失败：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSendingGovernanceWeeklyReminder(false);
+    }
   };
 
   const mutateRetrospectiveAsset = async (input: {
@@ -2285,6 +2330,74 @@ export default function RiskPage() {
                               </div>
                             ))}
                           </div>
+                          {(riskRetrospectiveGovernanceFollowupOperationReport?.weeklyTrend.length ?? 0) > 0 && (
+                            <div style={{ marginBottom: 10, padding: 12, border: "1px solid rgba(99,102,241,0.22)", borderRadius: 12, background: "rgba(99,102,241,0.06)" }}>
+                              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 8 }}>
+                                <div>
+                                  <div style={{ fontWeight: 800, fontSize: "0.78rem" }}>知识治理周趋势</div>
+                                  <div style={{ color: "var(--text2)", fontSize: "0.68rem", lineHeight: 1.6 }}>
+                                    展示最近 6 周新增、关闭、逾期和证据完整率变化。
+                                  </div>
+                                </div>
+                                <span className="tag tag-blue">趋势只读</span>
+                              </div>
+                              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 8 }}>
+                                {riskRetrospectiveGovernanceFollowupOperationReport?.weeklyTrend.map(item => (
+                                  <div key={item.weekStart} style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 10, padding: 10 }}>
+                                    <strong style={{ fontSize: "0.72rem" }}>{item.weekLabel}</strong>
+                                    <div style={{ color: "var(--text2)", fontSize: "0.66rem", lineHeight: 1.6, marginTop: 6 }}>
+                                      新增 {item.created} · 关闭 {item.closed}<br />
+                                      逾期 {item.overdueOpen} · 证据 {item.evidenceCompletenessRate.toFixed(1)}%
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {(riskRetrospectiveGovernanceFollowupOperationReport?.reminderDrafts.length ?? 0) > 0 && (
+                            <div style={{ marginBottom: 10, padding: 12, border: "1px solid rgba(245,158,11,0.26)", borderRadius: 12, background: "rgba(245,158,11,0.07)" }}>
+                              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "flex-start", marginBottom: 10 }}>
+                                <div>
+                                  <div style={{ fontWeight: 800, fontSize: "0.78rem" }}>自动提醒草稿</div>
+                                  <div style={{ color: "var(--text2)", fontSize: "0.68rem", lineHeight: 1.6 }}>
+                                    由逾期、待验收、关闭证据缺口自动生成；发送到飞书前必须人工确认。
+                                  </div>
+                                </div>
+                                <span className="tag tag-amber">待确认 {riskRetrospectiveGovernanceFollowupOperationReport?.reminderDrafts.length ?? 0}</span>
+                              </div>
+                              <div style={{ display: "grid", gap: 8, marginBottom: 10 }}>
+                                {riskRetrospectiveGovernanceFollowupOperationReport?.reminderDrafts.slice(0, 4).map(item => (
+                                  <div key={item.id} style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 10, padding: 10 }}>
+                                    <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                                      <strong style={{ fontSize: "0.74rem" }}>{item.title}</strong>
+                                      <span className={item.priority === "P0" ? "tag tag-red" : "tag tag-amber"}>{item.priority}</span>
+                                    </div>
+                                    <div style={{ color: "var(--text2)", fontSize: "0.68rem", lineHeight: 1.6, marginTop: 6 }}>
+                                      责任人：{item.ownerName} · deadline：{item.dueDate} · 动作：{item.actionRequired}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                              <div style={{ display: "grid", gridTemplateColumns: "130px minmax(180px, 1fr) auto", gap: 8, alignItems: "center" }}>
+                                <select value={governanceWeeklyReminderReceiveIdType} onChange={event => setGovernanceWeeklyReminderReceiveIdType(event.target.value as "chat_id" | "open_id")} style={{ background: "var(--surface2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: 10, padding: "9px 10px" }}>
+                                  <option value="chat_id">群聊 chat_id</option>
+                                  <option value="open_id">个人 open_id</option>
+                                </select>
+                                <input
+                                  value={governanceWeeklyReminderReceiveId}
+                                  onChange={event => setGovernanceWeeklyReminderReceiveId(event.target.value)}
+                                  placeholder="填写飞书接收对象ID"
+                                  style={{ background: "var(--surface2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: 10, padding: "9px 10px" }}
+                                />
+                                <button className="btn-primary" disabled={sendingGovernanceWeeklyReminder || !riskRetrospectiveGovernanceFollowupOperationReport?.feishuReminderDraft} onClick={() => void sendGovernanceFollowupWeeklyReminder()}>
+                                  {sendingGovernanceWeeklyReminder ? "发送中..." : "确认发送飞书提醒"}
+                                </button>
+                              </div>
+                              <div style={{ color: "var(--text2)", fontSize: "0.66rem", lineHeight: 1.6, marginTop: 8 }}>
+                                如不确定接收对象ID，先在飞书开放平台或 lark-cli 中查询群 chat_id/open_id；系统不会自动选择收件人。
+                              </div>
+                            </div>
+                          )}
                           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 8, marginBottom: 10 }}>
                             <select value={governanceFollowupOwnerFilter} onChange={event => setGovernanceFollowupOwnerFilter(event.target.value)} style={{ background: "var(--surface2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: 10, padding: "9px 10px" }}>
                               <option value="">全部责任人</option>
