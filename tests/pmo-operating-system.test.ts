@@ -822,6 +822,8 @@ test('risk sensitivity impact is discoverable from api dashboard and sensitivity
   assert.match(riskPageSource, /知识治理效果/);
   assert.match(riskPageSource, /二次治理待办/);
   assert.match(riskPageSource, /保存待办/);
+  assert.match(riskPageSource, /知识治理待办运营报表/);
+  assert.match(riskPageSource, /导出周运营清单/);
   assert.match(riskPageSource, /确认写入飞书任务/);
   assert.match(riskPageSource, /下载治理报告/);
   assert.match(reportRouteSource, /riskRetrospective/);

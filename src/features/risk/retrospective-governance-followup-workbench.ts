@@ -94,6 +94,7 @@ export interface RiskRetrospectiveGovernanceFollowupOperationFilters {
 export interface RiskRetrospectiveGovernanceFollowupOperationItem {
   id: string;
   assetTitle: string;
+  reason: string;
   ownerName: string;
   status: RiskRetrospectiveGovernanceFollowupStatus;
   priority: RiskRetrospectiveGovernanceActionItemPriority;
@@ -227,6 +228,7 @@ function mapOperationItem(item: RiskRetrospectiveGovernanceFollowupRecord): Risk
   return {
     id: item.id,
     assetTitle: item.assetTitle,
+    reason: item.reason,
     ownerName: ownerNameOf(item),
     status: item.status,
     priority: item.priority,
