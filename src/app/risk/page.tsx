@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { AiEvidence, AiSuggestedAction } from "@/features/ai/evidence";
 import type { RiskClosureDashboard, RiskClosureDecision } from "@/features/risk/closure";
 import type { RiskRetrospectiveGovernanceDashboard } from "@/features/risk/retrospective-governance";
+import type { RiskRetrospectiveGovernanceFollowupRecord, RiskRetrospectiveGovernanceFollowupStatus } from "@/features/risk/retrospective-governance-followups";
 import type { RiskRetrospectiveSyncLog } from "@/features/risk/retrospective-knowledge-sync";
 import type { RiskRetrospectiveAssetDuplicateWarning, RiskRetrospectiveAssetEditPatch, RiskRetrospectiveAssetRecord, RiskRetrospectiveRecommendation } from "@/features/risk/retrospective-assets";
 import type { RiskRetrospectiveQualityDashboard } from "@/features/risk/retrospective-quality";
@@ -391,9 +392,11 @@ export default function RiskPage() {
   const [riskRetrospectiveDuplicateWarnings, setRiskRetrospectiveDuplicateWarnings] = useState<RiskRetrospectiveAssetDuplicateWarning[]>([]);
   const [riskRetrospectiveQuality, setRiskRetrospectiveQuality] = useState<RiskRetrospectiveQualityDashboard | null>(null);
   const [riskRetrospectiveGovernance, setRiskRetrospectiveGovernance] = useState<RiskRetrospectiveGovernanceDashboard | null>(null);
+  const [riskRetrospectiveGovernanceFollowups, setRiskRetrospectiveGovernanceFollowups] = useState<RiskRetrospectiveGovernanceFollowupRecord[]>([]);
   const [retrospectiveAssetWarning, setRetrospectiveAssetWarning] = useState("");
   const [retrospectiveSyncWarning, setRetrospectiveSyncWarning] = useState("");
   const [retrospectiveGovernanceWarning, setRetrospectiveGovernanceWarning] = useState("");
+  const [retrospectiveFollowupWarning, setRetrospectiveFollowupWarning] = useState("");
   const [savingRetrospectiveAsset, setSavingRetrospectiveAsset] = useState<string | null>(null);
   const [editingRetrospectiveAssetId, setEditingRetrospectiveAssetId] = useState<string | null>(null);
   const [retrospectiveAssetEditForm, setRetrospectiveAssetEditForm] = useState<RetrospectiveAssetEditForm>({
@@ -405,6 +408,8 @@ export default function RiskPage() {
     tagsText: "",
   });
   const [exportingRetrospectiveAssets, setExportingRetrospectiveAssets] = useState(false);
+  const [savingGovernanceFollowups, setSavingGovernanceFollowups] = useState(false);
+  const [updatingGovernanceFollowupId, setUpdatingGovernanceFollowupId] = useState<string | null>(null);
   const [confirmingEscalationDraft, setConfirmingEscalationDraft] = useState<string | null>(null);
   const [confirmedEscalationDrafts, setConfirmedEscalationDrafts] = useState<Set<string>>(() => new Set());
   const [savingEvidenceAction, setSavingEvidenceAction] = useState<string | null>(null);
@@ -422,7 +427,7 @@ export default function RiskPage() {
         const response = await fetch("/api/risk", { cache: "no-store" });
         const data = await response.json() as { risks?: Risk[]; events?: RiskWorkflowEvent[]; warning?: string; error?: string; migrationHint?: string };
         if (!response.ok) throw new Error([data.error, data.migrationHint].filter(Boolean).join("；") || "风险登记册读取失败");
-        const [integrationResponse, escalationResponse, closureResponse, retrospectiveResponse, retrospectiveAssetsResponse, retrospectiveRecommendationsResponse, retrospectiveExportResponse, retrospectiveQualityResponse, retrospectiveGovernanceResponse] = await Promise.all([
+        const [integrationResponse, escalationResponse, closureResponse, retrospectiveResponse, retrospectiveAssetsResponse, retrospectiveRecommendationsResponse, retrospectiveExportResponse, retrospectiveQualityResponse, retrospectiveGovernanceResponse, retrospectiveFollowupsResponse] = await Promise.all([
           fetch("/api/risk/integration", { cache: "no-store" }),
           fetch("/api/risk/escalation-drafts", { cache: "no-store" }),
           fetch("/api/risk/closure", { cache: "no-store" }),
@@ -432,6 +437,7 @@ export default function RiskPage() {
           fetch("/api/risk/retrospective/assets/export", { cache: "no-store" }),
           fetch("/api/risk/retrospective/assets/quality", { cache: "no-store" }),
           fetch("/api/risk/retrospective/assets/governance", { cache: "no-store" }),
+          fetch("/api/risk/retrospective/assets/governance/followups", { cache: "no-store" }),
         ]);
         const integrationData = await integrationResponse.json().catch(() => ({})) as { risk_integration?: RiskIntegration };
         const escalationData = await escalationResponse.json().catch(() => ({})) as { risk_escalation?: RiskEscalationDraftDashboard };
@@ -446,6 +452,7 @@ export default function RiskPage() {
         const retrospectiveExportData = await retrospectiveExportResponse.json().catch(() => ({})) as { logs?: RiskRetrospectiveSyncLog[]; warning?: string };
         const retrospectiveQualityData = await retrospectiveQualityResponse.json().catch(() => ({})) as { risk_retrospective_quality?: RiskRetrospectiveQualityDashboard };
         const retrospectiveGovernanceData = await retrospectiveGovernanceResponse.json().catch(() => ({})) as { risk_retrospective_governance?: RiskRetrospectiveGovernanceDashboard; warning?: string };
+        const retrospectiveFollowupsData = await retrospectiveFollowupsResponse.json().catch(() => ({})) as { followups?: RiskRetrospectiveGovernanceFollowupRecord[]; warning?: string };
         if (cancelled) return;
         setRisks(Array.isArray(data.risks) ? data.risks : []);
         setWorkflowEvents(Array.isArray(data.events) ? data.events : []);
@@ -459,9 +466,11 @@ export default function RiskPage() {
         setRiskRetrospectiveSyncLogs(Array.isArray(retrospectiveExportData.logs) ? retrospectiveExportData.logs : []);
         setRiskRetrospectiveQuality(retrospectiveQualityData.risk_retrospective_quality ?? null);
         setRiskRetrospectiveGovernance(retrospectiveGovernanceData.risk_retrospective_governance ?? null);
+        setRiskRetrospectiveGovernanceFollowups(Array.isArray(retrospectiveFollowupsData.followups) ? retrospectiveFollowupsData.followups : []);
         setRetrospectiveAssetWarning(retrospectiveAssetsData.warning || "");
         setRetrospectiveSyncWarning(retrospectiveExportData.warning || "");
         setRetrospectiveGovernanceWarning(retrospectiveGovernanceData.warning || "");
+        setRetrospectiveFollowupWarning(retrospectiveFollowupsData.warning || "");
         setMessage(data.warning || "");
       } catch (e: unknown) {
         if (cancelled) return;
@@ -686,8 +695,9 @@ export default function RiskPage() {
           fetch("/api/risk/retrospective/recommendations", { cache: "no-store" }),
           fetch("/api/risk/retrospective/assets/quality", { cache: "no-store" }),
           fetch("/api/risk/retrospective/assets/governance", { cache: "no-store" }),
+          fetch("/api/risk/retrospective/assets/governance/followups", { cache: "no-store" }),
         ])
-          .then(async ([closureResponse, retrospectiveResponse, assetsResponse, recommendationsResponse, qualityResponse, governanceResponse]) => {
+          .then(async ([closureResponse, retrospectiveResponse, assetsResponse, recommendationsResponse, qualityResponse, governanceResponse, followupsResponse]) => {
             const closurePayload = await closureResponse.json().catch(() => ({})) as { risk_closure?: RiskClosureDashboard };
             const retrospectivePayload = await retrospectiveResponse.json().catch(() => ({})) as { risk_retrospective?: RiskRetrospectiveDashboard };
             const assetsPayload = await assetsResponse.json().catch(() => ({})) as {
@@ -698,6 +708,7 @@ export default function RiskPage() {
             const recommendationsPayload = await recommendationsResponse.json().catch(() => ({})) as { recommendations?: RiskRetrospectiveRecommendation[] };
             const qualityPayload = await qualityResponse.json().catch(() => ({})) as { risk_retrospective_quality?: RiskRetrospectiveQualityDashboard };
             const governancePayload = await governanceResponse.json().catch(() => ({})) as { risk_retrospective_governance?: RiskRetrospectiveGovernanceDashboard; warning?: string };
+            const followupsPayload = await followupsResponse.json().catch(() => ({})) as { followups?: RiskRetrospectiveGovernanceFollowupRecord[]; warning?: string };
             setRiskClosure(closurePayload.risk_closure ?? null);
             setRiskRetrospective(retrospectivePayload.risk_retrospective ?? null);
             setRiskRetrospectiveAssets(Array.isArray(assetsPayload.assets) ? assetsPayload.assets : []);
@@ -705,7 +716,9 @@ export default function RiskPage() {
             setRiskRetrospectiveRecommendations(Array.isArray(recommendationsPayload.recommendations) ? recommendationsPayload.recommendations : []);
             setRiskRetrospectiveQuality(qualityPayload.risk_retrospective_quality ?? null);
             setRiskRetrospectiveGovernance(governancePayload.risk_retrospective_governance ?? null);
+            setRiskRetrospectiveGovernanceFollowups(Array.isArray(followupsPayload.followups) ? followupsPayload.followups : []);
             setRetrospectiveGovernanceWarning(governancePayload.warning || "");
+            setRetrospectiveFollowupWarning(followupsPayload.warning || "");
             setRetrospectiveAssetWarning(assetsPayload.warning || "");
           })
           .catch(() => undefined);
@@ -720,12 +733,13 @@ export default function RiskPage() {
   };
 
   const refreshRetrospectiveAssets = async () => {
-    const [response, recommendationsResponse, exportResponse, qualityResponse, governanceResponse] = await Promise.all([
+    const [response, recommendationsResponse, exportResponse, qualityResponse, governanceResponse, followupsResponse] = await Promise.all([
       fetch("/api/risk/retrospective/assets", { cache: "no-store" }),
       fetch("/api/risk/retrospective/recommendations", { cache: "no-store" }),
       fetch("/api/risk/retrospective/assets/export", { cache: "no-store" }),
       fetch("/api/risk/retrospective/assets/quality", { cache: "no-store" }),
       fetch("/api/risk/retrospective/assets/governance", { cache: "no-store" }),
+      fetch("/api/risk/retrospective/assets/governance/followups", { cache: "no-store" }),
     ]);
     const payload = await response.json().catch(() => ({})) as {
       assets?: RiskRetrospectiveAssetRecord[];
@@ -736,15 +750,18 @@ export default function RiskPage() {
     const exportPayload = await exportResponse.json().catch(() => ({})) as { logs?: RiskRetrospectiveSyncLog[]; warning?: string };
     const qualityPayload = await qualityResponse.json().catch(() => ({})) as { risk_retrospective_quality?: RiskRetrospectiveQualityDashboard };
     const governancePayload = await governanceResponse.json().catch(() => ({})) as { risk_retrospective_governance?: RiskRetrospectiveGovernanceDashboard; warning?: string };
+    const followupsPayload = await followupsResponse.json().catch(() => ({})) as { followups?: RiskRetrospectiveGovernanceFollowupRecord[]; warning?: string };
     setRiskRetrospectiveAssets(Array.isArray(payload.assets) ? payload.assets : []);
     setRiskRetrospectiveDuplicateWarnings(Array.isArray(payload.duplicate_warnings) ? payload.duplicate_warnings : []);
     setRiskRetrospectiveRecommendations(Array.isArray(recommendationsPayload.recommendations) ? recommendationsPayload.recommendations : []);
     setRiskRetrospectiveSyncLogs(Array.isArray(exportPayload.logs) ? exportPayload.logs : []);
     setRiskRetrospectiveQuality(qualityPayload.risk_retrospective_quality ?? null);
     setRiskRetrospectiveGovernance(governancePayload.risk_retrospective_governance ?? null);
+    setRiskRetrospectiveGovernanceFollowups(Array.isArray(followupsPayload.followups) ? followupsPayload.followups : []);
     setRetrospectiveAssetWarning(payload.warning || "");
     setRetrospectiveSyncWarning(exportPayload.warning || "");
     setRetrospectiveGovernanceWarning(governancePayload.warning || "");
+    setRetrospectiveFollowupWarning(followupsPayload.warning || "");
   };
 
   const mutateRetrospectiveAsset = async (input: {
@@ -905,6 +922,102 @@ export default function RiskPage() {
       setError(`风险复盘资产导出失败：${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setExportingRetrospectiveAssets(false);
+    }
+  };
+
+  const saveGovernanceFollowups = async () => {
+    const actionItems = riskRetrospectiveGovernance?.effect.actionItems ?? [];
+    if (actionItems.length === 0) {
+      setMessage("当前没有需要保存的二次治理待办。");
+      return;
+    }
+    setSavingGovernanceFollowups(true);
+    setError("");
+    setMessage("");
+    try {
+      const response = await fetch("/api/risk/retrospective/assets/governance/followups", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ actionItems }),
+      });
+      const payload = await response.json().catch(() => ({})) as {
+        status?: string;
+        followups?: RiskRetrospectiveGovernanceFollowupRecord[];
+        created?: number;
+        skipped?: number;
+        warning?: string;
+      };
+      if (!response.ok || payload.status !== "succeeded") {
+        throw new Error(payload.warning || "保存二次治理待办失败。");
+      }
+      await refreshRetrospectiveAssets();
+      setMessage(`二次治理待办已保存：新增${payload.created ?? 0}项，跳过${payload.skipped ?? 0}项。`);
+    } catch (e: unknown) {
+      setError(`保存二次治理待办失败：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSavingGovernanceFollowups(false);
+    }
+  };
+
+  const transitionGovernanceFollowup = async (id: string, status: RiskRetrospectiveGovernanceFollowupStatus) => {
+    setUpdatingGovernanceFollowupId(id);
+    setError("");
+    setMessage("");
+    try {
+      const response = await fetch("/api/risk/retrospective/assets/governance/followups", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, status }),
+      });
+      const payload = await response.json().catch(() => ({})) as {
+        status?: string;
+        followup?: RiskRetrospectiveGovernanceFollowupRecord;
+        warning?: string;
+      };
+      if (!response.ok || payload.status !== "succeeded") {
+        throw new Error(payload.warning || "二次治理待办流转失败。");
+      }
+      await refreshRetrospectiveAssets();
+      setMessage(`二次治理待办已流转到「${payload.followup?.status || status}」。`);
+    } catch (e: unknown) {
+      setError(`二次治理待办流转失败：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setUpdatingGovernanceFollowupId(null);
+    }
+  };
+
+  const syncGovernanceFollowupToFeishu = async (followup: RiskRetrospectiveGovernanceFollowupRecord, mode: "prepare" | "confirm") => {
+    if (mode === "confirm") {
+      const confirmed = window.confirm(`确认将二次治理待办写入飞书任务？\n\n${followup.assetTitle}\n责任：${followup.ownerName}\n截止：${followup.dueDate}`);
+      if (!confirmed) return;
+    }
+    setUpdatingGovernanceFollowupId(followup.id);
+    setError("");
+    setMessage("");
+    try {
+      const response = await fetch("/api/risk/retrospective/assets/governance/followups/feishu-sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: followup.id, mode, confirm: mode === "confirm" }),
+      });
+      const payload = await response.json().catch(() => ({})) as {
+        status?: string;
+        followup?: RiskRetrospectiveGovernanceFollowupRecord;
+        resource?: { taskGuid?: string; url?: string };
+        warning?: string;
+        lark_cli_hint?: string;
+      };
+      if (!response.ok || payload.status !== "succeeded") {
+        throw new Error([payload.warning || "飞书任务同步失败。", payload.lark_cli_hint].filter(Boolean).join(" "));
+      }
+      await refreshRetrospectiveAssets();
+      setMessage(mode === "prepare"
+        ? `二次治理待办已进入飞书任务待确认：${payload.followup?.assetTitle || followup.assetTitle}`
+        : `二次治理待办已写入飞书任务：${payload.resource?.taskGuid || payload.followup?.assetTitle || followup.assetTitle}`);
+    } catch (e: unknown) {
+      setError(`飞书任务同步失败：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setUpdatingGovernanceFollowupId(null);
     }
   };
 
@@ -1967,6 +2080,11 @@ export default function RiskPage() {
                   {retrospectiveGovernanceWarning}
                 </div>
               )}
+              {retrospectiveFollowupWarning && (
+                <div style={{ marginBottom: 12, padding: 10, borderRadius: 10, background: "rgba(245,158,11,0.1)", color: "var(--amber)", fontSize: "0.74rem", lineHeight: 1.6 }}>
+                  {retrospectiveFollowupWarning}
+                </div>
+              )}
               {riskRetrospectiveDuplicateWarnings.length > 0 && (
                 <div style={{ marginBottom: 12, padding: 10, borderRadius: 10, background: "rgba(245,158,11,0.1)", color: "var(--amber)", fontSize: "0.74rem", lineHeight: 1.7 }}>
                   <div style={{ fontWeight: 800, marginBottom: 6 }}>重复资产提示</div>
@@ -2026,7 +2144,16 @@ export default function RiskPage() {
                             </div>
                           </article>
                         ))}
-                        <div style={{ fontWeight: 800, margin: "12px 0 8px" }}>二次治理待办</div>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", margin: "12px 0 8px" }}>
+                          <div style={{ fontWeight: 800 }}>二次治理待办</div>
+                          <button
+                            className="btn-secondary"
+                            disabled={savingGovernanceFollowups || riskRetrospectiveGovernance.effect.actionItems.length === 0}
+                            onClick={() => void saveGovernanceFollowups()}
+                          >
+                            {savingGovernanceFollowups ? "保存中..." : "保存待办"}
+                          </button>
+                        </div>
                         {riskRetrospectiveGovernance.effect.actionItems.length === 0 ? (
                           <div style={{ color: "var(--text2)", fontSize: "0.78rem", lineHeight: 1.7 }}>当前没有低效果治理动作需要二次复核。</div>
                         ) : riskRetrospectiveGovernance.effect.actionItems.slice(0, 5).map(item => (
@@ -2053,6 +2180,53 @@ export default function RiskPage() {
                             ))}
                           </div>
                         )}
+                        <div style={{ fontWeight: 800, margin: "12px 0 8px" }}>已保存二次治理待办</div>
+                        {riskRetrospectiveGovernanceFollowups.length === 0 ? (
+                          <div style={{ color: "var(--text2)", fontSize: "0.78rem", lineHeight: 1.7 }}>暂无已保存待办。点击“保存待办”后可进行状态流转和飞书任务同步。</div>
+                        ) : riskRetrospectiveGovernanceFollowups.slice(0, 5).map(item => (
+                          <article key={item.id} style={{ padding: 12, border: "1px solid var(--border)", borderRadius: 10, background: "var(--surface2)", marginBottom: 8 }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 6 }}>
+                              <strong style={{ fontSize: "0.8rem" }}>{item.assetTitle}</strong>
+                              <span className={item.priority === "high" ? "tag tag-red" : item.priority === "medium" ? "tag tag-amber" : "tag tag-blue"}>
+                                {item.status} · {item.feishuSyncStatus}
+                              </span>
+                            </div>
+                            <div style={{ color: "var(--text2)", fontSize: "0.72rem", lineHeight: 1.6 }}>
+                              <div>责任人：{item.ownerName} · deadline：{item.dueDate}</div>
+                              <div>原因：{item.reason}</div>
+                              <div>关闭标准：{item.closingCriteria}</div>
+                              {item.feishuTaskUrl && <div><a href={item.feishuTaskUrl} target="_blank" rel="noreferrer" style={{ color: "var(--accent2)" }}>打开飞书任务</a></div>}
+                              {item.feishuSyncError && <div style={{ color: "var(--red)" }}>飞书错误：{item.feishuSyncError}</div>}
+                            </div>
+                            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 10 }}>
+                              {item.status !== "处理中" && item.status !== "已关闭" && (
+                                <button className="btn-secondary" disabled={updatingGovernanceFollowupId === item.id} onClick={() => void transitionGovernanceFollowup(item.id, "处理中")}>
+                                  处理中
+                                </button>
+                              )}
+                              {item.status !== "待验收" && item.status !== "已关闭" && (
+                                <button className="btn-secondary" disabled={updatingGovernanceFollowupId === item.id} onClick={() => void transitionGovernanceFollowup(item.id, "待验收")}>
+                                  待验收
+                                </button>
+                              )}
+                              {item.status !== "已关闭" && (
+                                <button className="btn-secondary" disabled={updatingGovernanceFollowupId === item.id} onClick={() => void transitionGovernanceFollowup(item.id, "已关闭")}>
+                                  关闭
+                                </button>
+                              )}
+                              {item.feishuSyncStatus !== "待确认" && item.feishuSyncStatus !== "已同步" && (
+                                <button className="btn-secondary" disabled={updatingGovernanceFollowupId === item.id} onClick={() => void syncGovernanceFollowupToFeishu(item, "prepare")}>
+                                  准备同步飞书
+                                </button>
+                              )}
+                              {item.feishuSyncStatus === "待确认" && (
+                                <button className="btn-primary" disabled={updatingGovernanceFollowupId === item.id} onClick={() => void syncGovernanceFollowupToFeishu(item, "confirm")}>
+                                  确认写入飞书任务
+                                </button>
+                              )}
+                            </div>
+                          </article>
+                        ))}
                       </>
                     )}
                   </div>

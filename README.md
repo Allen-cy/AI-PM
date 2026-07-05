@@ -67,6 +67,10 @@ npm run build
 - 飞书端已建立8张业务表；公开项目记录API会等用户登录和授权模型完成后再开放。
 - 全仓历史 ESLint 基线仍有旧问题；V4新增/改动文件执行独立零错误门禁。
 
+## AI-PMO System V5.3.38
+
+V5.3.38 将 V5.3.37 的运行时二次治理待办升级为可保存、可流转、可审计、可确认同步飞书的正式闭环：新增 `supabase-v5338-risk-retrospective-governance-followups.sql`、`/api/risk/retrospective/assets/governance/followups` 和 `/api/risk/retrospective/assets/governance/followups/feishu-sync`，支持保存低效果治理待办、读取历史待办、流转“待复核 → 处理中 → 待验收 → 已关闭”，并在用户明确确认后创建飞书任务。`/risk` 的“知识治理效果”区域新增“保存待办”和“已保存二次治理待办”，展示责任人、deadline、关闭标准、同步状态、飞书任务链接和错误提示。系统不会自动外发飞书任务；必须先“准备同步飞书”，再“确认写入飞书任务”。本版本需要在 Supabase SQL Editor 执行 `supabase-v5338-risk-retrospective-governance-followups.sql` 后才能持久化待办。
+
 ## AI-PMO System V5.3.37
 
 V5.3.37 将 V5.3.36 的治理效果趋势进一步转化为 PMO 可执行的二次治理待办和提醒：`/api/risk/retrospective/assets/governance` 的 `effect` 新增 `actionItems` 和 `reminders`，针对质量分下降、治理后低于70分、治理后无改善、发布/恢复后无 RAG 引用增长、合并后重复风险未下降等低效果治理动作，自动生成责任人、deadline、优先级、复核动作和关闭标准。风险管理页“知识治理效果”区域新增“二次治理待办”和提醒列表；治理报告新增“二次治理待办”章节，便于 PMO 每周复盘知识运营质量。本版本不新增 SQL，待办为运行时派生结果，后续可再接入统一待办或飞书任务持久化。

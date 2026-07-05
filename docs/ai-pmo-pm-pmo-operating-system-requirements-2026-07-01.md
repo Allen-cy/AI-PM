@@ -662,6 +662,14 @@ V5.3.37 落地说明：
 - `/risk` 的“知识治理效果”区域新增“二次治理待办”和提醒列表；治理报告新增“二次治理待办”章节。
 - 本版本不新增 SQL，待办为运行时派生结果；持久化到统一行动项或同步飞书任务进入后续阶段。
 
+V5.3.38 落地说明：
+
+- 新增 `supabase-v5338-risk-retrospective-governance-followups.sql`，创建 `risk_retrospective_governance_followups`，用于持久化低效果治理动作生成的二次治理待办。
+- 新增 `src/features/risk/retrospective-governance-followups.ts`、`/api/risk/retrospective/assets/governance/followups` 和 `/api/risk/retrospective/assets/governance/followups/feishu-sync`，支持保存待办、读取历史待办、状态流转和飞书任务确认同步。
+- `/risk` 的“知识治理效果”区域新增“保存待办”和“已保存二次治理待办”，展示责任人、deadline、关闭标准、系统状态、飞书同步状态和飞书任务链接。
+- 飞书同步采用显式确认机制：先准备同步进入“待确认”，再由用户确认写入飞书任务；系统不会自动外发飞书任务。
+- 本版本需要先在 Supabase 执行 `supabase-v5338-risk-retrospective-governance-followups.sql` 后才能持久化待办；未执行时运行时派生待办仍可查看，但保存/流转会提示 SQL 未执行。
+
 V5.3.7 落地说明：
 
 - 新增 `/blueprint-v3/delivery-management`「项目全流程交付管理蓝图」子页面，将原附件业务流程图结构化为销售管理、项目管理、监控管理、成本管理和工具支撑五类泳道。
