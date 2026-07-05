@@ -1,7 +1,8 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
+import type { RiskRetrospectiveGovernanceFollowupOperationReport } from '@/features/risk/retrospective-governance-followup-workbench';
 import {
   initialProjects,
   initialOKRs,
@@ -16,11 +17,35 @@ import {
 
 export default function PMOPage() {
   const portfolio = calculatePortfolioOverview(initialProjects);
+  const [knowledgeGovernanceReport, setKnowledgeGovernanceReport] = useState<RiskRetrospectiveGovernanceFollowupOperationReport | null>(null);
+  const [knowledgeGovernanceWarning, setKnowledgeGovernanceWarning] = useState('');
 
   // Get escalation projects (critical + concern)
   const escalationProjects = initialProjects.filter(
     p => p.overallStatus === 'critical' || p.overallStatus === 'concern'
   );
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadKnowledgeGovernanceReport() {
+      try {
+        const response = await fetch('/api/risk/retrospective/assets/governance/followups?limit=200', { cache: 'no-store' });
+        const payload = await response.json().catch(() => ({})) as {
+          operation_report?: RiskRetrospectiveGovernanceFollowupOperationReport;
+          warning?: string;
+        };
+        if (cancelled) return;
+        setKnowledgeGovernanceReport(payload.operation_report ?? null);
+        setKnowledgeGovernanceWarning(payload.warning || '');
+      } catch (error) {
+        if (!cancelled) setKnowledgeGovernanceWarning(error instanceof Error ? error.message : '知识治理运营指标读取失败');
+      }
+    }
+    void loadKnowledgeGovernanceReport();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return (
     <div style={{ padding: '24px', maxWidth: '1500px', margin: '0 auto' }}>
@@ -66,6 +91,57 @@ export default function PMOPage() {
         <button className="btn-primary">创建项目</button>
         <button className="btn-secondary">生成报告</button>
         <button className="btn-secondary">查看风险</button>
+      </div>
+
+      <div className="card" style={{ marginBottom: '24px', border: '1px solid rgba(59,130,246,0.24)', background: 'linear-gradient(135deg, rgba(59,130,246,0.08), rgba(124,58,237,0.06))' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 14, flexWrap: 'wrap', marginBottom: 14 }}>
+          <div>
+            <div className="section-title" style={{ marginBottom: 6 }}>
+              <span>🧠</span>
+              知识治理运营
+            </div>
+            <div style={{ color: 'var(--text2)', fontSize: '0.84rem', lineHeight: 1.7 }}>
+              从风险复盘资产二次治理待办读取，展示关闭率、证据完整率、逾期和飞书待确认，用于 PMO 周运营。
+            </div>
+          </div>
+          <Link href="/risk" className="btn-secondary" style={{ textDecoration: 'none', fontSize: '0.82rem' }}>
+            进入风险复盘资产治理
+          </Link>
+        </div>
+        {knowledgeGovernanceWarning && (
+          <div style={{ marginBottom: 12, padding: 10, borderRadius: 10, background: 'rgba(245,158,11,0.1)', color: 'var(--amber)', fontSize: '0.78rem', lineHeight: 1.6 }}>
+            {knowledgeGovernanceWarning}
+          </div>
+        )}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
+          {[
+            ['已保存待办', knowledgeGovernanceReport?.summary.total ?? 0, 'var(--accent2)'],
+            ['未关闭', knowledgeGovernanceReport?.summary.open ?? 0, 'var(--amber)'],
+            ['关闭率', `${(knowledgeGovernanceReport?.summary.closureRate ?? 0).toFixed(1)}%`, 'var(--green)'],
+            ['证据完整率', `${(knowledgeGovernanceReport?.summary.evidenceCompletenessRate ?? 0).toFixed(1)}%`, 'var(--accent2)'],
+            ['逾期未关闭', knowledgeGovernanceReport?.summary.overdueOpen ?? 0, 'var(--red)'],
+            ['飞书待确认', knowledgeGovernanceReport?.summary.waitingFeishuConfirmation ?? 0, 'var(--amber)'],
+          ].map(([label, value, color]) => (
+            <div key={label} style={{ background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 12, padding: 14 }}>
+              <div style={{ color: 'var(--text2)', fontSize: '0.74rem', marginBottom: 4 }}>{label}</div>
+              <strong style={{ color: String(color), fontSize: '1.15rem' }}>{value}</strong>
+            </div>
+          ))}
+        </div>
+        {(knowledgeGovernanceReport?.ownerStats.length ?? 0) > 0 && (
+          <div style={{ marginTop: 14, display: 'grid', gap: 8 }}>
+            <div style={{ color: 'var(--text2)', fontSize: '0.78rem' }}>负责人 Top 追踪</div>
+            {knowledgeGovernanceReport?.ownerStats.slice(0, 3).map(item => (
+              <div key={item.ownerName} style={{ display: 'grid', gridTemplateColumns: 'minmax(100px, 1fr) repeat(4, auto)', gap: 10, alignItems: 'center', background: 'rgba(15,23,42,0.18)', border: '1px solid var(--border)', borderRadius: 10, padding: '9px 12px', fontSize: '0.78rem' }}>
+                <strong>{item.ownerName}</strong>
+                <span>未关 {item.open}</span>
+                <span style={{ color: item.overdue > 0 ? 'var(--red)' : 'var(--text2)' }}>逾期 {item.overdue}</span>
+                <span>P0 {item.highPriorityOpen}</span>
+                <span>缺证 {item.evidenceGaps}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Portfolio Overview Stats */}

@@ -190,6 +190,7 @@ test('governance workflows define inputs outputs owners states and audit trail',
   const governanceStrategyRouteSource = readFileSync(new URL('../src/app/api/governance/strategy/route.ts', import.meta.url), 'utf8');
   const governanceRepositorySource = readFileSync(new URL('../src/features/governance/repository.ts', import.meta.url), 'utf8');
   const workbenchPageSource = readFileSync(new URL('../src/app/workbench/page.tsx', import.meta.url), 'utf8');
+  const pmoPageSource = readFileSync(new URL('../src/app/pmo/page.tsx', import.meta.url), 'utf8');
 
   assert.equal(governanceWorkflows.length >= 5, true);
   for (const workflow of governanceWorkflows) {
@@ -217,6 +218,9 @@ test('governance workflows define inputs outputs owners states and audit trail',
   assert.match(workbenchPageSource, /知识治理待办/);
   assert.match(workbenchPageSource, /转统一行动项/);
   assert.match(workbenchPageSource, /riskRetrospectiveGovernanceFollowups/);
+  assert.match(pmoPageSource, /知识治理运营/);
+  assert.match(pmoPageSource, /负责人 Top 追踪/);
+  assert.match(pmoPageSource, /evidenceCompletenessRate/);
 });
 
 test('governance strategy previews require classification fields before recommending workflows', () => {
