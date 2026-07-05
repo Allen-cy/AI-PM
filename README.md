@@ -67,6 +67,10 @@ npm run build
 - 飞书端已建立8张业务表；公开项目记录API会等用户登录和授权模型完成后再开放。
 - 全仓历史 ESLint 基线仍有旧问题；V4新增/改动文件执行独立零错误门禁。
 
+## AI-PMO System V5.3.44
+
+V5.3.44 将知识治理运营从“当前回算趋势”升级为“可审计历史与提醒闭环”：新增 `supabase-v5344-risk-retrospective-governance-operations.sql`，创建知识治理运营快照表和提醒日志表；新增 `/api/risk/retrospective/assets/governance/followups/operation-history`，支持读取历史快照、保存今日快照，并将提醒日志标记为已处理、无需处理或已升级；`/api/risk/retrospective/assets/governance/followups/weekly-reminder` 在飞书发送成功/失败后会记录提醒日志并保存当日快照；风险管理页新增“运营历史快照与提醒闭环”，展示历史快照、提醒日志和关闭动作。未执行 SQL 时现有报表、提醒草稿和飞书发送不被阻断，只显示历史持久化提示。
+
 ## AI-PMO System V5.3.43
 
 V5.3.43 将知识治理运营从“当前快照和周清单”推进到“趋势与提醒”：`buildRiskRetrospectiveGovernanceFollowupOperationReport` 新增最近 6 周趋势、逾期/待验收/证据缺口自动提醒草稿和飞书周运营提醒草稿；`/risk` 的“知识治理待办运营报表”新增趋势卡片、自动提醒草稿和“确认发送飞书提醒”入口，发送前必须填写 `chat_id` 或 `open_id` 并二次确认；新增 `/api/risk/retrospective/assets/governance/followups/weekly-reminder`，只有 `confirm=true` 且提供接收对象时才调用飞书消息接口；`/workbench` 新增“知识治理运营提醒草稿”，并把提醒数量纳入今日优先动作。本版本不新增 SQL，继续复用 V5.3.38 待办表。

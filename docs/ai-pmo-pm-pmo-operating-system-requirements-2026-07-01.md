@@ -709,6 +709,14 @@ V5.3.43 落地说明：
 - 新增 `/api/risk/retrospective/assets/governance/followups/weekly-reminder`，默认只返回待确认草稿，只有 `confirm=true` 且提供接收对象时才调用飞书消息接口。
 - 本版本不新增 SQL；趋势为当前已保存待办的运营回算口径，严格历史快照与提醒关闭状态留待 V5.3.44。
 
+V5.3.44 落地说明：
+
+- 新增 `supabase-v5344-risk-retrospective-governance-operations.sql`，持久化知识治理运营快照和提醒日志。
+- 新增 `/api/risk/retrospective/assets/governance/followups/operation-history`，支持读取历史、保存今日快照、将提醒日志更新为已处理/无需处理/已升级。
+- 飞书周运营提醒发送成功或失败后，会尝试记录提醒日志和当日运营快照；SQL 未执行时不阻断飞书发送主流程。
+- 风险管理页新增“运营历史快照与提醒闭环”，展示历史快照、提醒日志和处理动作。
+- 本版本要求执行新增 SQL 后才能持久化历史；提醒日志状态暂不自动改变二次治理待办状态，下一阶段再联动待办流转、治理流程或统一行动项。
+
 V5.3.7 落地说明：
 
 - 新增 `/blueprint-v3/delivery-management`「项目全流程交付管理蓝图」子页面，将原附件业务流程图结构化为销售管理、项目管理、监控管理、成本管理和工具支撑五类泳道。
