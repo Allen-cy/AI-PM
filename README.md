@@ -67,6 +67,10 @@ npm run build
 - 飞书端已建立8张业务表；公开项目记录API会等用户登录和授权模型完成后再开放。
 - 全仓历史 ESLint 基线仍有旧问题；V4新增/改动文件执行独立零错误门禁。
 
+## AI-PMO System V5.3.40
+
+V5.3.40 修正 V5.3.39 的工作台兜底行为：当飞书项目台账未配置或当前用户尚未配置个人飞书接入时，`/api/operating-system/workbench` 仍会把已保存的风险复盘二次治理待办纳入工作台 KPI、今日优先动作和“知识治理待办”区块，同时保留 SQL/配置提示。这样 PMO 即使暂时没有飞书业务数据，也能看到 Supabase 中已保存的知识治理待办，避免知识治理闭环被飞书配置状态阻断。本版本不新增 SQL。
+
 ## AI-PMO System V5.3.39
 
 V5.3.39 将 V5.3.38 已保存的风险复盘二次治理待办接入 PM/PMO 每日工作台：`/api/operating-system/workbench` 现在会读取 `risk_retrospective_governance_followups`，按当前用户姓名、邮箱、手机或管理员角色过滤，生成“知识治理待办”KPI、逾期/P0/飞书待确认统计和今日优先动作。`/workbench` 新增“知识治理待办”区域，展示资产、原因、处理动作、责任人、deadline、关闭标准和飞书同步状态，并支持用户确认后“转统一行动项”，进入现有 P5 问题-变更-行动项闭环。该版本不新增 SQL，依赖已执行 V5.3.38 的 `supabase-v5338-risk-retrospective-governance-followups.sql` 和既有 `supabase-v530-issue-change-action-chain.sql`。

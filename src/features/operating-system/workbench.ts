@@ -548,16 +548,46 @@ function buildAiSuggestions(input: {
   ];
 }
 
-function buildFallbackWorkbench(user?: WorkbenchUser | null): OperationalWorkbench {
+function buildFallbackWorkbench(
+  user?: WorkbenchUser | null,
+  riskRetrospectiveGovernanceFollowups: RiskRetrospectiveGovernanceFollowupRecord[] = [],
+  riskRetrospectiveGovernanceFollowupsWarning?: string,
+): OperationalWorkbench {
   const base = deriveWorkbenchSummary(null);
+  const followupWorkbench = buildRiskRetrospectiveGovernanceFollowupWorkbench({
+    followups: riskRetrospectiveGovernanceFollowups,
+    user,
+    warning: riskRetrospectiveGovernanceFollowupsWarning,
+  });
+  const knowledgeGovernanceAction = followupWorkbench.summary.myPending > 0
+    ? [{
+        id: "p3-risk-retro-governance-followups",
+        priority: followupWorkbench.summary.highPriority > 0 || followupWorkbench.summary.overdue > 0 ? "P0" as const : "P1" as const,
+        title: `处理 ${followupWorkbench.summary.myPending} 个知识治理待办`,
+        owner: "PMO" as const,
+        due: followupWorkbench.summary.overdue > 0 ? "今天" : "本周",
+        source: "风险复盘资产二次治理待办",
+        action: "复核低效果治理动作，确认补充编辑、合并、撤回、重新发布或转统一行动项。",
+      }]
+    : [];
   return {
     ...base,
+    kpis: [
+      ...base.kpis,
+      {
+        label: "知识治理待办",
+        value: String(followupWorkbench.summary.myPending),
+        hint: followupWorkbench.warning || "来自已保存的风险复盘资产二次治理待办。",
+        status: followupWorkbench.warning ? "warning" : followupWorkbench.summary.highPriority > 0 || followupWorkbench.summary.overdue > 0 ? "error" : followupWorkbench.summary.myPending > 0 ? "warning" : "ok",
+      },
+    ],
+    actions: [...knowledgeGovernanceAction, ...base.actions],
     myProjects: [],
     myRisks: [],
     todayTodos: [],
     businessReminders: [],
     riskIntegration: buildRiskIntegrationDashboard({ risks: [], dashboard: null }),
-    riskRetrospectiveGovernanceFollowups: buildRiskRetrospectiveGovernanceFollowupWorkbench({ followups: [], user }),
+    riskRetrospectiveGovernanceFollowups: followupWorkbench,
     evidence: {
       source: "missing",
       generatedAt: new Date().toISOString(),
@@ -583,7 +613,7 @@ export function buildOperationalWorkbench(input: {
 }): OperationalWorkbench {
   const dashboard = input.dashboard ?? buildDashboardFromRecords(input.projects);
   if (!dashboard && input.projects.length === 0 && input.risks.length === 0 && input.tasks.length === 0 && input.milestones.length === 0 && input.payments.length === 0) {
-    return buildFallbackWorkbench(input.user);
+    return buildFallbackWorkbench(input.user, input.riskRetrospectiveGovernanceFollowups, input.riskRetrospectiveGovernanceFollowupsWarning);
   }
 
   const matchedProjects = input.user?.role === "admin"
