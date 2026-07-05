@@ -3,6 +3,10 @@ import { FeishuActionClient } from "@/features/feishu/actions";
 import { FeishuApiError } from "@/features/feishu/client";
 import { getEffectiveFeishuConfig } from "@/features/feishu/user-config";
 import { listRiskRetrospectiveGovernanceFollowups } from "@/features/risk/retrospective-governance-followups";
+import {
+  persistRiskRetrospectiveGovernanceOperationSnapshot,
+  persistRiskRetrospectiveGovernanceReminderLogs,
+} from "@/features/risk/retrospective-governance-operations";
 import { buildRiskRetrospectiveGovernanceFollowupOperationReport } from "@/features/risk/retrospective-governance-followup-workbench";
 import { writeOperationAudit } from "@/features/security/repository";
 
@@ -101,6 +105,18 @@ export async function POST(request: Request): Promise<Response> {
       text: message,
       idempotencyKey: `risk-retro-governance-weekly-${new Date().toISOString().slice(0, 10)}-${requestId}`,
     });
+    const [snapshotResult, reminderLogResult] = await Promise.all([
+      persistRiskRetrospectiveGovernanceOperationSnapshot({ report: operationReport, user, requestId }),
+      persistRiskRetrospectiveGovernanceReminderLogs({
+        reminders: operationReport.reminderDrafts,
+        status: "sent",
+        user,
+        requestId,
+        receiveIdType,
+        receiveId,
+        feishuMessageId: resource.messageId,
+      }),
+    ]);
     await writeOperationAudit({
       user,
       action: "risk_retrospective_governance_weekly_feishu_reminder",
@@ -114,6 +130,8 @@ export async function POST(request: Request): Promise<Response> {
         feishu_source: effectiveFeishu.source,
         reminder_count: operationReport.reminderDrafts.length,
         message_id: resource.messageId,
+        snapshot_status: snapshotResult.status,
+        reminder_log_status: reminderLogResult.status,
       },
       requestId,
     });
@@ -123,9 +141,24 @@ export async function POST(request: Request): Promise<Response> {
       resource,
       sent_message: message,
       operation_report: operationReport,
+      operation_snapshot: snapshotResult.status === "succeeded" ? snapshotResult.snapshot : null,
+      reminder_logs: reminderLogResult.status === "succeeded" ? reminderLogResult.logs : [],
+      history_warning: [snapshotResult, reminderLogResult]
+        .map(item => "warning" in item ? item.warning : null)
+        .filter(Boolean)
+        .join("；") || undefined,
     }, 201, requestId);
   } catch (error) {
     const code = error instanceof FeishuApiError ? error.code : "FEISHU_WEEKLY_REMINDER_FAILED";
+    const reminderLogResult = await persistRiskRetrospectiveGovernanceReminderLogs({
+      reminders: operationReport.reminderDrafts,
+      status: "failed",
+      user,
+      requestId,
+      receiveIdType,
+      receiveId,
+      error: code,
+    });
     await writeOperationAudit({
       user,
       action: "risk_retrospective_governance_weekly_feishu_reminder",
@@ -139,6 +172,7 @@ export async function POST(request: Request): Promise<Response> {
         feishu_source: effectiveFeishu.source,
         reminder_count: operationReport.reminderDrafts.length,
         code,
+        reminder_log_status: reminderLogResult.status,
       },
       requestId,
     });

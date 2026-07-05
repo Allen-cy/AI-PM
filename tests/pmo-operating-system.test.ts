@@ -20,6 +20,10 @@ import {
   buildRiskRetrospectiveGovernanceFollowupWorkbench,
 } from '../src/features/risk/retrospective-governance-followup-workbench.ts';
 import {
+  maskFeishuReceiveId,
+  reminderLogKey,
+} from '../src/features/risk/retrospective-governance-operation-utils.ts';
+import {
   buildGovernanceReport,
   deriveGovernanceNextState,
   initialGovernanceState,
@@ -766,12 +770,14 @@ test('risk sensitivity impact is discoverable from api dashboard and sensitivity
   const retrospectiveGovernanceFollowupsApiSource = readFileSync(new URL('../src/app/api/risk/retrospective/assets/governance/followups/route.ts', import.meta.url), 'utf8');
   const retrospectiveGovernanceFollowupsFeishuApiSource = readFileSync(new URL('../src/app/api/risk/retrospective/assets/governance/followups/feishu-sync/route.ts', import.meta.url), 'utf8');
   const retrospectiveGovernanceWeeklyReminderApiSource = readFileSync(new URL('../src/app/api/risk/retrospective/assets/governance/followups/weekly-reminder/route.ts', import.meta.url), 'utf8');
+  const retrospectiveGovernanceOperationHistoryApiSource = readFileSync(new URL('../src/app/api/risk/retrospective/assets/governance/followups/operation-history/route.ts', import.meta.url), 'utf8');
   const issueChangeRepositorySource = readFileSync(new URL('../src/features/issue-change/repository.ts', import.meta.url), 'utf8');
   const retrospectiveAssetsSql = readFileSync(new URL('../supabase-v5330-risk-retrospective-assets.sql', import.meta.url), 'utf8');
   const retrospectiveExportSql = readFileSync(new URL('../supabase-v5331-risk-retrospective-knowledge-sync.sql', import.meta.url), 'utf8');
   const retrospectiveValueSql = readFileSync(new URL('../supabase-v5332-risk-retrospective-value.sql', import.meta.url), 'utf8');
   const retrospectiveGovernanceSql = readFileSync(new URL('../supabase-v5334-risk-retrospective-governance.sql', import.meta.url), 'utf8');
   const retrospectiveGovernanceFollowupsSql = readFileSync(new URL('../supabase-v5338-risk-retrospective-governance-followups.sql', import.meta.url), 'utf8');
+  const retrospectiveGovernanceOperationsSql = readFileSync(new URL('../supabase-v5344-risk-retrospective-governance-operations.sql', import.meta.url), 'utf8');
   const ragQueryRouteSource = readFileSync(new URL('../src/app/api/rag/query/route.ts', import.meta.url), 'utf8');
   const riskPageSource = readFileSync(new URL('../src/app/risk/page.tsx', import.meta.url), 'utf8');
   const workbenchPageSource = readFileSync(new URL('../src/app/workbench/page.tsx', import.meta.url), 'utf8');
@@ -805,6 +811,14 @@ test('risk sensitivity impact is discoverable from api dashboard and sensitivity
   assert.match(retrospectiveGovernanceWeeklyReminderApiSource, /confirmation_required/);
   assert.match(retrospectiveGovernanceWeeklyReminderApiSource, /sendTextMessage/);
   assert.match(retrospectiveGovernanceWeeklyReminderApiSource, /confirm/);
+  assert.match(retrospectiveGovernanceWeeklyReminderApiSource, /persistRiskRetrospectiveGovernanceReminderLogs/);
+  assert.match(retrospectiveGovernanceWeeklyReminderApiSource, /persistRiskRetrospectiveGovernanceOperationSnapshot/);
+  assert.match(retrospectiveGovernanceOperationHistoryApiSource, /operation_report/);
+  assert.match(retrospectiveGovernanceOperationHistoryApiSource, /snapshots/);
+  assert.match(retrospectiveGovernanceOperationHistoryApiSource, /reminder_logs/);
+  assert.match(retrospectiveGovernanceOperationHistoryApiSource, /processed/);
+  assert.match(retrospectiveGovernanceOperationHistoryApiSource, /ignored/);
+  assert.match(retrospectiveGovernanceOperationHistoryApiSource, /escalated/);
   assert.match(riskPageSource, /知识治理周趋势/);
   assert.match(riskPageSource, /确认发送飞书提醒/);
   assert.match(riskPageSource, /\/api\/risk\/retrospective\/assets\/governance\/followups\/weekly-reminder/);
@@ -818,6 +832,9 @@ test('risk sensitivity impact is discoverable from api dashboard and sensitivity
   assert.match(retrospectiveGovernanceSql, /risk_retrospective_asset_governance_logs/);
   assert.match(retrospectiveGovernanceFollowupsSql, /risk_retrospective_governance_followups/);
   assert.match(retrospectiveGovernanceFollowupsSql, /feishu_sync_status/);
+  assert.match(retrospectiveGovernanceOperationsSql, /risk_retrospective_governance_operation_snapshots/);
+  assert.match(retrospectiveGovernanceOperationsSql, /risk_retrospective_governance_reminder_logs/);
+  assert.match(retrospectiveGovernanceOperationsSql, /processed/);
   assert.match(ragQueryRouteSource, /listPublishedRiskRetrospectiveRagDocuments/);
   assert.match(ragQueryRouteSource, /recordRiskRetrospectiveRagUsage/);
   assert.match(riskPageSource, /关闭证据/);
@@ -1808,6 +1825,12 @@ test('risk retrospective governance followup operation report filters owners and
   assert.match(report.reportMarkdown, /趋势与自动提醒草稿/);
   assert.match(report.reportMarkdown, /自动提醒草稿必须由用户显式确认/);
   assert.match(report.boundary, /周运营/);
+});
+
+test('risk retrospective governance operation helpers mask Feishu receivers and build stable reminder keys', () => {
+  assert.equal(maskFeishuReceiveId('oc_1234567890abcdef'), 'oc_1***cdef');
+  assert.equal(maskFeishuReceiveId('abc123'), 'ab***');
+  assert.equal(reminderLogKey('overdue-followup-1', '2026-07-05'), '2026-07-05:overdue-followup-1');
 });
 
 test('ai evidence builders expose basis citations and convertible actions', () => {
