@@ -937,13 +937,26 @@ export default function RiskPage() {
       const payload = await response.json().catch(() => ({})) as {
         status?: string;
         log?: RiskRetrospectiveGovernanceReminderLog;
+        linked_followup?: RiskRetrospectiveGovernanceFollowupRecord;
+        linked_followup_warning?: string;
+        linked_action?: { id: string; title: string };
+        linked_action_warning?: string;
         warning?: string;
       };
       if (!response.ok || payload.status !== "succeeded" || !payload.log) {
         throw new Error(payload.warning || "知识治理运营提醒状态更新失败。");
       }
       setRiskRetrospectiveGovernanceReminderLogs(prev => prev.map(item => item.id === payload.log!.id ? payload.log! : item));
-      setMessage(`知识治理运营提醒已标记为${label}。`);
+      if (payload.linked_followup) {
+        setRiskRetrospectiveGovernanceFollowups(prev => prev.map(item => item.id === payload.linked_followup!.id ? payload.linked_followup! : item));
+      }
+      const linkedMessages = [
+        payload.linked_followup ? `二次治理待办已联动为「${payload.linked_followup.status}」` : "",
+        payload.linked_action ? `已生成统一行动项：${payload.linked_action.title}` : "",
+        payload.linked_followup_warning || "",
+        payload.linked_action_warning || "",
+      ].filter(Boolean);
+      setMessage(`知识治理运营提醒已标记为${label}${linkedMessages.length > 0 ? `；${linkedMessages.join("；")}` : ""}。`);
     } catch (e: unknown) {
       setError(`知识治理运营提醒状态更新失败：${e instanceof Error ? e.message : String(e)}`);
     } finally {
@@ -982,8 +995,15 @@ export default function RiskPage() {
         operation_report?: RiskRetrospectiveGovernanceFollowupOperationReport;
         operation_snapshot?: RiskRetrospectiveGovernanceOperationSnapshot | null;
         reminder_logs?: RiskRetrospectiveGovernanceReminderLog[];
+        reminder_suppression?: { summary?: { sendable?: number; suppressedThisWeek?: number } };
         history_warning?: string;
       };
+      if (response.ok && payload.status === "skipped") {
+        if (payload.operation_report) setRiskRetrospectiveGovernanceFollowupOperationReport(payload.operation_report);
+        setRetrospectiveOperationHistoryWarning(payload.history_warning || "");
+        setMessage(payload.warning || "本周同一知识治理提醒已发送或已闭环处理，本次不重复外发。");
+        return;
+      }
       if (!response.ok || payload.status !== "succeeded") {
         throw new Error(payload.warning || "飞书提醒发送失败。");
       }
@@ -998,7 +1018,11 @@ export default function RiskPage() {
         ].slice(0, 50));
       }
       setRetrospectiveOperationHistoryWarning(payload.history_warning || "");
-      setMessage(payload.history_warning ? `知识治理周运营提醒已发送到飞书；历史日志提示：${payload.history_warning}` : "知识治理周运营提醒已发送到飞书。");
+      const suppressed = payload.reminder_suppression?.summary?.suppressedThisWeek ?? 0;
+      const sent = payload.reminder_suppression?.summary?.sendable ?? payload.reminder_logs?.length ?? 0;
+      setMessage(payload.history_warning
+        ? `知识治理周运营提醒已发送到飞书，本次发送${sent}条，抑制重复${suppressed}条；历史日志提示：${payload.history_warning}`
+        : `知识治理周运营提醒已发送到飞书，本次发送${sent}条，抑制重复${suppressed}条。`);
     } catch (e: unknown) {
       setError(`知识治理周运营飞书提醒发送失败：${e instanceof Error ? e.message : String(e)}`);
     } finally {

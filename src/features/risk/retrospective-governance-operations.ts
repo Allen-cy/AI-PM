@@ -35,6 +35,8 @@ export interface RiskRetrospectiveGovernanceReminderLog {
   id: string;
   reminderKey: string;
   reminderType: RiskRetrospectiveGovernanceReminderLogType;
+  originalReminderId: string | null;
+  sourceFollowupId: string | null;
   priority: "P0" | "P1" | "P2";
   title: string;
   assetTitle: string | null;
@@ -140,10 +142,17 @@ function mapSnapshot(row: Record<string, unknown>): RiskRetrospectiveGovernanceO
 }
 
 function mapReminderLog(row: Record<string, unknown>): RiskRetrospectiveGovernanceReminderLog {
+  const metadata = typeof row.metadata === "object" && row.metadata !== null ? row.metadata as Record<string, unknown> : {};
+  const originalReminderId = typeof metadata.original_reminder_id === "string"
+    ? metadata.original_reminder_id
+    : originalReminderIdFromReminderKey(String(row.reminder_key ?? ""));
+  const reminderType = String(row.reminder_type ?? "weekly_summary") as RiskRetrospectiveGovernanceReminderLogType;
   return {
     id: String(row.id),
     reminderKey: String(row.reminder_key ?? ""),
-    reminderType: String(row.reminder_type ?? "weekly_summary") as RiskRetrospectiveGovernanceReminderLogType,
+    reminderType,
+    originalReminderId,
+    sourceFollowupId: sourceFollowupIdFromOriginalReminderId(originalReminderId, reminderType),
     priority: String(row.priority ?? "P1") as "P0" | "P1" | "P2",
     title: String(row.title ?? ""),
     assetTitle: typeof row.asset_title === "string" ? row.asset_title : null,
@@ -189,6 +198,20 @@ function snapshotSelectColumns(): string {
   ].join(",");
 }
 
+function originalReminderIdFromReminderKey(reminderKey: string): string | null {
+  const separatorIndex = reminderKey.indexOf(":");
+  const candidate = separatorIndex >= 0 ? reminderKey.slice(separatorIndex + 1) : reminderKey;
+  return candidate.trim() || null;
+}
+
+function sourceFollowupIdFromOriginalReminderId(originalReminderId: string | null, reminderType: RiskRetrospectiveGovernanceReminderLogType): string | null {
+  if (!originalReminderId || reminderType === "weekly_summary") return null;
+  const prefix = `${reminderType}-`;
+  if (!originalReminderId.startsWith(prefix)) return null;
+  const id = originalReminderId.slice(prefix.length).trim();
+  return id || null;
+}
+
 function reminderLogSelectColumns(): string {
   return [
     "id",
@@ -210,6 +233,7 @@ function reminderLogSelectColumns(): string {
     "error",
     "created_by_name",
     "request_id",
+    "metadata",
     "created_at",
     "updated_at",
   ].join(",");

@@ -11,6 +11,10 @@ import {
 } from "@/features/governance/repository";
 import { buildGovernanceSlaDashboard, deriveGovernanceSla } from "@/features/governance/sla";
 import { writeIntegrationSyncLog } from "@/features/operating-system/sync-logs";
+import { buildRiskRetrospectiveGovernanceOperationHistorySummary } from "@/features/risk/retrospective-governance-operation-analytics";
+import {
+  listRiskRetrospectiveGovernanceOperationHistory,
+} from "@/features/risk/retrospective-governance-operations";
 
 export const runtime = "nodejs";
 
@@ -25,9 +29,15 @@ export async function GET(): Promise<Response> {
   const requestId = crypto.randomUUID();
   const user = await getCurrentUser();
   const result = await listGovernanceInstances();
+  const operationHistory = await listRiskRetrospectiveGovernanceOperationHistory({ snapshotLimit: 8, reminderLimit: 80 });
   const governance_workbench = buildGovernanceSlaDashboard(result.instances, user);
   const governance_impact = buildGovernanceImpactDashboard(result.instances);
   const governance_strategy = listGovernanceStrategyCatalog();
+  const governance_knowledge_operation = buildRiskRetrospectiveGovernanceOperationHistorySummary({
+    snapshots: operationHistory.snapshots,
+    reminderLogs: operationHistory.reminderLogs,
+    warning: "warning" in operationHistory ? operationHistory.warning : undefined,
+  });
   return jsonResponse({
     request_id: requestId,
     ...result,
@@ -35,6 +45,7 @@ export async function GET(): Promise<Response> {
     governance_workbench,
     governance_impact,
     governance_strategy,
+    governance_knowledge_operation,
   }, 200, requestId);
 }
 

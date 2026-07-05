@@ -1,5 +1,10 @@
 import { getCurrentUser } from "@/features/auth/server";
-import { listRiskRetrospectiveGovernanceFollowups } from "@/features/risk/retrospective-governance-followups";
+import { createUnifiedAction } from "@/features/issue-change/repository";
+import {
+  listRiskRetrospectiveGovernanceFollowups,
+  updateRiskRetrospectiveGovernanceFollowupFromReminder,
+} from "@/features/risk/retrospective-governance-followups";
+import { buildRiskRetrospectiveGovernanceOperationHistorySummary } from "@/features/risk/retrospective-governance-operation-analytics";
 import {
   listRiskRetrospectiveGovernanceOperationHistory,
   persistRiskRetrospectiveGovernanceOperationSnapshot,
@@ -41,6 +46,10 @@ function isCloseStatus(value: unknown): value is "processed" | "ignored" | "esca
   return value === "processed" || value === "ignored" || value === "escalated";
 }
 
+function unifiedActionPriority(priority: "P0" | "P1" | "P2"): "P0" | "P1" | "P2" {
+  return priority;
+}
+
 async function currentOperationReport(limit = 500) {
   const followupResult = await listRiskRetrospectiveGovernanceFollowups(limit);
   return {
@@ -63,12 +72,18 @@ export async function GET(): Promise<Response> {
     currentOperationReport(),
     listRiskRetrospectiveGovernanceOperationHistory(),
   ]);
+  const operationSummary = buildRiskRetrospectiveGovernanceOperationHistorySummary({
+    snapshots: history.snapshots,
+    reminderLogs: history.reminderLogs,
+    warning: "warning" in history ? history.warning : undefined,
+  });
   return jsonResponse({
     request_id: requestId,
     status: history.status,
     operation_report: operationReport,
     snapshots: history.snapshots,
     reminder_logs: history.reminderLogs,
+    operation_summary: operationSummary,
     warning: "warning" in history ? history.warning : undefined,
     boundary: "知识治理运营历史只记录系统快照和提醒处理状态；不会自动关闭二次治理待办，也不会自动发送飞书消息。",
   }, statusCode(history.status), requestId);
@@ -145,6 +160,39 @@ export async function PATCH(request: Request): Promise<Response> {
     user,
     requestId,
   });
+  let linkedFollowup: Awaited<ReturnType<typeof updateRiskRetrospectiveGovernanceFollowupFromReminder>> | null = null;
+  let linkedAction: Awaited<ReturnType<typeof createUnifiedAction>> | null = null;
+  if (result.status === "succeeded" && result.log.sourceFollowupId && body.status === "processed") {
+    linkedFollowup = await updateRiskRetrospectiveGovernanceFollowupFromReminder({
+      id: result.log.sourceFollowupId,
+      status: "待验收",
+      closureNote: body.closureNote,
+      reviewResult: `运营提醒已处理：${result.log.title}。进入待验收，由PMO复核关闭标准和证据。`,
+    });
+  }
+  if (result.status === "succeeded" && result.log.sourceFollowupId && body.status === "escalated") {
+    linkedFollowup = await updateRiskRetrospectiveGovernanceFollowupFromReminder({
+      id: result.log.sourceFollowupId,
+      status: "处理中",
+      reviewResult: `运营提醒已升级：${result.log.title}。需纳入统一行动项或PMO治理跟踪。`,
+    });
+    linkedAction = await createUnifiedAction({
+      title: `[知识治理升级] ${result.log.title}`,
+      owner: result.log.ownerName || undefined,
+      dueDate: result.log.dueDate || undefined,
+      priority: unifiedActionPriority(result.log.priority),
+      projectName: "风险复盘资产治理",
+      sourceType: "governance",
+      sourceId: `risk-retro-governance-followup-${result.log.sourceFollowupId}`,
+      sourceReason: [
+        `来源：知识治理运营提醒 ${result.log.id}`,
+        `提醒类型：${result.log.reminderType}`,
+        `资产：${result.log.assetTitle || "未记录"}`,
+        `处理动作：${result.log.actionRequired || "未记录"}`,
+        `升级说明：${body.closureNote || "未填写"}`,
+      ].join("\n"),
+    }, user);
+  }
   if (result.status === "succeeded") {
     await writeOperationAudit({
       user,
@@ -157,9 +205,19 @@ export async function PATCH(request: Request): Promise<Response> {
       detail: {
         reminder_key: result.log.reminderKey,
         closure_note: result.log.closureNote,
+        source_followup_id: result.log.sourceFollowupId,
+        linked_followup_status: linkedFollowup?.status,
+        linked_action_status: linkedAction?.status,
       },
       requestId,
     });
   }
-  return jsonResponse({ request_id: requestId, ...result }, result.status === "failed" ? 500 : statusCode(result.status), requestId);
+  return jsonResponse({
+    request_id: requestId,
+    ...result,
+    linked_followup: linkedFollowup?.status === "succeeded" ? linkedFollowup.followup : undefined,
+    linked_followup_warning: linkedFollowup && linkedFollowup.status !== "succeeded" ? linkedFollowup.warning : undefined,
+    linked_action: linkedAction?.status === "succeeded" ? linkedAction.action : undefined,
+    linked_action_warning: linkedAction && linkedAction.status !== "succeeded" ? linkedAction.warning : undefined,
+  }, result.status === "failed" ? 500 : statusCode(result.status), requestId);
 }

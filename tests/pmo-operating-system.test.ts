@@ -24,6 +24,10 @@ import {
   reminderLogKey,
 } from '../src/features/risk/retrospective-governance-operation-utils.ts';
 import {
+  buildRiskRetrospectiveGovernanceOperationHistorySummary,
+  suppressRiskRetrospectiveGovernanceReminderDraftsForWeek,
+} from '../src/features/risk/retrospective-governance-operation-analytics.ts';
+import {
   buildGovernanceReport,
   deriveGovernanceNextState,
   initialGovernanceState,
@@ -207,8 +211,12 @@ test('governance workflows define inputs outputs owners states and audit trail',
   }
   assert.match(governanceRouteSource, /buildGovernanceSlaDashboard/);
   assert.match(governanceRouteSource, /buildGovernanceImpactDashboard/);
+  assert.match(governanceRouteSource, /buildRiskRetrospectiveGovernanceOperationHistorySummary/);
+  assert.match(governanceRouteSource, /governance_knowledge_operation/);
   assert.match(governancePageSource, /治理 SLA 与待我处理/);
   assert.match(governancePageSource, /治理结果业务联动/);
+  assert.match(governancePageSource, /知识治理运营趋势/);
+  assert.match(governancePageSource, /处理率/);
   assert.match(governancePageSource, /治理审计包导出/);
   assert.match(governancePageSource, /治理策略配置与预览/);
   assert.match(governancePageSource, /\/api\/governance\/strategy/);
@@ -813,9 +821,13 @@ test('risk sensitivity impact is discoverable from api dashboard and sensitivity
   assert.match(retrospectiveGovernanceWeeklyReminderApiSource, /confirm/);
   assert.match(retrospectiveGovernanceWeeklyReminderApiSource, /persistRiskRetrospectiveGovernanceReminderLogs/);
   assert.match(retrospectiveGovernanceWeeklyReminderApiSource, /persistRiskRetrospectiveGovernanceOperationSnapshot/);
+  assert.match(retrospectiveGovernanceWeeklyReminderApiSource, /suppressRiskRetrospectiveGovernanceReminderDraftsForWeek/);
+  assert.match(retrospectiveGovernanceWeeklyReminderApiSource, /suppressed_this_week/);
   assert.match(retrospectiveGovernanceOperationHistoryApiSource, /operation_report/);
   assert.match(retrospectiveGovernanceOperationHistoryApiSource, /snapshots/);
   assert.match(retrospectiveGovernanceOperationHistoryApiSource, /reminder_logs/);
+  assert.match(retrospectiveGovernanceOperationHistoryApiSource, /linked_followup/);
+  assert.match(retrospectiveGovernanceOperationHistoryApiSource, /createUnifiedAction/);
   assert.match(retrospectiveGovernanceOperationHistoryApiSource, /processed/);
   assert.match(retrospectiveGovernanceOperationHistoryApiSource, /ignored/);
   assert.match(retrospectiveGovernanceOperationHistoryApiSource, /escalated/);
@@ -1835,6 +1847,129 @@ test('risk retrospective governance operation helpers mask Feishu receivers and 
   assert.equal(maskFeishuReceiveId('oc_1234567890abcdef'), 'oc_1***cdef');
   assert.equal(maskFeishuReceiveId('abc123'), 'ab***');
   assert.equal(reminderLogKey('overdue-followup-1', '2026-07-05'), '2026-07-05:overdue-followup-1');
+});
+
+test('risk retrospective governance operation history suppresses weekly duplicate reminders and summarizes closure rate', () => {
+  const reminders = [
+    {
+      id: 'overdue-followup-1',
+      type: 'overdue' as const,
+      priority: 'P0' as const,
+      title: '[逾期提醒] 复盘资产A',
+      ownerName: '张三',
+      dueDate: '2026-07-05',
+      assetTitle: '复盘资产A',
+      reason: '逾期未处理',
+      actionRequired: '补齐治理动作',
+      confirmationRequired: true as const,
+      feishuMessage: '提醒A',
+    },
+    {
+      id: 'waiting_acceptance-followup-2',
+      type: 'waiting_acceptance' as const,
+      priority: 'P1' as const,
+      title: '[待验收提醒] 复盘资产B',
+      ownerName: '李四',
+      dueDate: '2026-07-06',
+      assetTitle: '复盘资产B',
+      reason: '待验收',
+      actionRequired: 'PMO验收',
+      confirmationRequired: true as const,
+      feishuMessage: '提醒B',
+    },
+  ];
+  const reminderLogs = [
+    {
+      id: 'log-1',
+      reminderKey: '2026-07-05:overdue-followup-1',
+      reminderType: 'overdue' as const,
+      originalReminderId: 'overdue-followup-1',
+      sourceFollowupId: 'followup-1',
+      priority: 'P0' as const,
+      title: '[逾期提醒] 复盘资产A',
+      assetTitle: '复盘资产A',
+      ownerName: '张三',
+      dueDate: '2026-07-05',
+      actionRequired: '补齐治理动作',
+      status: 'sent' as const,
+      feishuMessageId: 'msg-1',
+      feishuReceiveIdType: 'chat_id' as const,
+      feishuReceiveIdMasked: 'oc_1***cdef',
+      sentAt: '2026-07-05T01:00:00.000Z',
+      closedAt: null,
+      closureNote: null,
+      error: null,
+      createdByName: 'PMO',
+      requestId: 'req-1',
+      createdAt: '2026-07-05T01:00:00.000Z',
+      updatedAt: '2026-07-05T01:00:00.000Z',
+    },
+    {
+      id: 'log-2',
+      reminderKey: '2026-07-04:evidence_gap-followup-3',
+      reminderType: 'evidence_gap' as const,
+      originalReminderId: 'evidence_gap-followup-3',
+      sourceFollowupId: 'followup-3',
+      priority: 'P1' as const,
+      title: '[证据缺口提醒] 复盘资产C',
+      assetTitle: '复盘资产C',
+      ownerName: '王五',
+      dueDate: '2026-07-04',
+      actionRequired: '补证据',
+      status: 'processed' as const,
+      feishuMessageId: 'msg-2',
+      feishuReceiveIdType: 'chat_id' as const,
+      feishuReceiveIdMasked: 'oc_1***cdef',
+      sentAt: '2026-07-04T01:00:00.000Z',
+      closedAt: '2026-07-05T02:00:00.000Z',
+      closureNote: '已处理',
+      error: null,
+      createdByName: 'PMO',
+      requestId: 'req-2',
+      createdAt: '2026-07-04T01:00:00.000Z',
+      updatedAt: '2026-07-05T02:00:00.000Z',
+    },
+  ];
+  const suppression = suppressRiskRetrospectiveGovernanceReminderDraftsForWeek({
+    reminders,
+    reminderLogs,
+    weekStart: '2026-06-30',
+  });
+  assert.deepEqual(suppression.suppressedReminderIds, ['overdue-followup-1']);
+  assert.equal(suppression.summary.sendable, 1);
+  assert.match(suppression.boundary, /同一周/);
+
+  const summary = buildRiskRetrospectiveGovernanceOperationHistorySummary({
+    snapshots: [
+      {
+        id: 'snapshot-1',
+        snapshotDate: '2026-07-05',
+        snapshotWeekStart: '2026-06-30',
+        total: 8,
+        open: 5,
+        closed: 3,
+        overdueOpen: 2,
+        dueSoonOpen: 1,
+        waitingAcceptance: 1,
+        evidenceGaps: 1,
+        reminderCount: 2,
+        p0ReminderCount: 1,
+        evidenceCompletenessRate: 66.7,
+        reportFacts: ['知识治理周运营'],
+        reportMarkdownSha256: 'hash',
+        createdByName: 'PMO',
+        requestId: 'req-snapshot',
+        createdAt: '2026-07-05T03:00:00.000Z',
+        updatedAt: '2026-07-05T03:00:00.000Z',
+      },
+    ],
+    reminderLogs,
+  });
+  assert.equal(summary.summary.latestOpen, 5);
+  assert.equal(summary.summary.sentReminderLogs, 1);
+  assert.equal(summary.summary.closedReminderLogs, 1);
+  assert.equal(summary.summary.handlingRate, 50);
+  assert.equal(summary.reminderOwnerStats.some(item => item.ownerName === '张三'), true);
 });
 
 test('ai evidence builders expose basis citations and convertible actions', () => {

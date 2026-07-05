@@ -54,6 +54,13 @@ export interface UpdateRiskRetrospectiveGovernanceFollowupFeishuSyncInput {
   requestId?: string | null;
 }
 
+export interface UpdateRiskRetrospectiveGovernanceFollowupFromReminderInput {
+  id: string;
+  status: Extract<RiskRetrospectiveGovernanceFollowupStatus, "处理中" | "待验收">;
+  closureNote?: string | null;
+  reviewResult?: string | null;
+}
+
 export type RiskRetrospectiveGovernanceFollowupListResult =
   | { status: "succeeded"; followups: RiskRetrospectiveGovernanceFollowupRecord[] }
   | { status: "not_configured"; followups: RiskRetrospectiveGovernanceFollowupRecord[]; warning: string }
@@ -319,6 +326,49 @@ export async function transitionRiskRetrospectiveGovernanceFollowup(
     return {
       status: "failed",
       warning: error instanceof Error ? error.message : "流转风险复盘二次治理待办失败。",
+    };
+  }
+}
+
+export async function updateRiskRetrospectiveGovernanceFollowupFromReminder(
+  input: UpdateRiskRetrospectiveGovernanceFollowupFromReminderInput,
+): Promise<RiskRetrospectiveGovernanceFollowupUpdateResult> {
+  if (!isAuthStorageConfigured()) {
+    return { status: "not_configured", warning: "Supabase 未配置，无法联动更新风险复盘二次治理待办。" };
+  }
+  const status = normalizeRiskRetrospectiveGovernanceFollowupStatus(input.status);
+  if (!status || (status !== "处理中" && status !== "待验收")) {
+    return { status: "failed", warning: "风险复盘二次治理待办提醒联动状态不合法。" };
+  }
+
+  try {
+    const supabase = getAuthSupabase();
+    const updatePayload: Record<string, unknown> = {
+      status,
+      updated_at: new Date().toISOString(),
+    };
+    if (input.closureNote?.trim()) updatePayload.closure_note = input.closureNote.trim();
+    if (input.reviewResult?.trim()) updatePayload.review_result = input.reviewResult.trim();
+
+    const { data, error } = await supabase
+      .from("risk_retrospective_governance_followups")
+      .update(updatePayload)
+      .eq("id", input.id)
+      .select(selectColumns())
+      .maybeSingle();
+
+    if (error) {
+      return {
+        status: isMissingFollowupTableError(error.message) ? "not_configured" : "failed",
+        warning: sqlWarning(error.message),
+      };
+    }
+    if (!data) return { status: "not_found", warning: "风险复盘二次治理待办不存在。" };
+    return { status: "succeeded", followup: mapFollowup(data as unknown as Record<string, unknown>) };
+  } catch (error) {
+    return {
+      status: "failed",
+      warning: error instanceof Error ? error.message : "提醒日志联动更新风险复盘二次治理待办失败。",
     };
   }
 }

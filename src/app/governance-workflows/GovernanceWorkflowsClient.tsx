@@ -104,6 +104,32 @@ type GovernanceResponse = {
       highSeverity: number;
     };
   };
+  governance_knowledge_operation?: {
+    summary: {
+      snapshotCount: number;
+      latestSnapshotDate: string | null;
+      latestOpen: number;
+      latestOverdueOpen: number;
+      latestReminderCount: number;
+      sentReminderLogs: number;
+      closedReminderLogs: number;
+      processedReminderLogs: number;
+      ignoredReminderLogs: number;
+      escalatedReminderLogs: number;
+      handlingRate: number;
+    };
+    snapshotTrend: Array<{
+      snapshotDate: string;
+      open: number;
+      overdueOpen: number;
+      reminderCount: number;
+      evidenceCompletenessRate: number;
+    }>;
+    reminderStatusStats: Array<{ status: string; label: string; count: number }>;
+    reminderOwnerStats: Array<{ ownerName: string; sent: number; closed: number; escalated: number }>;
+    warning?: string;
+    boundary: string;
+  };
   warning?: string;
 };
 
@@ -216,6 +242,11 @@ function impactColor(severity?: string): string {
   return "var(--accent2)";
 }
 
+function trendHeight(value: number, maxValue: number): string {
+  if (maxValue <= 0) return "6%";
+  return `${Math.max(8, Math.round((value / maxValue) * 100))}%`;
+}
+
 export default function GovernanceWorkflowsClient() {
   const [data, setData] = useState<GovernanceResponse | null>(null);
   const [form, setForm] = useState<CreateForm>(emptyForm());
@@ -240,6 +271,11 @@ export default function GovernanceWorkflowsClient() {
     () => data?.workflows.find(workflow => workflow.id === form.workflowId),
     [data?.workflows, form.workflowId],
   );
+
+  const knowledgeOperationTrendMax = useMemo(() => {
+    const values = data?.governance_knowledge_operation?.snapshotTrend.flatMap(item => [item.open, item.overdueOpen, item.reminderCount]) ?? [];
+    return Math.max(1, ...values);
+  }, [data?.governance_knowledge_operation?.snapshotTrend]);
 
   const auditDownloadHref = useMemo(() => {
     const params = new URLSearchParams();
@@ -491,6 +527,77 @@ export default function GovernanceWorkflowsClient() {
                   </div>
                 ))}
               </div>
+            </section>
+
+            <section className="card" style={{ marginBottom: 18 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap", marginBottom: 12 }}>
+                <div>
+                  <div className="section-title">📈 知识治理运营趋势</div>
+                  <p style={{ color: "var(--text2)", lineHeight: 1.6, fontSize: "0.84rem" }}>
+                    汇总风险复盘资产二次治理的历史快照、提醒发送和处理结果；用于 PMO 周运营，不自动改写业务主数据。
+                  </p>
+                </div>
+                <span className="tag tag-purple">处理率 {(data.governance_knowledge_operation?.summary.handlingRate ?? 0).toFixed(1)}%</span>
+              </div>
+              {data.governance_knowledge_operation?.warning && (
+                <div style={{ border: "1px solid rgba(245,158,11,0.42)", background: "rgba(245,158,11,0.08)", color: "var(--amber)", borderRadius: 10, padding: 10, marginBottom: 10, fontSize: "0.78rem", lineHeight: 1.6 }}>
+                  {data.governance_knowledge_operation.warning}
+                </div>
+              )}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10, marginBottom: 14 }}>
+                {[
+                  ["最新快照", data.governance_knowledge_operation?.summary.latestSnapshotDate || "暂无", "历史运营口径"],
+                  ["未关闭待办", data.governance_knowledge_operation?.summary.latestOpen ?? 0, "最新快照"],
+                  ["逾期未关", data.governance_knowledge_operation?.summary.latestOverdueOpen ?? 0, "需要治理升级"],
+                  ["提醒待处理", data.governance_knowledge_operation?.summary.sentReminderLogs ?? 0, "已发未闭环"],
+                  ["已闭环提醒", data.governance_knowledge_operation?.summary.closedReminderLogs ?? 0, "处理/忽略/升级"],
+                  ["已升级提醒", data.governance_knowledge_operation?.summary.escalatedReminderLogs ?? 0, "需统一行动项跟踪"],
+                ].map(([label, value, hint]) => (
+                  <div key={label} style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 10, padding: 14 }}>
+                    <div style={{ color: "var(--text2)", fontSize: "0.76rem" }}>{label}</div>
+                    <strong style={{ fontSize: "1.05rem" }}>{value}</strong>
+                    <p style={{ color: "var(--text2)", fontSize: "0.74rem", marginTop: 4 }}>{hint}</p>
+                  </div>
+                ))}
+              </div>
+              {(data.governance_knowledge_operation?.snapshotTrend.length ?? 0) === 0 ? (
+                <div style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 10, padding: 14, color: "var(--text2)", fontSize: "0.82rem", lineHeight: 1.7 }}>
+                  暂无知识治理运营快照。请先在风险管理页保存快照或发送知识治理周提醒。
+                </div>
+              ) : (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(90px, 1fr))", gap: 10, alignItems: "end", marginBottom: 12 }}>
+                  {data.governance_knowledge_operation?.snapshotTrend.map(item => (
+                    <div key={item.snapshotDate} style={{ display: "grid", gap: 8 }}>
+                      <div style={{ height: 110, display: "flex", alignItems: "end", gap: 4, padding: "0 6px", borderBottom: "1px solid var(--border)" }}>
+                        <div title={`未关闭 ${item.open}`} style={{ flex: 1, height: trendHeight(item.open, knowledgeOperationTrendMax), background: "rgba(59,130,246,0.72)", borderRadius: "8px 8px 0 0" }} />
+                        <div title={`逾期 ${item.overdueOpen}`} style={{ flex: 1, height: trendHeight(item.overdueOpen, knowledgeOperationTrendMax), background: "rgba(239,68,68,0.72)", borderRadius: "8px 8px 0 0" }} />
+                        <div title={`提醒 ${item.reminderCount}`} style={{ flex: 1, height: trendHeight(item.reminderCount, knowledgeOperationTrendMax), background: "rgba(245,158,11,0.72)", borderRadius: "8px 8px 0 0" }} />
+                      </div>
+                      <div style={{ color: "var(--text2)", fontSize: "0.68rem", lineHeight: 1.5 }}>
+                        <strong style={{ color: "var(--text)" }}>{item.snapshotDate.slice(5)}</strong><br />
+                        未关{item.open} · 逾期{item.overdueOpen} · 提醒{item.reminderCount}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+                <span className="tag tag-blue">蓝：未关闭</span>
+                <span className="tag tag-red">红：逾期</span>
+                <span className="tag tag-amber">黄：提醒</span>
+              </div>
+              {(data.governance_knowledge_operation?.reminderOwnerStats.length ?? 0) > 0 && (
+                <div style={{ display: "grid", gap: 8 }}>
+                  <div style={{ color: "var(--text2)", fontSize: "0.76rem" }}>责任人提醒闭环 Top 追踪</div>
+                  {data.governance_knowledge_operation?.reminderOwnerStats.map(item => (
+                    <div key={item.ownerName} style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 10, padding: 10, display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                      <strong style={{ fontSize: "0.8rem" }}>{item.ownerName}</strong>
+                      <span style={{ color: "var(--text2)", fontSize: "0.76rem" }}>已发未处理 {item.sent} · 已闭环 {item.closed} · 已升级 {item.escalated}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <p style={{ color: "var(--text2)", fontSize: "0.76rem", lineHeight: 1.6, marginTop: 10 }}>{data.governance_knowledge_operation?.boundary}</p>
             </section>
 
             <section className="card" style={{ marginBottom: 18 }}>
