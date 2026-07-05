@@ -822,6 +822,10 @@ test('risk sensitivity impact is discoverable from api dashboard and sensitivity
   assert.match(riskPageSource, /知识治理周趋势/);
   assert.match(riskPageSource, /确认发送飞书提醒/);
   assert.match(riskPageSource, /\/api\/risk\/retrospective\/assets\/governance\/followups\/weekly-reminder/);
+  assert.match(riskPageSource, /运营历史快照与提醒闭环/);
+  assert.match(riskPageSource, /保存今日快照/);
+  assert.match(riskPageSource, /\/api\/risk\/retrospective\/assets\/governance\/followups\/operation-history/);
+  assert.match(riskPageSource, /updateGovernanceReminderLog/);
   assert.match(workbenchPageSource, /知识治理运营提醒草稿/);
   assert.match(workbenchPageSource, /riskRetrospectiveGovernanceFollowupOperation/);
   assert.match(issueChangeRepositorySource, /risk-retro-governance-followup-/);
