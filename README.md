@@ -67,6 +67,10 @@ npm run build
 - 飞书端已建立8张业务表；公开项目记录API会等用户登录和授权模型完成后再开放。
 - 全仓历史 ESLint 基线仍有旧问题；V4新增/改动文件执行独立零错误门禁。
 
+## AI-PMO System V5.3.39
+
+V5.3.39 将 V5.3.38 已保存的风险复盘二次治理待办接入 PM/PMO 每日工作台：`/api/operating-system/workbench` 现在会读取 `risk_retrospective_governance_followups`，按当前用户姓名、邮箱、手机或管理员角色过滤，生成“知识治理待办”KPI、逾期/P0/飞书待确认统计和今日优先动作。`/workbench` 新增“知识治理待办”区域，展示资产、原因、处理动作、责任人、deadline、关闭标准和飞书同步状态，并支持用户确认后“转统一行动项”，进入现有 P5 问题-变更-行动项闭环。该版本不新增 SQL，依赖已执行 V5.3.38 的 `supabase-v5338-risk-retrospective-governance-followups.sql` 和既有 `supabase-v530-issue-change-action-chain.sql`。
+
 ## AI-PMO System V5.3.38
 
 V5.3.38 将 V5.3.37 的运行时二次治理待办升级为可保存、可流转、可审计、可确认同步飞书的正式闭环：新增 `supabase-v5338-risk-retrospective-governance-followups.sql`、`/api/risk/retrospective/assets/governance/followups` 和 `/api/risk/retrospective/assets/governance/followups/feishu-sync`，支持保存低效果治理待办、读取历史待办、流转“待复核 → 处理中 → 待验收 → 已关闭”，并在用户明确确认后创建飞书任务。`/risk` 的“知识治理效果”区域新增“保存待办”和“已保存二次治理待办”，展示责任人、deadline、关闭标准、同步状态、飞书任务链接和错误提示。系统不会自动外发飞书任务；必须先“准备同步飞书”，再“确认写入飞书任务”。本版本需要在 Supabase SQL Editor 执行 `supabase-v5338-risk-retrospective-governance-followups.sql` 后才能持久化待办。

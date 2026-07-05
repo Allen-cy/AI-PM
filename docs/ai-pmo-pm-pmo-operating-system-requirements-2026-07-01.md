@@ -670,6 +670,14 @@ V5.3.38 落地说明：
 - 飞书同步采用显式确认机制：先准备同步进入“待确认”，再由用户确认写入飞书任务；系统不会自动外发飞书任务。
 - 本版本需要先在 Supabase 执行 `supabase-v5338-risk-retrospective-governance-followups.sql` 后才能持久化待办；未执行时运行时派生待办仍可查看，但保存/流转会提示 SQL 未执行。
 
+V5.3.39 落地说明：
+
+- 新增 `src/features/risk/retrospective-governance-followup-workbench.ts`，将已保存二次治理待办转换为工作台 KPI、责任人过滤结果、逾期/P0/飞书待确认统计和统一行动项草稿。
+- `/api/operating-system/workbench` 读取 `risk_retrospective_governance_followups`，并把知识治理待办并入 PM/PMO 每日工作台。
+- `/workbench` 新增“知识治理待办”区域，展示资产、原因、处理动作、责任人、deadline、关闭标准、飞书同步状态和飞书任务链接。
+- 使用者可在工作台中确认“转统一行动项”，写入 P5 统一行动项链路，并把对应二次治理待办流转为“处理中”。
+- 本版本不新增 SQL，依赖 V5.3.38 的待办表和既有 P5 统一行动项表；工作台只展示已保存待办，不会自动创建行动项或飞书任务。
+
 V5.3.7 落地说明：
 
 - 新增 `/blueprint-v3/delivery-management`「项目全流程交付管理蓝图」子页面，将原附件业务流程图结构化为销售管理、项目管理、监控管理、成本管理和工具支撑五类泳道。

@@ -3,6 +3,11 @@ import type { DashboardData } from "../dashboard/types.ts";
 import { FeishuBaseClient } from "../feishu/client.ts";
 import type { FeishuConfig } from "../feishu/config.ts";
 import { deriveWorkbenchSummary, type HealthStatus, type WorkbenchSummary } from "../pmo-operating-system.ts";
+import {
+  buildRiskRetrospectiveGovernanceFollowupWorkbench,
+  type RiskRetrospectiveGovernanceFollowupRecord,
+  type RiskRetrospectiveGovernanceFollowupWorkbench,
+} from "../risk/retrospective-governance-followup-workbench.ts";
 import { buildRiskIntegrationDashboard, type RiskIntegrationDashboard } from "../risk/integration.ts";
 import { recordMatchesProjectGrant, type ProjectAccessGrant } from "../security/authorization.ts";
 import type { Risk, RiskImpactArea } from "../../lib/risk.ts";
@@ -92,6 +97,7 @@ export interface OperationalWorkbench extends WorkbenchSummary {
   todayTodos: MyWorkbenchTodo[];
   businessReminders: MyBusinessReminder[];
   riskIntegration: RiskIntegrationDashboard;
+  riskRetrospectiveGovernanceFollowups: RiskRetrospectiveGovernanceFollowupWorkbench;
   evidence: WorkbenchEvidence;
 }
 
@@ -420,12 +426,14 @@ function buildOperationalActions(input: {
   risks: MyWorkbenchRisk[];
   todos: MyWorkbenchTodo[];
   reminders: MyBusinessReminder[];
+  riskRetrospectiveGovernanceFollowups?: RiskRetrospectiveGovernanceFollowupWorkbench;
 }): OperationalWorkbench["actions"] {
   const actions: OperationalWorkbench["actions"] = [];
   const overdueTodos = input.todos.filter(item => item.daysLeft !== null && item.daysLeft < 0);
   const highRisks = input.risks.filter(item => item.severity === "高");
   const duePayments = input.reminders.filter(item => item.daysLeft !== null && item.daysLeft <= 7);
   const unhealthyProjects = input.projects.filter(item => item.health === "error" || item.health === "warning");
+  const governanceFollowups = input.riskRetrospectiveGovernanceFollowups;
 
   if (overdueTodos.length > 0) {
     actions.push({
@@ -469,6 +477,17 @@ function buildOperationalActions(input: {
       due: "本周例会前",
       source: "飞书项目台账",
       action: "检查进度、风险、阶段门和回款是否需要升级处理。",
+    });
+  }
+  if (governanceFollowups && governanceFollowups.summary.myPending > 0) {
+    actions.push({
+      id: "p3-risk-retro-governance-followups",
+      priority: governanceFollowups.summary.highPriority > 0 || governanceFollowups.summary.overdue > 0 ? "P0" : "P1",
+      title: `处理 ${governanceFollowups.summary.myPending} 个知识治理待办`,
+      owner: "PMO",
+      due: governanceFollowups.summary.overdue > 0 ? "今天" : "本周",
+      source: "风险复盘资产二次治理待办",
+      action: "复核低效果治理动作，确认补充编辑、合并、撤回、重新发布或转统一行动项。",
     });
   }
   if (actions.length === 0) {
@@ -538,6 +557,7 @@ function buildFallbackWorkbench(user?: WorkbenchUser | null): OperationalWorkben
     todayTodos: [],
     businessReminders: [],
     riskIntegration: buildRiskIntegrationDashboard({ risks: [], dashboard: null }),
+    riskRetrospectiveGovernanceFollowups: buildRiskRetrospectiveGovernanceFollowupWorkbench({ followups: [], user }),
     evidence: {
       source: "missing",
       generatedAt: new Date().toISOString(),
@@ -558,6 +578,8 @@ export function buildOperationalWorkbench(input: {
   payments: RawRecord[];
   dashboard?: DashboardData | null;
   projectAccessGrants?: ProjectAccessGrant[];
+  riskRetrospectiveGovernanceFollowups?: RiskRetrospectiveGovernanceFollowupRecord[];
+  riskRetrospectiveGovernanceFollowupsWarning?: string;
 }): OperationalWorkbench {
   const dashboard = input.dashboard ?? buildDashboardFromRecords(input.projects);
   if (!dashboard && input.projects.length === 0 && input.risks.length === 0 && input.tasks.length === 0 && input.milestones.length === 0 && input.payments.length === 0) {
@@ -618,6 +640,11 @@ export function buildOperationalWorkbench(input: {
     dashboard,
     limit: 12,
   });
+  const riskRetrospectiveGovernanceFollowups = buildRiskRetrospectiveGovernanceFollowupWorkbench({
+    followups: input.riskRetrospectiveGovernanceFollowups ?? [],
+    user: input.user,
+    warning: input.riskRetrospectiveGovernanceFollowupsWarning,
+  });
   const base = deriveWorkbenchSummary(dashboard);
   const evidence: WorkbenchEvidence = {
     source: "feishu",
@@ -654,19 +681,27 @@ export function buildOperationalWorkbench(input: {
       { label: "今日待办", value: String(todayTodos.length), hint: "来自任务、里程碑和风险复核。", status: todayTodos.some(item => item.priority === "P0") ? "error" : todayTodos.length > 0 ? "warning" : "ok" },
       { label: "重点风险", value: String(myRisks.filter(item => item.severity === "高").length), hint: "来自飞书风险登记册。", status: myRisks.some(item => item.severity === "高") ? "error" : myRisks.length > 0 ? "warning" : "ok" },
       { label: "经营提醒", value: String(businessReminders.length), hint: "来自回款表和项目台账应收字段。", status: businessReminders.some(item => item.daysLeft !== null && item.daysLeft < 0) ? "error" : businessReminders.length > 0 ? "warning" : "ok" },
+      { label: "知识治理待办", value: String(riskRetrospectiveGovernanceFollowups.summary.myPending), hint: "来自已保存的风险复盘资产二次治理待办。", status: riskRetrospectiveGovernanceFollowups.summary.highPriority > 0 || riskRetrospectiveGovernanceFollowups.summary.overdue > 0 ? "error" : riskRetrospectiveGovernanceFollowups.summary.myPending > 0 ? "warning" : "ok" },
     ],
-    actions: buildOperationalActions({ projects: myProjects, risks: myRisks, todos: todayTodos, reminders: businessReminders }),
+    actions: buildOperationalActions({ projects: myProjects, risks: myRisks, todos: todayTodos, reminders: businessReminders, riskRetrospectiveGovernanceFollowups }),
     myProjects,
     myRisks,
     todayTodos,
     businessReminders,
     riskIntegration,
+    riskRetrospectiveGovernanceFollowups,
     evidence,
     aiSuggestions: buildAiSuggestions({ projects: myProjects, risks: myRisks, todos: todayTodos, reminders: businessReminders, evidence }),
   };
 }
 
-export async function loadOperationalWorkbenchFromFeishu(config: FeishuConfig, user?: WorkbenchUser | null, projectAccessGrants: ProjectAccessGrant[] = []): Promise<OperationalWorkbench> {
+export async function loadOperationalWorkbenchFromFeishu(
+  config: FeishuConfig,
+  user?: WorkbenchUser | null,
+  projectAccessGrants: ProjectAccessGrant[] = [],
+  riskRetrospectiveGovernanceFollowups: RiskRetrospectiveGovernanceFollowupRecord[] = [],
+  riskRetrospectiveGovernanceFollowupsWarning?: string,
+): Promise<OperationalWorkbench> {
   const client = new FeishuBaseClient(config);
   const [projects, risks, tasks, milestones, payments] = await Promise.all([
     config.tables.project ? client.listRecords("project", 500).catch(() => []) : Promise.resolve([]),
@@ -686,6 +721,8 @@ export async function loadOperationalWorkbenchFromFeishu(config: FeishuConfig, u
     payments: payments.map(item => normalizeWorkbenchFields(item.fields)),
     dashboard: buildDashboardFromRecords(projectRows),
     projectAccessGrants,
+    riskRetrospectiveGovernanceFollowups,
+    riskRetrospectiveGovernanceFollowupsWarning,
   });
 }
 

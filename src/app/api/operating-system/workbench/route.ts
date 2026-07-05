@@ -1,6 +1,7 @@
 import { getEffectiveFeishuConfig } from "@/features/feishu/user-config";
 import { writeIntegrationSyncLog } from "@/features/operating-system/sync-logs";
 import { buildOperationalWorkbench, loadOperationalWorkbenchFromFeishu } from "@/features/operating-system/workbench";
+import { listRiskRetrospectiveGovernanceFollowups } from "@/features/risk/retrospective-governance-followups";
 import { loadProjectAccessGrantsForUser, writeOperationAudit } from "@/features/security/repository";
 
 export const runtime = "nodejs";
@@ -8,6 +9,7 @@ export const runtime = "nodejs";
 export async function GET(): Promise<Response> {
   const requestId = crypto.randomUUID();
   const effective = await getEffectiveFeishuConfig();
+  const followupResult = await listRiskRetrospectiveGovernanceFollowups(80);
   if (!effective.config) {
     return Response.json({
       status: "not_configured",
@@ -20,6 +22,8 @@ export async function GET(): Promise<Response> {
         tasks: [],
         milestones: [],
         payments: [],
+        riskRetrospectiveGovernanceFollowups: followupResult.followups,
+        riskRetrospectiveGovernanceFollowupsWarning: "warning" in followupResult ? followupResult.warning : undefined,
       }),
       request_id: requestId,
     }, {
@@ -30,7 +34,13 @@ export async function GET(): Promise<Response> {
 
   try {
     const grants = await loadProjectAccessGrantsForUser(effective.user);
-    const workbench = await loadOperationalWorkbenchFromFeishu(effective.config, effective.user, grants);
+    const workbench = await loadOperationalWorkbenchFromFeishu(
+      effective.config,
+      effective.user,
+      grants,
+      followupResult.followups,
+      "warning" in followupResult ? followupResult.warning : undefined,
+    );
     await writeIntegrationSyncLog({
       userId: effective.user?.id,
       source: "system",
@@ -76,6 +86,8 @@ export async function GET(): Promise<Response> {
         tasks: [],
         milestones: [],
         payments: [],
+        riskRetrospectiveGovernanceFollowups: followupResult.followups,
+        riskRetrospectiveGovernanceFollowupsWarning: "warning" in followupResult ? followupResult.warning : undefined,
       }),
       request_id: requestId,
     }, {

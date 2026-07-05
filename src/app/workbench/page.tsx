@@ -38,6 +38,44 @@ type Workbench = {
     }>;
     boundary: string;
   };
+  riskRetrospectiveGovernanceFollowups: {
+    summary: {
+      totalOpen: number;
+      myPending: number;
+      overdue: number;
+      dueSoon: number;
+      highPriority: number;
+      waitingFeishuConfirmation: number;
+    };
+    workItems: Array<{
+      id: string;
+      assetTitle: string;
+      reason: string;
+      actionRequired: string;
+      ownerName: string;
+      dueDate: string;
+      daysLeft: number | null;
+      priority: "P0" | "P1" | "P2";
+      status: string;
+      closingCriteria: string;
+      feishuSyncStatus: string;
+      feishuTaskUrl: string | null;
+      source: string;
+      action: string;
+      actionDraft: {
+        title: string;
+        owner: string;
+        dueDate: string;
+        priority: "P0" | "P1" | "P2";
+        projectName: string;
+        sourceType: "governance";
+        sourceId: string;
+        sourceReason: string;
+      };
+    }>;
+    warning?: string;
+    boundary: string;
+  };
   evidence: {
     userScope: string;
     matchedBy: string[];
@@ -133,6 +171,7 @@ export default function WorkbenchPage() {
   const [error, setError] = useState("");
   const [actionMessage, setActionMessage] = useState("");
   const [savingSuggestion, setSavingSuggestion] = useState<string | null>(null);
+  const [savingGovernanceFollowup, setSavingGovernanceFollowup] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -186,6 +225,56 @@ export default function WorkbenchPage() {
       setActionMessage(error instanceof Error ? error.message : "AI建议转行动项失败。");
     } finally {
       setSavingSuggestion(null);
+    }
+  }
+
+  async function convertGovernanceFollowupToAction(item: Workbench["riskRetrospectiveGovernanceFollowups"]["workItems"][number]) {
+    setSavingGovernanceFollowup(item.id);
+    setActionMessage("");
+    try {
+      const response = await fetch("/api/issue-change", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          operation: "create_action",
+          ...item.actionDraft,
+        }),
+      });
+      const body = await response.json();
+      if (!response.ok || body.status !== "succeeded") {
+        throw new Error(body.warning || "知识治理待办转统一行动项失败。");
+      }
+
+      await fetch("/api/risk/retrospective/assets/governance/followups", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: item.id,
+          status: "处理中",
+          reviewResult: `已从工作台转入统一行动项：${body.action?.id || body.action?.title || item.actionDraft.title}`,
+        }),
+      });
+
+      setActionMessage(`已转入统一行动项：${body.action?.title || item.actionDraft.title}`);
+      setData(prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          workbench: {
+            ...prev.workbench,
+            riskRetrospectiveGovernanceFollowups: {
+              ...prev.workbench.riskRetrospectiveGovernanceFollowups,
+              workItems: prev.workbench.riskRetrospectiveGovernanceFollowups.workItems.map(workItem =>
+                workItem.id === item.id ? { ...workItem, status: "处理中" } : workItem,
+              ),
+            },
+          },
+        };
+      });
+    } catch (error) {
+      setActionMessage(error instanceof Error ? error.message : "知识治理待办转统一行动项失败。");
+    } finally {
+      setSavingGovernanceFollowup(null);
     }
   }
 
@@ -377,6 +466,69 @@ export default function WorkbenchPage() {
                   ))}
                 </div>
               )}
+            </section>
+
+            <section className="card" style={{ marginBottom: 18 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", marginBottom: 12 }}>
+                <div>
+                  <div className="section-title">🧠 知识治理待办</div>
+                  <p style={{ color: "var(--text2)", lineHeight: 1.6, fontSize: "0.84rem" }}>
+                    来自风险复盘资产治理效果。这里只展示已经保存的二次治理待办；可转入统一行动项后进入 P5 闭环。
+                  </p>
+                </div>
+                <Link href="/risk" className="btn-secondary" style={{ textDecoration: "none", whiteSpace: "nowrap" }}>进入复盘资产治理</Link>
+              </div>
+              {workbench.riskRetrospectiveGovernanceFollowups.warning && (
+                <div style={{ border: "1px solid rgba(245,158,11,0.48)", background: "rgba(245,158,11,0.08)", color: "var(--amber)", borderRadius: 10, padding: 12, marginBottom: 12, fontSize: "0.82rem", lineHeight: 1.6 }}>
+                  {workbench.riskRetrospectiveGovernanceFollowups.warning}
+                </div>
+              )}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10, marginBottom: 12 }}>
+                {[
+                  ["待我处理", workbench.riskRetrospectiveGovernanceFollowups.summary.myPending],
+                  ["全部未关闭", workbench.riskRetrospectiveGovernanceFollowups.summary.totalOpen],
+                  ["已逾期", workbench.riskRetrospectiveGovernanceFollowups.summary.overdue],
+                  ["7天内", workbench.riskRetrospectiveGovernanceFollowups.summary.dueSoon],
+                  ["P0", workbench.riskRetrospectiveGovernanceFollowups.summary.highPriority],
+                  ["飞书待确认", workbench.riskRetrospectiveGovernanceFollowups.summary.waitingFeishuConfirmation],
+                ].map(([label, value]) => (
+                  <div key={label} style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 10, padding: 12 }}>
+                    <div style={{ color: "var(--text2)", fontSize: "0.76rem" }}>{label}</div>
+                    <strong>{value}</strong>
+                  </div>
+                ))}
+              </div>
+              {workbench.riskRetrospectiveGovernanceFollowups.workItems.length === 0 ? (
+                <p style={{ color: "var(--text2)", lineHeight: 1.7 }}>
+                  暂无已保存的知识治理待办。若“知识治理效果”中已有运行时待办，请先到风险管理页点击“保存待办”。
+                </p>
+              ) : (
+                <div style={{ display: "grid", gap: 12 }}>
+                  {workbench.riskRetrospectiveGovernanceFollowups.workItems.slice(0, 6).map(item => (
+                    <div key={item.id} style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 10, padding: 14 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start", flexWrap: "wrap" }}>
+                        <div>
+                          <strong>{item.assetTitle}</strong>
+                          <p style={{ color: "var(--text2)", fontSize: "0.8rem", lineHeight: 1.6, marginTop: 6 }}>
+                            {item.status} · 责任人：{item.ownerName} · deadline：{item.dueDate} · 飞书：{item.feishuSyncStatus}
+                          </p>
+                        </div>
+                        <span className="tag" style={{ background: `${priorityColor[item.priority]}22`, color: priorityColor[item.priority] }}>{item.priority}</span>
+                      </div>
+                      <p style={{ color: "var(--text2)", fontSize: "0.8rem", lineHeight: 1.6, marginTop: 6 }}>原因：{item.reason}</p>
+                      <p style={{ color: "var(--accent2)", fontSize: "0.8rem", lineHeight: 1.6, marginTop: 6 }}>动作：{item.actionRequired}</p>
+                      <p style={{ color: "var(--amber)", fontSize: "0.78rem", lineHeight: 1.6, marginTop: 6 }}>关闭标准：{item.closingCriteria}</p>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+                        <button className="btn-secondary" disabled={savingGovernanceFollowup === item.id} onClick={() => void convertGovernanceFollowupToAction(item)} style={{ padding: "7px 10px", fontSize: "0.76rem" }}>
+                          {savingGovernanceFollowup === item.id ? "写入中..." : "转统一行动项"}
+                        </button>
+                        {item.feishuTaskUrl && <a className="btn-secondary" href={item.feishuTaskUrl} target="_blank" rel="noreferrer" style={{ textDecoration: "none", padding: "7px 10px", fontSize: "0.76rem" }}>查看飞书任务</a>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <p style={{ color: "var(--text2)", fontSize: "0.76rem", lineHeight: 1.6, marginTop: 10 }}>{workbench.riskRetrospectiveGovernanceFollowups.boundary}</p>
             </section>
 
             <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 18, marginBottom: 18 }}>

@@ -14,6 +14,7 @@ import {
   evaluateFeishuFieldMappings,
 } from '../src/features/operating-system/diagnostics.ts';
 import { buildOperationalWorkbench } from '../src/features/operating-system/workbench.ts';
+import { buildRiskRetrospectiveGovernanceFollowupWorkbench } from '../src/features/risk/retrospective-governance-followup-workbench.ts';
 import {
   buildGovernanceReport,
   deriveGovernanceNextState,
@@ -209,6 +210,9 @@ test('governance workflows define inputs outputs owners states and audit trail',
   assert.match(governanceRepositorySource, /governance_strategy/);
   assert.match(workbenchPageSource, /待我处理治理事项/);
   assert.match(workbenchPageSource, /\/api\/governance\/workflows/);
+  assert.match(workbenchPageSource, /知识治理待办/);
+  assert.match(workbenchPageSource, /转统一行动项/);
+  assert.match(workbenchPageSource, /riskRetrospectiveGovernanceFollowups/);
 });
 
 test('governance strategy previews require classification fields before recommending workflows', () => {
@@ -1504,6 +1508,34 @@ test('operational workbench filters projects risks todos and reminders for curre
         回款状态: '待回款',
       },
     ],
+    riskRetrospectiveGovernanceFollowups: [
+      {
+        id: 'followup-1',
+        actionKey: 'risk-retro-governance-action:log-1',
+        sourceLogId: null,
+        assetTitle: '低效果复盘资产',
+        reason: '治理后质量分仍低于70分',
+        actionRequired: '补充经验教训、早期预警规则和适用范围',
+        ownerName: '张三',
+        dueDate: '2026-07-06',
+        priority: 'high',
+        status: '待复核',
+        closingCriteria: '质量分提升到70分以上，并形成可引用知识卡',
+        reminderText: '请完成二次治理',
+        closureNote: null,
+        reviewResult: null,
+        feishuSyncStatus: '待确认',
+        feishuTaskGuid: null,
+        feishuTaskUrl: null,
+        feishuSyncError: null,
+        feishuSyncedAt: null,
+        feishuSyncRequestId: null,
+        createdByName: 'PMO知识管理员',
+        createdAt: '2026-07-04T00:00:00.000Z',
+        updatedAt: '2026-07-04T00:00:00.000Z',
+        closedAt: null,
+      },
+    ],
   });
 
   assert.equal(workbench.evidence.userScope, 'matched-owner');
@@ -1516,7 +1548,80 @@ test('operational workbench filters projects risks todos and reminders for curre
   assert.equal(workbench.riskIntegration.summary.openRiskLinks >= 1, true);
   assert.equal(workbench.riskIntegration.summary.paymentImpacts >= 1, true);
   assert.equal(workbench.riskIntegration.links.some(link => link.writebackMode === 'manual_confirmation_required'), true);
+  assert.equal(workbench.riskRetrospectiveGovernanceFollowups.summary.myPending, 1);
+  assert.equal(workbench.riskRetrospectiveGovernanceFollowups.summary.highPriority, 1);
+  assert.equal(workbench.riskRetrospectiveGovernanceFollowups.summary.waitingFeishuConfirmation, 1);
+  assert.equal(workbench.riskRetrospectiveGovernanceFollowups.workItems[0]?.actionDraft.sourceType, 'governance');
+  assert.equal(workbench.kpis.some(item => item.label === '知识治理待办' && item.value === '1'), true);
+  assert.equal(workbench.actions.some(action => action.id === 'p3-risk-retro-governance-followups'), true);
   assert.match(workbench.aiSuggestions[0].basis, /任务1条/);
+});
+
+test('risk retrospective governance followups become scoped workbench actions', () => {
+  const dashboard = buildRiskRetrospectiveGovernanceFollowupWorkbench({
+    user: { name: '张三', role: 'user' },
+    followups: [
+      {
+        id: 'followup-zhangsan',
+        actionKey: 'risk-retro-governance-action:log-zhangsan',
+        sourceLogId: null,
+        assetTitle: '张三负责资产',
+        reason: '治理后未产生引用增长',
+        actionRequired: '补充标签、标题别名和适用场景',
+        ownerName: '张三',
+        dueDate: '2026-07-06',
+        priority: 'medium',
+        status: '处理中',
+        closingCriteria: 'RAG引用数增加或完成撤回决策',
+        reminderText: '请完成二次治理',
+        closureNote: null,
+        reviewResult: null,
+        feishuSyncStatus: '未同步',
+        feishuTaskGuid: null,
+        feishuTaskUrl: null,
+        feishuSyncError: null,
+        feishuSyncedAt: null,
+        feishuSyncRequestId: null,
+        createdByName: null,
+        createdAt: '2026-07-04T00:00:00.000Z',
+        updatedAt: '2026-07-04T00:00:00.000Z',
+        closedAt: null,
+      },
+      {
+        id: 'followup-lisi',
+        actionKey: 'risk-retro-governance-action:log-lisi',
+        sourceLogId: null,
+        assetTitle: '李四负责资产',
+        reason: '重复风险未下降',
+        actionRequired: '复核合并对象',
+        ownerName: '李四',
+        dueDate: '2026-07-06',
+        priority: 'high',
+        status: '待复核',
+        closingCriteria: '重复风险下降',
+        reminderText: '请完成二次治理',
+        closureNote: null,
+        reviewResult: null,
+        feishuSyncStatus: '未同步',
+        feishuTaskGuid: null,
+        feishuTaskUrl: null,
+        feishuSyncError: null,
+        feishuSyncedAt: null,
+        feishuSyncRequestId: null,
+        createdByName: null,
+        createdAt: '2026-07-04T00:00:00.000Z',
+        updatedAt: '2026-07-04T00:00:00.000Z',
+        closedAt: null,
+      },
+    ],
+  });
+
+  assert.equal(dashboard.summary.totalOpen, 2);
+  assert.equal(dashboard.summary.myPending, 1);
+  assert.equal(dashboard.workItems[0]?.assetTitle, '张三负责资产');
+  assert.equal(dashboard.workItems[0]?.actionDraft.priority, 'P1');
+  assert.match(dashboard.workItems[0]?.actionDraft.sourceReason ?? '', /关闭标准/);
+  assert.match(dashboard.boundary, /保存待办/);
 });
 
 test('ai evidence builders expose basis citations and convertible actions', () => {
