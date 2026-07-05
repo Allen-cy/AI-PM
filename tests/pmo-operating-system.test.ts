@@ -16,6 +16,7 @@ import {
 import { buildOperationalWorkbench } from '../src/features/operating-system/workbench.ts';
 import {
   buildRiskRetrospectiveGovernanceFollowupClosureDashboard,
+  buildRiskRetrospectiveGovernanceFollowupOperationReport,
   buildRiskRetrospectiveGovernanceFollowupWorkbench,
 } from '../src/features/risk/retrospective-governance-followup-workbench.ts';
 import {
@@ -790,6 +791,9 @@ test('risk sensitivity impact is discoverable from api dashboard and sensitivity
   assert.match(retrospectiveGovernanceApiSource, /risk_retrospective_governance_followup_closure/);
   assert.match(retrospectiveGovernanceFollowupsApiSource, /saveRiskRetrospectiveGovernanceFollowups/);
   assert.match(retrospectiveGovernanceFollowupsApiSource, /transitionRiskRetrospectiveGovernanceFollowup/);
+  assert.match(retrospectiveGovernanceFollowupsApiSource, /buildRiskRetrospectiveGovernanceFollowupOperationReport/);
+  assert.match(retrospectiveGovernanceFollowupsApiSource, /operation_report/);
+  assert.match(retrospectiveGovernanceFollowupsApiSource, /format.*markdown/);
   assert.match(retrospectiveGovernanceFollowupsFeishuApiSource, /FeishuActionClient/);
   assert.match(retrospectiveGovernanceFollowupsFeishuApiSource, /confirm/);
   assert.match(issueChangeRepositorySource, /risk-retro-governance-followup-/);
@@ -1702,6 +1706,78 @@ test('risk retrospective governance followup closure dashboard exposes reportabl
   assert.equal(dashboard.openWorkItems[0]?.actionDraft.sourceId, 'risk-retro-governance-followup-followup-open');
   assert.equal(dashboard.reportFacts.some(item => item.includes('关闭率50.0%')), true);
   assert.match(dashboard.boundary, /关闭证据/);
+});
+
+test('risk retrospective governance followup operation report filters owners and exports weekly markdown', () => {
+  const report = buildRiskRetrospectiveGovernanceFollowupOperationReport({
+    filters: { owner: '张三', due: 'overdue', feishuSyncStatus: '待确认' },
+    followups: [
+      {
+        id: 'ops-open-overdue',
+        actionKey: 'risk-retro-governance-action:ops-open-overdue',
+        sourceLogId: null,
+        assetTitle: '逾期待办知识卡',
+        reason: '治理后重复风险未下降',
+        actionRequired: '补充重复风险识别和处置规则',
+        ownerName: '张三',
+        dueDate: '2020-01-01',
+        priority: 'high',
+        status: '处理中',
+        closingCriteria: '重复风险下降并完成PMO复核',
+        reminderText: '请完成二次治理',
+        closureNote: null,
+        reviewResult: null,
+        feishuSyncStatus: '待确认',
+        feishuTaskGuid: null,
+        feishuTaskUrl: null,
+        feishuSyncError: null,
+        feishuSyncedAt: null,
+        feishuSyncRequestId: null,
+        createdByName: 'PMO',
+        createdAt: '2026-07-01T00:00:00.000Z',
+        updatedAt: '2026-07-01T00:00:00.000Z',
+        closedAt: null,
+      },
+      {
+        id: 'ops-closed-gap',
+        actionKey: 'risk-retro-governance-action:ops-closed-gap',
+        sourceLogId: null,
+        assetTitle: '缺证据已关闭知识卡',
+        reason: '关闭时未补充证据',
+        actionRequired: '补齐关闭证据',
+        ownerName: '李四',
+        dueDate: '2026-07-01',
+        priority: 'medium',
+        status: '已关闭',
+        closingCriteria: '补齐证据',
+        reminderText: '请补证据',
+        closureNote: null,
+        reviewResult: '已关闭但证据缺失',
+        feishuSyncStatus: '已同步',
+        feishuTaskGuid: null,
+        feishuTaskUrl: null,
+        feishuSyncError: null,
+        feishuSyncedAt: null,
+        feishuSyncRequestId: null,
+        createdByName: 'PMO',
+        createdAt: '2026-07-01T00:00:00.000Z',
+        updatedAt: '2026-07-04T00:00:00.000Z',
+        closedAt: '2026-07-04T00:00:00.000Z',
+      },
+    ],
+  });
+
+  assert.equal(report.summary.total, 2);
+  assert.equal(report.summary.filtered, 1);
+  assert.equal(report.summary.overdueOpen, 1);
+  assert.equal(report.summary.highPriorityOpen, 1);
+  assert.equal(report.summary.evidenceGaps, 1);
+  assert.equal(report.ownerStats.find(item => item.ownerName === '张三')?.overdue, 1);
+  assert.equal(report.items[0]?.id, 'ops-open-overdue');
+  assert.equal(report.reportFacts.some(item => item.includes('知识治理周运营')), true);
+  assert.match(report.reportMarkdown, /知识治理待办周运营清单/);
+  assert.match(report.reportMarkdown, /负责人追踪/);
+  assert.match(report.boundary, /周运营/);
 });
 
 test('ai evidence builders expose basis citations and convertible actions', () => {
