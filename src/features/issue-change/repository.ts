@@ -2,6 +2,10 @@ import { getAuthSupabase, isAuthStorageConfigured, type AppUser } from "../auth/
 import { listRisks } from "@/lib/risk-repository";
 import type { Risk } from "@/lib/risk";
 import {
+  transitionRiskRetrospectiveGovernanceFollowup,
+  type RiskRetrospectiveGovernanceFollowupRecord,
+} from "../risk/retrospective-governance-followups.ts";
+import {
   buildIssueChangeChainReport,
   deriveChangeNextStatus,
   deriveIssueNextStatus,
@@ -57,6 +61,7 @@ export interface IssueChangeChainResult {
 }
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const RISK_RETROSPECTIVE_GOVERNANCE_FOLLOWUP_ACTION_PREFIX = "risk-retro-governance-followup-";
 
 function missingStorageResult(): IssueChangeChainResult {
   return {
@@ -99,6 +104,14 @@ function code(prefix: "ISS" | "CHG"): string {
 
 function actorName(user: AppUser | null): string {
   return user?.name || user?.email || user?.phone || "系统";
+}
+
+function riskRetrospectiveGovernanceFollowupIdFromAction(action: UnifiedActionRecord): string | null {
+  if (action.sourceType !== "governance") return null;
+  if (!action.sourceId) return null;
+  if (!action.sourceId.startsWith(RISK_RETROSPECTIVE_GOVERNANCE_FOLLOWUP_ACTION_PREFIX)) return null;
+  const id = action.sourceId.slice(RISK_RETROSPECTIVE_GOVERNANCE_FOLLOWUP_ACTION_PREFIX.length).trim();
+  return id || null;
 }
 
 function safeNumber(value: unknown): number | null {
@@ -625,6 +638,8 @@ export async function closeUnifiedAction(input: CloseActionInput, user: AppUser 
   status: "succeeded" | "not_found" | "not_configured" | "failed";
   action?: UnifiedActionRecord;
   event?: IssueChangeEventRecord;
+  linkedGovernanceFollowup?: RiskRetrospectiveGovernanceFollowupRecord;
+  linkedGovernanceWarning?: string;
   warning?: string;
 }> {
   if (!isAuthStorageConfigured()) return missingStorageResult();
@@ -667,7 +682,26 @@ export async function closeUnifiedAction(input: CloseActionInput, user: AppUser 
       evidence: input.closeEvidence,
       metadata: { source_type: action.sourceType, source_id: action.sourceId },
     });
-    return { status: "succeeded", action, event };
+    const governanceFollowupId = action.status === "done" ? riskRetrospectiveGovernanceFollowupIdFromAction(action) : null;
+    if (!governanceFollowupId) {
+      return { status: "succeeded", action, event };
+    }
+
+    const linkedGovernanceResult = await transitionRiskRetrospectiveGovernanceFollowup({
+      id: governanceFollowupId,
+      status: "已关闭",
+      closureNote: input.closeEvidence.trim(),
+      reviewResult: `统一行动项已关闭：${action.title}（行动项 ${action.id}）。`,
+    });
+    if (linkedGovernanceResult.status !== "succeeded") {
+      return {
+        status: "succeeded",
+        action,
+        event,
+        linkedGovernanceWarning: linkedGovernanceResult.warning,
+      };
+    }
+    return { status: "succeeded", action, event, linkedGovernanceFollowup: linkedGovernanceResult.followup };
   } catch (error) {
     return {
       status: isMissingTableError(error instanceof Error ? error.message : "") ? "not_configured" : "failed",

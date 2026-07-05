@@ -14,7 +14,10 @@ import {
   evaluateFeishuFieldMappings,
 } from '../src/features/operating-system/diagnostics.ts';
 import { buildOperationalWorkbench } from '../src/features/operating-system/workbench.ts';
-import { buildRiskRetrospectiveGovernanceFollowupWorkbench } from '../src/features/risk/retrospective-governance-followup-workbench.ts';
+import {
+  buildRiskRetrospectiveGovernanceFollowupClosureDashboard,
+  buildRiskRetrospectiveGovernanceFollowupWorkbench,
+} from '../src/features/risk/retrospective-governance-followup-workbench.ts';
 import {
   buildGovernanceReport,
   deriveGovernanceNextState,
@@ -757,6 +760,7 @@ test('risk sensitivity impact is discoverable from api dashboard and sensitivity
   const retrospectiveGovernanceApiSource = readFileSync(new URL('../src/app/api/risk/retrospective/assets/governance/route.ts', import.meta.url), 'utf8');
   const retrospectiveGovernanceFollowupsApiSource = readFileSync(new URL('../src/app/api/risk/retrospective/assets/governance/followups/route.ts', import.meta.url), 'utf8');
   const retrospectiveGovernanceFollowupsFeishuApiSource = readFileSync(new URL('../src/app/api/risk/retrospective/assets/governance/followups/feishu-sync/route.ts', import.meta.url), 'utf8');
+  const issueChangeRepositorySource = readFileSync(new URL('../src/features/issue-change/repository.ts', import.meta.url), 'utf8');
   const retrospectiveAssetsSql = readFileSync(new URL('../supabase-v5330-risk-retrospective-assets.sql', import.meta.url), 'utf8');
   const retrospectiveExportSql = readFileSync(new URL('../supabase-v5331-risk-retrospective-knowledge-sync.sql', import.meta.url), 'utf8');
   const retrospectiveValueSql = readFileSync(new URL('../supabase-v5332-risk-retrospective-value.sql', import.meta.url), 'utf8');
@@ -781,11 +785,15 @@ test('risk sensitivity impact is discoverable from api dashboard and sensitivity
   assert.match(retrospectiveExportApiSource, /buildRiskRetrospectiveKnowledgeExport/);
   assert.match(retrospectiveQualityApiSource, /buildRiskRetrospectiveQualityDashboard/);
   assert.match(retrospectiveGovernanceApiSource, /buildRiskRetrospectiveGovernanceDashboard/);
+  assert.match(retrospectiveGovernanceApiSource, /buildRiskRetrospectiveGovernanceFollowupClosureDashboard/);
   assert.match(retrospectiveGovernanceApiSource, /risk_retrospective_governance/);
+  assert.match(retrospectiveGovernanceApiSource, /risk_retrospective_governance_followup_closure/);
   assert.match(retrospectiveGovernanceFollowupsApiSource, /saveRiskRetrospectiveGovernanceFollowups/);
   assert.match(retrospectiveGovernanceFollowupsApiSource, /transitionRiskRetrospectiveGovernanceFollowup/);
   assert.match(retrospectiveGovernanceFollowupsFeishuApiSource, /FeishuActionClient/);
   assert.match(retrospectiveGovernanceFollowupsFeishuApiSource, /confirm/);
+  assert.match(issueChangeRepositorySource, /risk-retro-governance-followup-/);
+  assert.match(issueChangeRepositorySource, /transitionRiskRetrospectiveGovernanceFollowup/);
   assert.match(retrospectiveAssetsSql, /risk_retrospective_assets/);
   assert.match(retrospectiveExportSql, /risk_retrospective_asset_sync_logs/);
   assert.match(retrospectiveValueSql, /risk_retrospective_asset_usage_logs/);
@@ -813,6 +821,7 @@ test('risk sensitivity impact is discoverable from api dashboard and sensitivity
   assert.match(riskPageSource, /确认写入飞书任务/);
   assert.match(riskPageSource, /下载治理报告/);
   assert.match(reportRouteSource, /riskRetrospective/);
+  assert.match(reportRouteSource, /riskRetrospectiveGovernanceFollowups/);
   assert.match(trackingPageSource, /关闭证据与复核意见/);
 });
 
@@ -1624,6 +1633,77 @@ test('risk retrospective governance followups become scoped workbench actions', 
   assert.match(dashboard.boundary, /保存待办/);
 });
 
+test('risk retrospective governance followup closure dashboard exposes reportable closure evidence', () => {
+  const dashboard = buildRiskRetrospectiveGovernanceFollowupClosureDashboard({
+    followups: [
+      {
+        id: 'followup-open',
+        actionKey: 'risk-retro-governance-action:open',
+        sourceLogId: null,
+        assetTitle: '待关闭知识卡',
+        reason: 'RAG引用未增长',
+        actionRequired: '补充适用范围和早期预警规则',
+        ownerName: '张三',
+        dueDate: '2020-01-01',
+        priority: 'high',
+        status: '处理中',
+        closingCriteria: '完成补充并通过PMO验收',
+        reminderText: '请完成二次治理',
+        closureNote: null,
+        reviewResult: null,
+        feishuSyncStatus: '待确认',
+        feishuTaskGuid: null,
+        feishuTaskUrl: null,
+        feishuSyncError: null,
+        feishuSyncedAt: null,
+        feishuSyncRequestId: null,
+        createdByName: 'PMO知识管理员',
+        createdAt: '2026-07-04T00:00:00.000Z',
+        updatedAt: '2026-07-04T00:00:00.000Z',
+        closedAt: null,
+      },
+      {
+        id: 'followup-closed',
+        actionKey: 'risk-retro-governance-action:closed',
+        sourceLogId: null,
+        assetTitle: '已关闭知识卡',
+        reason: '治理后质量分仍低',
+        actionRequired: '补齐经验教训',
+        ownerName: '李四',
+        dueDate: '2026-07-01',
+        priority: 'medium',
+        status: '已关闭',
+        closingCriteria: '质量分提升并形成可引用知识卡',
+        reminderText: '请复核',
+        closureNote: '已补齐经验教训、适用范围和RAG标签。',
+        reviewResult: '统一行动项已关闭。',
+        feishuSyncStatus: '已同步',
+        feishuTaskGuid: 'task-1',
+        feishuTaskUrl: 'https://example.com/task-1',
+        feishuSyncError: null,
+        feishuSyncedAt: '2026-07-04T00:00:00.000Z',
+        feishuSyncRequestId: 'req-1',
+        createdByName: 'PMO知识管理员',
+        createdAt: '2026-07-03T00:00:00.000Z',
+        updatedAt: '2026-07-04T00:00:00.000Z',
+        closedAt: '2026-07-04T00:00:00.000Z',
+      },
+    ],
+  });
+
+  assert.equal(dashboard.summary.total, 2);
+  assert.equal(dashboard.summary.open, 1);
+  assert.equal(dashboard.summary.closed, 1);
+  assert.equal(dashboard.summary.closureRate, 50);
+  assert.equal(dashboard.summary.closedWithEvidence, 1);
+  assert.equal(dashboard.summary.highPriorityOpen, 1);
+  assert.equal(dashboard.summary.waitingFeishuConfirmation, 1);
+  assert.equal(dashboard.recentClosed[0]?.assetTitle, '已关闭知识卡');
+  assert.equal(dashboard.openWorkItems[0]?.actionDraft.sourceId, 'risk-retro-governance-followup-followup-open');
+  assert.equal(dashboard.reportFacts.some(item => item.includes('关闭率50.0%')), true);
+  assert.match(dashboard.boundary, /关闭证据/);
+});
+
 test('ai evidence builders expose basis citations and convertible actions', () => {
   const business = buildBusinessCaseEvidence({
     projectName: 'AI PMO平台',
@@ -1894,6 +1974,62 @@ test('report factory cites data sources and turns meeting minutes into actions',
     riskSensitivityImpact,
     riskClosure,
     riskRetrospective,
+    riskRetrospectiveGovernanceFollowups: buildRiskRetrospectiveGovernanceFollowupClosureDashboard({
+      followups: [
+        {
+          id: 'report-followup-open',
+          actionKey: 'risk-retro-governance-action:report-open',
+          sourceLogId: null,
+          assetTitle: '验收付款知识卡',
+          reason: '同类风险仍有重复出现',
+          actionRequired: '补充验收付款早期预警规则',
+          ownerName: 'PMO知识管理员',
+          dueDate: '2026-07-05',
+          priority: 'high',
+          status: '处理中',
+          closingCriteria: '规则被RAG引用并降低重复风险',
+          reminderText: '请补齐知识卡',
+          closureNote: null,
+          reviewResult: null,
+          feishuSyncStatus: '待确认',
+          feishuTaskGuid: null,
+          feishuTaskUrl: null,
+          feishuSyncError: null,
+          feishuSyncedAt: null,
+          feishuSyncRequestId: null,
+          createdByName: 'PMO',
+          createdAt: '2026-07-01T00:00:00.000Z',
+          updatedAt: '2026-07-01T00:00:00.000Z',
+          closedAt: null,
+        },
+        {
+          id: 'report-followup-closed',
+          actionKey: 'risk-retro-governance-action:report-closed',
+          sourceLogId: null,
+          assetTitle: '缺陷关闭知识卡',
+          reason: '复盘资产质量分低',
+          actionRequired: '补齐缺陷关闭口径',
+          ownerName: '交付负责人',
+          dueDate: '2026-07-04',
+          priority: 'medium',
+          status: '已关闭',
+          closingCriteria: '知识卡可被周报引用',
+          reminderText: '请复核关闭证据',
+          closureNote: '统一行动项已补齐关闭证据和复核意见。',
+          reviewResult: 'PMO验收通过。',
+          feishuSyncStatus: '已同步',
+          feishuTaskGuid: 'task-report-closed',
+          feishuTaskUrl: 'https://example.com/task-report-closed',
+          feishuSyncError: null,
+          feishuSyncedAt: '2026-07-04T00:00:00.000Z',
+          feishuSyncRequestId: 'req-report-closed',
+          createdByName: 'PMO',
+          createdAt: '2026-07-01T00:00:00.000Z',
+          updatedAt: '2026-07-04T00:00:00.000Z',
+          closedAt: '2026-07-04T00:00:00.000Z',
+        },
+      ],
+    }),
     governanceImpact: buildGovernanceImpactDashboard([{
       id: 'gov-rpt-1',
       workflowId: 'project-closure',
@@ -1923,12 +2059,14 @@ test('report factory cites data sources and turns meeting minutes into actions',
   assert.equal(dataPackage.dataSources.some(source => source.label === '风险敏感性影响包'), true);
   assert.equal(dataPackage.dataSources.some(source => source.label === '风险关闭证据包'), true);
   assert.equal(dataPackage.dataSources.some(source => source.label === '风险复盘资产包'), true);
+  assert.equal(dataPackage.dataSources.some(source => source.label === '知识治理待办闭环'), true);
   assert.equal(dataPackage.dataSources.some(source => source.label === '治理工作流与审批联动'), true);
   assert.equal(dataPackage.financeFacts.some(item => item.includes('验收阻塞回款')), true);
   assert.equal(dataPackage.riskFacts.some(item => item.includes('风险联动')), true);
   assert.equal(dataPackage.riskFacts.some(item => item.includes('敏感性分析')), true);
   assert.equal(dataPackage.riskFacts.some(item => item.includes('风险关闭')), true);
   assert.equal(dataPackage.riskFacts.some(item => item.includes('风险复盘')), true);
+  assert.equal(dataPackage.riskFacts.some(item => item.includes('知识治理闭环')), true);
   assert.equal(dataPackage.riskFacts.some(item => item.includes('治理联动')), true);
   assert.equal(actionItems.length, 2);
   assert.equal(actionItems[1].priority, 'P0');
@@ -1938,10 +2076,12 @@ test('report factory cites data sources and turns meeting minutes into actions',
   assert.equal(evidence.citations.includes('风险敏感性影响包'), true);
   assert.equal(evidence.citations.includes('风险关闭证据包'), true);
   assert.equal(evidence.citations.includes('风险复盘资产包'), true);
+  assert.equal(evidence.citations.includes('知识治理待办闭环'), true);
   assert.equal(evidence.citations.includes('治理工作流与审批联动'), true);
   assert.equal(evidence.basis.some(item => item.label === '敏感性分析依据'), true);
   assert.equal(evidence.basis.some(item => item.label === '风险关闭依据'), true);
   assert.equal(evidence.basis.some(item => item.label === '风险复盘依据'), true);
+  assert.equal(evidence.basis.some(item => item.label === '知识治理待办闭环依据'), true);
   assert.equal(evidence.suggestedActions.length, 2);
   assert.match(markdown, /数据来源与生成边界/);
   assert.match(markdown, /补齐客户付款条件清单/);

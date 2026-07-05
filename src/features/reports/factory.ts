@@ -5,6 +5,7 @@ import type { GovernanceImpactDashboard } from "../governance/impact.ts";
 import type { RiskClosureDashboard } from "../risk/closure.ts";
 import type { RiskIntegrationDashboard } from "../risk/integration.ts";
 import type { RiskRetrospectiveDashboard } from "../risk/retrospective.ts";
+import type { RiskRetrospectiveGovernanceFollowupClosureDashboard } from "../risk/retrospective-governance-followup-workbench.ts";
 import type { RiskSensitivityImpactDashboard } from "../risk/sensitivity-impact.ts";
 import {
   generateReportId,
@@ -26,6 +27,7 @@ export interface ReportFactoryContext {
   riskSensitivityImpact?: RiskSensitivityImpactDashboard;
   riskClosure?: RiskClosureDashboard;
   riskRetrospective?: RiskRetrospectiveDashboard;
+  riskRetrospectiveGovernanceFollowups?: RiskRetrospectiveGovernanceFollowupClosureDashboard;
 }
 
 export interface ReportFactoryPackage {
@@ -112,6 +114,7 @@ export function buildReportFactoryPackage(request: ReportRequest, context: Repor
     ...(context.riskSensitivityImpact?.reportFacts.slice(0, 6).map(item => `敏感性分析：${item}`) ?? []),
     ...(context.riskClosure?.reportFacts.slice(0, 6).map(item => `风险关闭：${item}`) ?? []),
     ...(context.riskRetrospective?.reportFacts.slice(0, 6).map(item => `风险复盘：${item}`) ?? []),
+    ...(context.riskRetrospectiveGovernanceFollowups?.reportFacts.slice(0, 6).map(item => `知识治理闭环：${item}`) ?? []),
   ];
 
   const dataSources: ReportDataSource[] = [
@@ -156,6 +159,13 @@ export function buildReportFactoryPackage(request: ReportRequest, context: Repor
       detail: context.riskRetrospective
         ? `复盘候选${context.riskRetrospective.summary.retrospectiveCandidates}项，知识卡${context.riskRetrospective.summary.knowledgeCards}张，预警规则${context.riskRetrospective.summary.warningRules}条，待补复盘${context.riskRetrospective.summary.missingLessons}项。`
         : "未读取到风险复盘资产包；报告不引用风险复盘知识卡和预警规则。",
+      source: "system",
+    },
+    {
+      label: "知识治理待办闭环",
+      detail: context.riskRetrospectiveGovernanceFollowups
+        ? `已保存待办${context.riskRetrospectiveGovernanceFollowups.summary.total}项，未关闭${context.riskRetrospectiveGovernanceFollowups.summary.open}项，已关闭${context.riskRetrospectiveGovernanceFollowups.summary.closed}项，关闭率${context.riskRetrospectiveGovernanceFollowups.summary.closureRate.toFixed(1)}%，逾期未关闭${context.riskRetrospectiveGovernanceFollowups.summary.overdueOpen}项，关闭证据完整${context.riskRetrospectiveGovernanceFollowups.summary.closedWithEvidence}项。`
+        : "未读取到已保存知识治理待办；报告不引用知识治理待办闭环状态。",
       source: "system",
     },
     {
@@ -244,6 +254,7 @@ export function buildReportEvidence(input: {
       { label: "敏感性分析依据", detail: input.context.riskSensitivityImpact?.reportFacts.slice(0, 4).join("；") || "当前无敏感性分析建议。", source: "rule" },
       { label: "风险关闭依据", detail: input.context.riskClosure?.reportFacts.slice(0, 4).join("；") || "当前无风险关闭证据事实。", source: "rule" },
       { label: "风险复盘依据", detail: input.context.riskRetrospective?.reportFacts.slice(0, 4).join("；") || "当前无风险复盘资产。", source: "rule" },
+      { label: "知识治理待办闭环依据", detail: input.context.riskRetrospectiveGovernanceFollowups?.reportFacts.slice(0, 4).join("；") || "当前无知识治理待办闭环事实。", source: "rule" },
       { label: "治理审批依据", detail: input.context.governanceImpact?.reportFacts.slice(0, 4).join("；") || "当前无治理审批联动事实。", source: "rule" },
       { label: "生成边界", detail: "报告不编造财务结果；估算项必须保留口径说明，正式报告提交前需人工复核。", source: "rule" },
     ],
@@ -251,6 +262,7 @@ export function buildReportEvidence(input: {
       { type: "project", name: input.request.projectName },
       { type: "system", name: "报告工厂" },
       { type: "system", name: "业财一体化经营驾驶舱" },
+      { type: "system", name: "知识治理待办闭环" },
     ],
     citations,
     suggestedActions: input.actionItems.map(item => ({

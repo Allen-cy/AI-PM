@@ -8,6 +8,8 @@ import { withAuditResult } from "@/features/ai/evidence";
 import { buildRiskClosureDashboard } from "@/features/risk/closure";
 import { buildRiskIntegrationDashboard } from "@/features/risk/integration";
 import { buildRiskRetrospectiveDashboard } from "@/features/risk/retrospective";
+import { listRiskRetrospectiveGovernanceFollowups } from "@/features/risk/retrospective-governance-followups";
+import { buildRiskRetrospectiveGovernanceFollowupClosureDashboard } from "@/features/risk/retrospective-governance-followup-workbench";
 import { buildRiskSensitivityImpactDashboard } from "@/features/risk/sensitivity-impact";
 import { filterDashboardByProjectAccess, projectAccessMode } from "@/features/security/authorization";
 import { loadProjectAccessGrantsForUser, writeOperationAudit } from "@/features/security/repository";
@@ -150,6 +152,11 @@ export async function POST(request: Request): Promise<Response> {
   const riskSensitivityImpact = buildRiskSensitivityImpactDashboard(dashboard);
   const riskClosure = buildRiskClosureDashboard(riskResult.risks, riskResult.events);
   const riskRetrospective = buildRiskRetrospectiveDashboard(riskResult.risks, riskResult.events, riskClosure);
+  const governanceFollowupResult = await listRiskRetrospectiveGovernanceFollowups(120);
+  const riskRetrospectiveGovernanceFollowups = buildRiskRetrospectiveGovernanceFollowupClosureDashboard({
+    followups: governanceFollowupResult.followups,
+    warning: "warning" in governanceFollowupResult ? governanceFollowupResult.warning : undefined,
+  });
   const context: ReportFactoryContext = {
     dashboard,
     finance,
@@ -161,6 +168,7 @@ export async function POST(request: Request): Promise<Response> {
     riskSensitivityImpact,
     riskClosure,
     riskRetrospective,
+    riskRetrospectiveGovernanceFollowups,
   };
   const dataPackage = buildReportFactoryPackage(body, context);
   const actionItems = actionItemsFor(body, context);

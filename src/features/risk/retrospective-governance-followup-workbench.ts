@@ -55,6 +55,32 @@ export interface RiskRetrospectiveGovernanceFollowupWorkbench {
   boundary: string;
 }
 
+export interface RiskRetrospectiveGovernanceFollowupClosureDashboard {
+  summary: {
+    total: number;
+    open: number;
+    closed: number;
+    closureRate: number;
+    closedWithEvidence: number;
+    overdueOpen: number;
+    highPriorityOpen: number;
+    waitingFeishuConfirmation: number;
+  };
+  reportFacts: string[];
+  recentClosed: Array<{
+    id: string;
+    assetTitle: string;
+    ownerName: string;
+    dueDate: string;
+    closedAt: string | null;
+    closureNote: string | null;
+    reviewResult: string | null;
+  }>;
+  openWorkItems: RiskRetrospectiveGovernanceFollowupWorkbenchItem[];
+  warning?: string;
+  boundary: string;
+}
+
 const PRIORITY_MAP: Record<RiskRetrospectiveGovernanceActionItemPriority, "P0" | "P1" | "P2"> = {
   high: "P0",
   medium: "P1",
@@ -164,5 +190,64 @@ export function buildRiskRetrospectiveGovernanceFollowupWorkbench(input: {
     workItems,
     warning: input.warning,
     boundary: "工作台只展示已保存的二次治理待办；运行时派生但未保存的待办仍需先在风险管理页点击“保存待办”。转统一行动项和写入飞书任务均需人工确认。",
+  };
+}
+
+export function buildRiskRetrospectiveGovernanceFollowupClosureDashboard(input: {
+  followups: RiskRetrospectiveGovernanceFollowupRecord[];
+  user?: RiskRetrospectiveGovernanceFollowupWorkbenchUser | null;
+  warning?: string;
+}): RiskRetrospectiveGovernanceFollowupClosureDashboard {
+  const workbench = buildRiskRetrospectiveGovernanceFollowupWorkbench({
+    ...input,
+    user: input.user ?? { role: "admin" },
+  });
+  const closedFollowups = input.followups.filter(item => item.status === "已关闭");
+  const openFollowups = input.followups.filter(item => item.status !== "已关闭");
+  const overdueOpen = openFollowups.filter(item => {
+    const left = daysLeft(item.dueDate);
+    return left !== null && left < 0;
+  }).length;
+  const highPriorityOpen = openFollowups.filter(item => mapWorkbenchPriority(item.priority) === "P0").length;
+  const closureRate = input.followups.length > 0
+    ? Math.round((closedFollowups.length / input.followups.length) * 1000) / 10
+    : 0;
+  const recentClosed = closedFollowups
+    .slice()
+    .sort((a, b) => String(b.closedAt || b.updatedAt).localeCompare(String(a.closedAt || a.updatedAt)))
+    .slice(0, 6)
+    .map(item => ({
+      id: item.id,
+      assetTitle: item.assetTitle,
+      ownerName: item.ownerName || "PMO知识管理员",
+      dueDate: item.dueDate,
+      closedAt: item.closedAt,
+      closureNote: item.closureNote,
+      reviewResult: item.reviewResult,
+    }));
+
+  const reportFacts = [
+    `知识治理待办闭环：共${input.followups.length}项，未关闭${openFollowups.length}项，已关闭${closedFollowups.length}项，关闭率${closureRate.toFixed(1)}%。`,
+    `知识治理待办证据：已关闭${closedFollowups.length}项中${closedFollowups.filter(item => Boolean(item.closureNote?.trim())).length}项补充关闭证据。`,
+    `知识治理待办风险：逾期未关闭${overdueOpen}项，P0未关闭${highPriorityOpen}项，飞书待确认${input.followups.filter(item => item.feishuSyncStatus === "待确认").length}项。`,
+    ...recentClosed.slice(0, 3).map(item => `最近关闭：${item.assetTitle}，责任人${item.ownerName}，证据=${item.closureNote || "未填写"}。`),
+  ];
+
+  return {
+    summary: {
+      total: input.followups.length,
+      open: openFollowups.length,
+      closed: closedFollowups.length,
+      closureRate,
+      closedWithEvidence: closedFollowups.filter(item => Boolean(item.closureNote?.trim())).length,
+      overdueOpen,
+      highPriorityOpen,
+      waitingFeishuConfirmation: input.followups.filter(item => item.feishuSyncStatus === "待确认").length,
+    },
+    reportFacts,
+    recentClosed,
+    openWorkItems: workbench.workItems,
+    warning: input.warning,
+    boundary: "知识治理待办闭环只统计已保存的风险复盘资产二次治理待办；关闭证据来自统一行动项或风险管理页人工填写，不自动替代PMO验收。",
   };
 }
