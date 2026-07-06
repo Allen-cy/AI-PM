@@ -26,6 +26,7 @@ import {
   buildFeishuActionPreview,
   validateFeishuActionBody,
 } from '../src/features/feishu/action-payload.ts';
+import { buildKnowledgeOperationDashboard } from '../src/features/knowledge/operations.ts';
 import {
   canManageFeishuActionConfirmation,
   type FeishuActionConfirmationRecord,
@@ -1694,6 +1695,24 @@ test('core operating pages reuse unified integration status panel', () => {
     assert.match(pageSource, /IntegrationStatusPanelClient/);
     assert.match(pageSource, new RegExp(moduleName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   }
+});
+
+test('knowledge operation dashboard maps lifecycle to impact modules templates and review actions', () => {
+  const dashboard = buildKnowledgeOperationDashboard(new Date('2026-07-07T00:00:00.000Z'));
+  const knowledgePageSource = readFileSync(new URL('../src/app/knowledge/page.tsx', import.meta.url), 'utf8');
+  const operationPageSource = readFileSync(new URL('../src/app/knowledge/operations/page.tsx', import.meta.url), 'utf8');
+  const operationRouteSource = readFileSync(new URL('../src/app/api/knowledge/operations/route.ts', import.meta.url), 'utf8');
+
+  assert.equal(dashboard.summary.total, 27);
+  assert.equal(dashboard.summary.reviewed > 0, true);
+  assert.equal(dashboard.summary.affectedModules > 0, true);
+  assert.equal(dashboard.impactModules.some(module => module.module === '报告工厂'), true);
+  assert.equal(dashboard.lifecycleActions.length > 0, true);
+  assert.equal(dashboard.templateDirectory.some(template => template.lifecycleStatus === '已关联'), true);
+  assert.match(dashboard.boundary, /不会自动修改/);
+  assert.match(knowledgePageSource, new RegExp('/knowledge/operations'));
+  assert.match(operationPageSource, /知识生命周期运营/);
+  assert.match(operationRouteSource, /buildKnowledgeOperationDashboard/);
 });
 
 test('operational workbench filters projects risks todos and reminders for current user', () => {

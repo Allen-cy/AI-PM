@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
+import Link from 'next/link';
 import { IntegrationStatusPanelClient } from '@/components/IntegrationStatusPanelClient';
 import { toAssistantMessage } from '@/features/rag/client-adapter';
 import type { RagQueryResult } from '@/features/rag/types';
@@ -111,9 +112,14 @@ export default function KnowledgePage() {
           <h1 style={{ fontSize: '1.8rem', fontWeight: 800 }}>
             知识库与AI问答
           </h1>
-          <button className="btn-secondary" onClick={startNewSession}>
-            新建会话
-          </button>
+          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+            <Link href="/knowledge/operations" className="btn-secondary" style={{ textDecoration: 'none' }}>
+              知识运营
+            </Link>
+            <button className="btn-secondary" onClick={startNewSession}>
+              新建会话
+            </button>
+          </div>
         </div>
         <p style={{ color: 'var(--text2)', fontSize: '0.9rem' }}>
           基于27篇已审AI-PMO知识的可追溯问答 · 30题黄金评测 Top1 通过
