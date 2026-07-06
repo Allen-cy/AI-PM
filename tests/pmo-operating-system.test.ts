@@ -1651,6 +1651,7 @@ test('generic Feishu action APIs expose queue confirm and cancel boundaries', ()
   const confirmationsRouteSource = readFileSync(new URL('../src/app/api/integrations/feishu/actions/confirmations/route.ts', import.meta.url), 'utf8');
   const confirmRouteSource = readFileSync(new URL('../src/app/api/integrations/feishu/actions/confirmations/[id]/confirm/route.ts', import.meta.url), 'utf8');
   const cancelRouteSource = readFileSync(new URL('../src/app/api/integrations/feishu/actions/confirmations/[id]/cancel/route.ts', import.meta.url), 'utf8');
+  const integrationCenterSource = readFileSync(new URL('../src/app/integration-center/page.tsx', import.meta.url), 'utf8');
   const confirmationSql = readFileSync(new URL('../supabase-v5349-feishu-action-confirmations.sql', import.meta.url), 'utf8');
 
   assert.match(actionRouteSource, /confirmation_required/);
@@ -1662,6 +1663,9 @@ test('generic Feishu action APIs expose queue confirm and cancel boundaries', ()
   assert.match(confirmRouteSource, /claimEvent/);
   assert.match(confirmRouteSource, /writeOperationAudit/);
   assert.match(cancelRouteSource, /updateFeishuActionConfirmationStatus/);
+  assert.match(integrationCenterSource, /飞书写入待确认队列/);
+  assert.match(integrationCenterSource, /confirmFeishuAction/);
+  assert.match(integrationCenterSource, /cancelFeishuAction/);
   assert.match(confirmationSql, /create table if not exists feishu_action_confirmations/);
   assert.match(confirmationSql, /pending_confirmation/);
 });

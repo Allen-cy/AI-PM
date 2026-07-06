@@ -77,6 +77,31 @@ type SyncLogSnapshot = {
   }>;
 };
 
+type FeishuActionConfirmationSnapshot = {
+  status: string;
+  warning?: string;
+  migration?: string;
+  confirmations: Array<{
+    id: string;
+    requesterName?: string | null;
+    source: string;
+    sourcePage?: string | null;
+    actionType: string;
+    targetSummary: string;
+    riskLevel: string;
+    status: string;
+    preview: {
+      targetType: string;
+      targetSummary: string;
+      riskReasons: string[];
+      fields: Array<{ label: string; value: string }>;
+    };
+    errorCode?: string | null;
+    cancelReason?: string | null;
+    createdAt: string;
+  }>;
+};
+
 const statusColor: Record<string, string> = {
   ok: "var(--green)",
   succeeded: "var(--green)",
@@ -112,23 +137,35 @@ function StatusPill({ status }: { status: string }) {
 export default function IntegrationCenterPage() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [logs, setLogs] = useState<SyncLogSnapshot | null>(null);
+  const [confirmations, setConfirmations] = useState<FeishuActionConfirmationSnapshot | null>(null);
+  const [confirmationBusyId, setConfirmationBusyId] = useState("");
+  const [confirmationMessage, setConfirmationMessage] = useState("");
   const [error, setError] = useState("");
+
+  async function loadConfirmations() {
+    const response = await fetch("/api/integrations/feishu/actions/confirmations?status=all&limit=20", { cache: "no-store" });
+    const data = await response.json();
+    setConfirmations(data);
+  }
 
   useEffect(() => {
     let cancelled = false;
     async function load() {
       try {
-        const [integrationResponse, logsResponse] = await Promise.all([
+        const [integrationResponse, logsResponse, confirmationsResponse] = await Promise.all([
           fetch("/api/operating-system/integrations", { cache: "no-store" }),
           fetch("/api/operating-system/sync-logs", { cache: "no-store" }),
+          fetch("/api/integrations/feishu/actions/confirmations?status=all&limit=20", { cache: "no-store" }),
         ]);
-        const [integrationData, logsData] = await Promise.all([
+        const [integrationData, logsData, confirmationData] = await Promise.all([
           integrationResponse.json(),
           logsResponse.json(),
+          confirmationsResponse.json(),
         ]);
         if (!cancelled) {
           setSnapshot(integrationData);
           setLogs(logsData);
+          setConfirmations(confirmationData);
         }
       } catch {
         if (!cancelled) setError("无法读取集成状态，请稍后重试。");
@@ -139,6 +176,46 @@ export default function IntegrationCenterPage() {
       cancelled = true;
     };
   }, []);
+
+  async function confirmFeishuAction(id: string) {
+    if (!window.confirm("确认后系统会使用当前账号的有效飞书配置执行该写入动作，并写入同步流水。是否继续？")) return;
+    setConfirmationBusyId(id);
+    setConfirmationMessage("");
+    try {
+      const response = await fetch(`/api/integrations/feishu/actions/confirmations/${id}/confirm`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirm: true }),
+      });
+      const data = await response.json();
+      setConfirmationMessage(response.ok ? "飞书写入已确认执行。" : data.warning || "飞书写入确认失败。");
+      await loadConfirmations();
+    } catch {
+      setConfirmationMessage("飞书写入确认请求失败，请稍后重试。");
+    } finally {
+      setConfirmationBusyId("");
+    }
+  }
+
+  async function cancelFeishuAction(id: string) {
+    const reason = window.prompt("请输入取消原因，可留空：") || "用户取消飞书写入。";
+    setConfirmationBusyId(id);
+    setConfirmationMessage("");
+    try {
+      const response = await fetch(`/api/integrations/feishu/actions/confirmations/${id}/cancel`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason }),
+      });
+      const data = await response.json();
+      setConfirmationMessage(response.ok ? "飞书写入已取消。" : data.warning || "取消飞书写入失败。");
+      await loadConfirmations();
+    } catch {
+      setConfirmationMessage("取消请求失败，请稍后重试。");
+    } finally {
+      setConfirmationBusyId("");
+    }
+  }
 
   const ragIndexVersion = snapshot?.rag.indexVersion ?? snapshot?.rag.index_version ?? "未知";
   const ragPageCount = snapshot?.rag.pageCount ?? snapshot?.rag.page_count ?? 0;
@@ -206,6 +283,81 @@ export default function IntegrationCenterPage() {
         ) : (
           <>
             <IntegrationStatusPanel items={statusItems} checkedAt={snapshot.checked_at} />
+
+            <section className="card" style={{ marginBottom: 18, borderColor: confirmations?.status === "not_configured" ? "rgba(245,158,11,0.38)" : "var(--border)" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap", marginBottom: 12 }}>
+                <div>
+                  <div className="section-title">🛡️ 飞书写入待确认队列</div>
+                  <p style={{ color: "var(--text2)", lineHeight: 1.6, fontSize: "0.84rem" }}>
+                    通用飞书写入动作不会再通过 token 直写。系统先生成预览和风险提示，授权用户确认后才会执行。
+                  </p>
+                </div>
+                <button className="btn-secondary" type="button" onClick={() => void loadConfirmations()}>刷新队列</button>
+              </div>
+              {confirmationMessage && <p style={{ color: confirmationMessage.includes("失败") ? "var(--red)" : "var(--accent2)", lineHeight: 1.6, marginBottom: 10 }}>{confirmationMessage}</p>}
+              {!confirmations ? (
+                <p style={{ color: "var(--text2)" }}>正在读取飞书写入确认队列...</p>
+              ) : confirmations.status !== "succeeded" ? (
+                <div>
+                  <p style={{ color: confirmations.status === "unauthorized" ? "var(--amber)" : "var(--red)", lineHeight: 1.7 }}>
+                    队列状态：{statusText[confirmations.status] || confirmations.status}。{confirmations.warning || confirmations.migration || "请检查登录状态和 Supabase 配置。"}
+                  </p>
+                  {confirmations.migration && (
+                    <p style={{ color: "var(--accent2)", fontSize: "0.82rem", lineHeight: 1.6, marginTop: 6 }}>
+                      需要执行 SQL：{confirmations.migration}
+                    </p>
+                  )}
+                </div>
+              ) : confirmations.confirmations.length === 0 ? (
+                <p style={{ color: "var(--text2)", lineHeight: 1.7 }}>暂无待确认飞书写入动作。</p>
+              ) : (
+                <div style={{ display: "grid", gap: 12 }}>
+                  {confirmations.confirmations.map(item => (
+                    <div key={item.id} style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 12, padding: 14 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+                        <div>
+                          <strong>{item.targetSummary}</strong>
+                          <p style={{ color: "var(--text2)", fontSize: "0.78rem", lineHeight: 1.6, marginTop: 4 }}>
+                            来源：{item.sourcePage || item.source} · 申请人：{item.requesterName || "系统/API"} · 创建：{new Date(item.createdAt).toLocaleString("zh-CN")}
+                          </p>
+                        </div>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          <StatusPill status={item.status} />
+                          <span className={item.riskLevel === "high" ? "tag tag-amber" : "tag tag-blue"}>{item.riskLevel === "high" ? "高风险" : item.riskLevel === "medium" ? "中风险" : "低风险"}</span>
+                        </div>
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8, marginTop: 10 }}>
+                        {item.preview.fields.map(field => (
+                          <div key={`${item.id}-${field.label}`} style={{ borderTop: "1px solid var(--border)", paddingTop: 8 }}>
+                            <span style={{ color: "var(--text2)", fontSize: "0.76rem" }}>{field.label}</span>
+                            <p style={{ color: "var(--text)", fontSize: "0.8rem", lineHeight: 1.5, marginTop: 2 }}>{field.value}</p>
+                          </div>
+                        ))}
+                      </div>
+                      {item.preview.riskReasons.length > 0 && (
+                        <p style={{ color: "var(--amber)", fontSize: "0.8rem", lineHeight: 1.6, marginTop: 10 }}>
+                          风险提示：{item.preview.riskReasons.join("；")}
+                        </p>
+                      )}
+                      {item.errorCode && <p style={{ color: "var(--red)", fontSize: "0.8rem", lineHeight: 1.6, marginTop: 8 }}>失败原因：{item.errorCode}</p>}
+                      {item.cancelReason && <p style={{ color: "var(--text2)", fontSize: "0.8rem", lineHeight: 1.6, marginTop: 8 }}>取消原因：{item.cancelReason}</p>}
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
+                        {["pending_confirmation", "failed"].includes(item.status) && (
+                          <button className="btn-primary" type="button" disabled={confirmationBusyId === item.id} onClick={() => void confirmFeishuAction(item.id)}>
+                            {confirmationBusyId === item.id ? "处理中..." : "确认执行"}
+                          </button>
+                        )}
+                        {!["succeeded", "writing", "cancelled"].includes(item.status) && (
+                          <button className="btn-secondary" type="button" disabled={confirmationBusyId === item.id} onClick={() => void cancelFeishuAction(item.id)}>
+                            取消写入
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
 
             <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 14, marginBottom: 18 }}>
               <div className="card">
