@@ -22,6 +22,14 @@ import {
   summarizeFeishuConnectionSteps,
   writeCheckStep,
 } from '../src/features/feishu/connection-test.ts';
+import {
+  buildFeishuActionPreview,
+  validateFeishuActionBody,
+} from '../src/features/feishu/action-payload.ts';
+import {
+  canManageFeishuActionConfirmation,
+  type FeishuActionConfirmationRecord,
+} from '../src/features/feishu/action-confirmations.ts';
 import { buildOperationalWorkbench } from '../src/features/operating-system/workbench.ts';
 import {
   buildRiskRetrospectiveGovernanceFollowupClosureDashboard,
@@ -1586,6 +1594,56 @@ test('user center exposes one click AI and Feishu connection tests', () => {
   assert.match(aiTestRouteSource, /testAiConnection/);
   assert.match(feishuTestRouteSource, /writeCheckStep/);
   assert.match(feishuTestRouteSource, /includeWriteCheck/);
+});
+
+test('generic Feishu action preview requires confirmation before write execution', () => {
+  const body = {
+    type: 'message',
+    idempotency_key: 'weekly-risk-2026-07-06',
+    receive_id_type: 'chat_id',
+    receive_id: 'oc-team',
+    text: '项目周报已生成，请确认风险和回款阻塞。',
+  };
+
+  const validated = validateFeishuActionBody(body);
+  const preview = buildFeishuActionPreview(body);
+
+  assert.equal(validated.actionType, 'message');
+  assert.equal(preview.confirmationRequired, true);
+  assert.equal(preview.targetType, '飞书消息');
+  assert.equal(preview.riskLevel, 'medium');
+  assert.match(preview.targetSummary, /群聊/);
+  assert.equal(preview.fields.some(field => field.label === '消息摘要' && field.value.includes('项目周报')), true);
+});
+
+test('Feishu action confirmation can only be managed by requester or admin', () => {
+  const confirmation = {
+    id: 'confirmation-1',
+    requesterId: 'user-1',
+    requesterName: '张三',
+    requesterEmail: 'zhangsan@example.com',
+    source: 'integration_center',
+    sourcePage: '/integration-center',
+    actionType: 'task',
+    idempotencyKey: 'task-1',
+    targetSummary: '创建任务：处理项目风险',
+    riskLevel: 'medium',
+    status: 'pending_confirmation',
+    payload: { type: 'task', idempotency_key: 'task-1', summary: '处理项目风险' },
+    preview: buildFeishuActionPreview({ type: 'task', idempotency_key: 'task-1', summary: '处理项目风险' }),
+    resource: null,
+    errorCode: null,
+    cancelReason: null,
+    requestId: 'req-1',
+    createdAt: '2026-07-06T00:00:00.000Z',
+    confirmedAt: null,
+    executedAt: null,
+    cancelledAt: null,
+  } satisfies FeishuActionConfirmationRecord;
+
+  assert.equal(canManageFeishuActionConfirmation({ id: 'user-1', email: 'a@example.com', phone: '13800000000', name: '张三', role: 'user', status: 'active' }, confirmation), true);
+  assert.equal(canManageFeishuActionConfirmation({ id: 'user-2', email: 'b@example.com', phone: '13800000001', name: '李四', role: 'user', status: 'active' }, confirmation), false);
+  assert.equal(canManageFeishuActionConfirmation({ id: 'admin-1', email: 'admin@example.com', phone: '13800000002', name: '管理员', role: 'admin', status: 'active' }, confirmation), true);
 });
 
 test('operational workbench filters projects risks todos and reminders for current user', () => {
