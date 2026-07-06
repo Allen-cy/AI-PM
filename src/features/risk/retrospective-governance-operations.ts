@@ -78,6 +78,12 @@ export type RiskRetrospectiveGovernanceReminderUpdateResult =
   | { status: "not_found"; warning: string }
   | { status: "failed"; warning: string };
 
+export type RiskRetrospectiveGovernanceReminderGetResult =
+  | { status: "succeeded"; log: RiskRetrospectiveGovernanceReminderLog }
+  | { status: "not_configured"; warning: string }
+  | { status: "not_found"; warning: string }
+  | { status: "failed"; warning: string };
+
 const SQL_FILE = "supabase-v5344-risk-retrospective-governance-operations.sql";
 const SNAPSHOT_TABLE = "risk_retrospective_governance_operation_snapshots";
 const REMINDER_LOG_TABLE = "risk_retrospective_governance_reminder_logs";
@@ -405,6 +411,35 @@ export async function listRiskRetrospectiveGovernanceOperationHistory(input: {
       snapshots: [],
       reminderLogs: [],
       warning: error instanceof Error ? error.message : "知识治理运营历史读取失败。",
+    };
+  }
+}
+
+export async function getRiskRetrospectiveGovernanceReminderLog(id: string): Promise<RiskRetrospectiveGovernanceReminderGetResult> {
+  if (!isAuthStorageConfigured()) {
+    return { status: "not_configured", warning: "Supabase 未配置，无法读取知识治理运营提醒。" };
+  }
+
+  try {
+    const supabase = getAuthSupabase();
+    const { data, error } = await supabase
+      .from(REMINDER_LOG_TABLE)
+      .select(reminderLogSelectColumns())
+      .eq("id", id)
+      .maybeSingle();
+
+    if (error) {
+      return {
+        status: isMissingOperationTableError(error.message) ? "not_configured" : "failed",
+        warning: sqlWarning(error.message),
+      };
+    }
+    if (!data) return { status: "not_found", warning: "未找到知识治理运营提醒日志。" };
+    return { status: "succeeded", log: mapReminderLog(data as unknown as Record<string, unknown>) };
+  } catch (error) {
+    return {
+      status: "failed",
+      warning: error instanceof Error ? error.message : "知识治理运营提醒读取失败。",
     };
   }
 }

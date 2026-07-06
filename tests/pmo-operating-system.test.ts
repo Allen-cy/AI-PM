@@ -27,6 +27,7 @@ import {
   buildRiskRetrospectiveGovernanceOperationHistorySummary,
   suppressRiskRetrospectiveGovernanceReminderDraftsForWeek,
 } from '../src/features/risk/retrospective-governance-operation-analytics.ts';
+import { buildKnowledgeGovernanceWorkflowCandidate } from '../src/features/risk/retrospective-governance-workflow-candidate.ts';
 import {
   buildGovernanceReport,
   deriveGovernanceNextState,
@@ -213,10 +214,14 @@ test('governance workflows define inputs outputs owners states and audit trail',
   assert.match(governanceRouteSource, /buildGovernanceImpactDashboard/);
   assert.match(governanceRouteSource, /buildRiskRetrospectiveGovernanceOperationHistorySummary/);
   assert.match(governanceRouteSource, /governance_knowledge_operation/);
+  assert.match(governanceRouteSource, /buildKnowledgeGovernanceWorkflowCandidate/);
+  assert.match(governanceRouteSource, /workflowCandidates/);
   assert.match(governancePageSource, /治理 SLA 与待我处理/);
   assert.match(governancePageSource, /治理结果业务联动/);
   assert.match(governancePageSource, /知识治理运营趋势/);
   assert.match(governancePageSource, /处理率/);
+  assert.match(governancePageSource, /知识治理升级候选流程/);
+  assert.match(governancePageSource, /带入创建表单/);
   assert.match(governancePageSource, /治理审计包导出/);
   assert.match(governancePageSource, /治理策略配置与预览/);
   assert.match(governancePageSource, /\/api\/governance\/strategy/);
@@ -779,6 +784,7 @@ test('risk sensitivity impact is discoverable from api dashboard and sensitivity
   const retrospectiveGovernanceFollowupsFeishuApiSource = readFileSync(new URL('../src/app/api/risk/retrospective/assets/governance/followups/feishu-sync/route.ts', import.meta.url), 'utf8');
   const retrospectiveGovernanceWeeklyReminderApiSource = readFileSync(new URL('../src/app/api/risk/retrospective/assets/governance/followups/weekly-reminder/route.ts', import.meta.url), 'utf8');
   const retrospectiveGovernanceOperationHistoryApiSource = readFileSync(new URL('../src/app/api/risk/retrospective/assets/governance/followups/operation-history/route.ts', import.meta.url), 'utf8');
+  const retrospectiveGovernanceWorkflowApiSource = readFileSync(new URL('../src/app/api/risk/retrospective/assets/governance/followups/operation-history/governance-workflow/route.ts', import.meta.url), 'utf8');
   const issueChangeRepositorySource = readFileSync(new URL('../src/features/issue-change/repository.ts', import.meta.url), 'utf8');
   const retrospectiveAssetsSql = readFileSync(new URL('../supabase-v5330-risk-retrospective-assets.sql', import.meta.url), 'utf8');
   const retrospectiveExportSql = readFileSync(new URL('../supabase-v5331-risk-retrospective-knowledge-sync.sql', import.meta.url), 'utf8');
@@ -831,13 +837,19 @@ test('risk sensitivity impact is discoverable from api dashboard and sensitivity
   assert.match(retrospectiveGovernanceOperationHistoryApiSource, /processed/);
   assert.match(retrospectiveGovernanceOperationHistoryApiSource, /ignored/);
   assert.match(retrospectiveGovernanceOperationHistoryApiSource, /escalated/);
+  assert.match(retrospectiveGovernanceWorkflowApiSource, /confirmation_required/);
+  assert.match(retrospectiveGovernanceWorkflowApiSource, /buildKnowledgeGovernanceWorkflowCandidate/);
+  assert.match(retrospectiveGovernanceWorkflowApiSource, /createGovernanceInstance/);
+  assert.match(retrospectiveGovernanceWorkflowApiSource, /duplicate_skipped/);
   assert.match(riskPageSource, /知识治理周趋势/);
   assert.match(riskPageSource, /确认发送飞书提醒/);
   assert.match(riskPageSource, /\/api\/risk\/retrospective\/assets\/governance\/followups\/weekly-reminder/);
   assert.match(riskPageSource, /运营历史快照与提醒闭环/);
   assert.match(riskPageSource, /保存今日快照/);
   assert.match(riskPageSource, /\/api\/risk\/retrospective\/assets\/governance\/followups\/operation-history/);
+  assert.match(riskPageSource, /\/api\/risk\/retrospective\/assets\/governance\/followups\/operation-history\/governance-workflow/);
   assert.match(riskPageSource, /updateGovernanceReminderLog/);
+  assert.match(riskPageSource, /转治理流程/);
   assert.match(workbenchPageSource, /知识治理运营提醒草稿/);
   assert.match(workbenchPageSource, /riskRetrospectiveGovernanceFollowupOperation/);
   assert.match(issueChangeRepositorySource, /risk-retro-governance-followup-/);
@@ -1970,6 +1982,43 @@ test('risk retrospective governance operation history suppresses weekly duplicat
   assert.equal(summary.summary.closedReminderLogs, 1);
   assert.equal(summary.summary.handlingRate, 50);
   assert.equal(summary.reminderOwnerStats.some(item => item.ownerName === '张三'), true);
+});
+
+test('knowledge governance workflow candidate requires manual confirmation and preserves reminder provenance', () => {
+  const candidate = buildKnowledgeGovernanceWorkflowCandidate({
+    id: 'reminder-log-1',
+    reminderKey: '2026-07-05:overdue-followup-1',
+    reminderType: 'overdue',
+    originalReminderId: 'overdue-followup-1',
+    sourceFollowupId: 'followup-1',
+    priority: 'P0',
+    title: '[逾期提醒] 复盘资产A',
+    assetTitle: '复盘资产A',
+    ownerName: '张三',
+    dueDate: '2026-07-05',
+    actionRequired: '补齐治理动作和关闭证据',
+    status: 'escalated',
+    feishuMessageId: 'msg-1',
+    feishuReceiveIdType: 'chat_id',
+    feishuReceiveIdMasked: 'oc_1***cdef',
+    sentAt: '2026-07-05T01:00:00.000Z',
+    closedAt: '2026-07-05T02:00:00.000Z',
+    closureNote: '需要PMO升级处理',
+    error: null,
+    createdByName: 'PMO',
+    requestId: 'req-1',
+    createdAt: '2026-07-05T01:00:00.000Z',
+    updatedAt: '2026-07-05T02:00:00.000Z',
+  });
+
+  assert.equal(candidate.workflowId, 'risk-escalation');
+  assert.equal(candidate.priority, 'high');
+  assert.equal(candidate.owner, '张三');
+  assert.equal(candidate.sourceId, 'reminder-log-1');
+  assert.equal(candidate.sourceLinkId, 'followup-1');
+  assert.match(candidate.inputSummary, /知识治理升级输入/);
+  assert.match(candidate.sourceSummary, /需要PMO升级处理/);
+  assert.match(candidate.boundary, /显式确认/);
 });
 
 test('ai evidence builders expose basis citations and convertible actions', () => {

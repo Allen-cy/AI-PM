@@ -127,10 +127,32 @@ type GovernanceResponse = {
     }>;
     reminderStatusStats: Array<{ status: string; label: string; count: number }>;
     reminderOwnerStats: Array<{ ownerName: string; sent: number; closed: number; escalated: number }>;
+    workflowCandidates?: KnowledgeGovernanceWorkflowCandidate[];
     warning?: string;
     boundary: string;
   };
   warning?: string;
+};
+
+type KnowledgeGovernanceWorkflowCandidate = {
+  workflowId: string;
+  workflowName: string;
+  projectName: string;
+  title: string;
+  triggerSummary: string;
+  inputSummary: string;
+  owner: string;
+  approver: string;
+  priority: "high" | "medium" | "low";
+  deadline: string;
+  actionItems: Array<{ title: string; owner: string; dueDate: string }>;
+  strategyVersion: string;
+  strategyRuleId: string;
+  strategySummary: string;
+  sourceType: string;
+  sourceId: string;
+  sourceLinkId: string | null;
+  sourceSummary: string;
 };
 
 type StrategyForm = {
@@ -367,6 +389,26 @@ export default function GovernanceWorkflowsClient() {
     setMessage("已将治理策略带入创建流程表单，请复核输入材料后提交。");
   }
 
+  function applyKnowledgeWorkflowCandidate(candidate: KnowledgeGovernanceWorkflowCandidate) {
+    setForm(current => ({
+      ...current,
+      workflowId: candidate.workflowId,
+      projectName: candidate.projectName || current.projectName,
+      title: candidate.title,
+      owner: candidate.owner,
+      approver: candidate.approver,
+      priority: candidate.priority,
+      deadline: candidate.deadline,
+      triggerSummary: candidate.triggerSummary,
+      inputSummary: candidate.inputSummary,
+      actionItems: candidate.actionItems.map(item => `${item.title}｜${item.owner}｜${item.dueDate}`).join("\n"),
+      strategyVersion: candidate.strategyVersion,
+      strategyRuleId: candidate.strategyRuleId,
+      strategySummary: candidate.strategySummary,
+    }));
+    setMessage("已将知识治理升级候选流程带入创建表单，请确认流程类型、责任人、输入材料后再提交。");
+  }
+
   async function submitCreate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy("create");
@@ -593,6 +635,29 @@ export default function GovernanceWorkflowsClient() {
                     <div key={item.ownerName} style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 10, padding: 10, display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
                       <strong style={{ fontSize: "0.8rem" }}>{item.ownerName}</strong>
                       <span style={{ color: "var(--text2)", fontSize: "0.76rem" }}>已发未处理 {item.sent} · 已闭环 {item.closed} · 已升级 {item.escalated}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {(data.governance_knowledge_operation?.workflowCandidates?.length ?? 0) > 0 && (
+                <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
+                  <div style={{ color: "var(--text2)", fontSize: "0.76rem" }}>知识治理升级候选流程</div>
+                  {data.governance_knowledge_operation?.workflowCandidates?.map(candidate => (
+                    <div key={`${candidate.sourceId}-${candidate.workflowId}`} style={{ background: "var(--surface2)", border: "1px solid rgba(139,92,246,0.26)", borderRadius: 10, padding: 12 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start", flexWrap: "wrap" }}>
+                        <div>
+                          <strong style={{ fontSize: "0.82rem" }}>{candidate.title}</strong>
+                          <p style={{ color: "var(--text2)", lineHeight: 1.6, fontSize: "0.76rem", marginTop: 6 }}>
+                            推荐流程：{candidate.workflowName} · 责任人：{candidate.owner} · 审批人：{candidate.approver} · Deadline：{candidate.deadline}
+                          </p>
+                        </div>
+                        <button type="button" className="btn-secondary" onClick={() => applyKnowledgeWorkflowCandidate(candidate)} style={{ padding: "7px 10px", fontSize: "0.76rem" }}>
+                          带入创建表单
+                        </button>
+                      </div>
+                      <p style={{ color: "var(--text2)", lineHeight: 1.6, fontSize: "0.72rem", marginTop: 8, whiteSpace: "pre-line" }}>
+                        {candidate.sourceSummary}
+                      </p>
                     </div>
                   ))}
                 </div>

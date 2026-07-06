@@ -151,6 +151,28 @@ type RiskEscalationDraftDashboard = {
   boundary: string;
 };
 
+type KnowledgeGovernanceWorkflowCandidate = {
+  workflowId: string;
+  workflowName: string;
+  projectName: string;
+  title: string;
+  triggerSummary: string;
+  inputSummary: string;
+  owner: string;
+  approver: string;
+  priority: "high" | "medium" | "low";
+  deadline: string;
+  actionItems: Array<{ title: string; owner: string; dueDate: string }>;
+  sourceType: "risk_retrospective_governance_reminder";
+  sourceId: string;
+  sourceLinkId: string | null;
+  sourceSummary: string;
+  strategyVersion: string;
+  strategyRuleId: string;
+  strategySummary: string;
+  boundary: string;
+};
+
 const categories = Object.keys(categoryLabels) as RiskCategory[];
 const impactAreas = Object.keys(impactAreaLabels) as RiskImpactArea[];
 const stages: RiskStage[] = ["立项", "规划", "执行", "监控", "验收", "结项", "全生命周期"];
@@ -422,6 +444,7 @@ export default function RiskPage() {
   const [sendingGovernanceWeeklyReminder, setSendingGovernanceWeeklyReminder] = useState(false);
   const [savingGovernanceOperationSnapshot, setSavingGovernanceOperationSnapshot] = useState(false);
   const [updatingGovernanceReminderLogId, setUpdatingGovernanceReminderLogId] = useState<string | null>(null);
+  const [creatingGovernanceWorkflowReminderId, setCreatingGovernanceWorkflowReminderId] = useState<string | null>(null);
   const [retrospectiveAssetWarning, setRetrospectiveAssetWarning] = useState("");
   const [retrospectiveSyncWarning, setRetrospectiveSyncWarning] = useState("");
   const [retrospectiveGovernanceWarning, setRetrospectiveGovernanceWarning] = useState("");
@@ -961,6 +984,63 @@ export default function RiskPage() {
       setError(`知识治理运营提醒状态更新失败：${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setUpdatingGovernanceReminderLogId(null);
+    }
+  };
+
+  const createGovernanceWorkflowFromReminderLog = async (log: RiskRetrospectiveGovernanceReminderLog) => {
+    setCreatingGovernanceWorkflowReminderId(log.id);
+    setError("");
+    setMessage("");
+    try {
+      const previewResponse = await fetch("/api/risk/retrospective/assets/governance/followups/operation-history/governance-workflow", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: log.id }),
+      });
+      const preview = await previewResponse.json().catch(() => ({})) as {
+        status?: string;
+        candidate?: KnowledgeGovernanceWorkflowCandidate;
+        warning?: string;
+      };
+      if (!previewResponse.ok || !preview.candidate) {
+        throw new Error(preview.warning || "知识治理升级候选流程生成失败。");
+      }
+      const candidate = preview.candidate;
+      const confirmed = window.confirm([
+        "确认将该知识治理升级转为治理流程？",
+        "",
+        `流程：${candidate.workflowName}`,
+        `项目/治理域：${candidate.projectName}`,
+        `标题：${candidate.title}`,
+        `责任人：${candidate.owner}`,
+        `审批人：${candidate.approver}`,
+        `截止日期：${candidate.deadline}`,
+        "",
+        "创建后会进入 PMO 治理中心，并保留来源提醒日志和二次治理待办关联。",
+      ].join("\n"));
+      if (!confirmed) return;
+
+      const response = await fetch("/api/risk/retrospective/assets/governance/followups/operation-history/governance-workflow", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: log.id, confirm: true, candidate }),
+      });
+      const payload = await response.json().catch(() => ({})) as {
+        status?: string;
+        instance?: { id: string; title: string; workflowName: string };
+        duplicate_skipped?: boolean;
+        warning?: string;
+      };
+      if (!response.ok || payload.status !== "succeeded" || !payload.instance) {
+        throw new Error(payload.warning || "知识治理升级转治理流程失败。");
+      }
+      setMessage(payload.duplicate_skipped
+        ? `已存在相同治理流程，未重复创建：${payload.instance.title}`
+        : `已创建治理流程：${payload.instance.workflowName} / ${payload.instance.title}`);
+    } catch (e: unknown) {
+      setError(`知识治理升级转治理流程失败：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setCreatingGovernanceWorkflowReminderId(null);
     }
   };
 
@@ -2616,6 +2696,16 @@ export default function RiskPage() {
                                       <button className="btn-secondary" disabled={updatingGovernanceReminderLogId === item.id} onClick={() => void updateGovernanceReminderLog(item.id, "escalated")} style={{ padding: "6px 9px", fontSize: "0.72rem" }}>
                                         已升级
                                       </button>
+                                    </div>
+                                  )}
+                                  {item.status === "escalated" && (
+                                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+                                      <button className="btn-secondary" disabled={creatingGovernanceWorkflowReminderId === item.id} onClick={() => void createGovernanceWorkflowFromReminderLog(item)} style={{ padding: "6px 9px", fontSize: "0.72rem" }}>
+                                        {creatingGovernanceWorkflowReminderId === item.id ? "创建中..." : "转治理流程"}
+                                      </button>
+                                      <Link href="/governance-workflows" className="btn-secondary" style={{ padding: "6px 9px", fontSize: "0.72rem", textDecoration: "none" }}>
+                                        去治理中心
+                                      </Link>
                                     </div>
                                   )}
                                 </div>

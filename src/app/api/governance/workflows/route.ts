@@ -12,6 +12,7 @@ import {
 import { buildGovernanceSlaDashboard, deriveGovernanceSla } from "@/features/governance/sla";
 import { writeIntegrationSyncLog } from "@/features/operating-system/sync-logs";
 import { buildRiskRetrospectiveGovernanceOperationHistorySummary } from "@/features/risk/retrospective-governance-operation-analytics";
+import { buildKnowledgeGovernanceWorkflowCandidate } from "@/features/risk/retrospective-governance-workflow-candidate";
 import {
   listRiskRetrospectiveGovernanceOperationHistory,
 } from "@/features/risk/retrospective-governance-operations";
@@ -38,6 +39,10 @@ export async function GET(): Promise<Response> {
     reminderLogs: operationHistory.reminderLogs,
     warning: "warning" in operationHistory ? operationHistory.warning : undefined,
   });
+  const governance_knowledge_workflow_candidates = operationHistory.reminderLogs
+    .filter(log => log.status === "escalated")
+    .map(log => buildKnowledgeGovernanceWorkflowCandidate(log))
+    .slice(0, 6);
   return jsonResponse({
     request_id: requestId,
     ...result,
@@ -45,7 +50,10 @@ export async function GET(): Promise<Response> {
     governance_workbench,
     governance_impact,
     governance_strategy,
-    governance_knowledge_operation,
+    governance_knowledge_operation: {
+      ...governance_knowledge_operation,
+      workflowCandidates: governance_knowledge_workflow_candidates,
+    },
   }, 200, requestId);
 }
 
