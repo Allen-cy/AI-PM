@@ -67,6 +67,10 @@ npm run build
 - 飞书端已建立8张业务表；公开项目记录API会等用户登录和授权模型完成后再开放。
 - 全仓历史 ESLint 基线仍有旧问题；V4新增/改动文件执行独立零错误门禁。
 
+## AI-PMO System V5.3.50
+
+V5.3.50 完成 P15-T2 第二版与 P15-T3 体验增强：新增 `IntegrationStatusPanelClient`，把统一集成状态覆盖到项目组合看板、风险管理、PMO治理中心、报告工厂、PM/PMO每日工作台、知识库与AI问答等核心页面，页面内可直接看到当前账号实际使用的 AI 模型、飞书业务底座、RAG 知识库和同步审计状态，并跳转到用户中心或集成中心处理配置缺口。集成中心的“飞书写入待确认队列”新增状态筛选、关键词搜索、全选可取消动作和批量取消能力，便于处理多条待确认/失败写入记录。本版本不新增 SQL，继续依赖 V5.3.49 的 `supabase-v5349-feishu-action-confirmations.sql`。
+
 ## AI-PMO System V5.3.49
 
 V5.3.49 将通用飞书写入动作从“token 直写”升级为“预览 + 待确认队列 + 当前用户确认执行”：新增 `supabase-v5349-feishu-action-confirmations.sql` 和 `feishu_action_confirmations`，保存动作类型、幂等键、目标摘要、风险等级、预览、载荷、状态、执行资源和错误信息；`POST /api/integrations/feishu/actions` 不再直接调用飞书 OpenAPI，而是返回 `confirmation_required` 并创建待确认记录；新增 `/api/integrations/feishu/actions/confirmations`、`/confirm`、`/cancel`，支持登录用户查看、创建、确认执行或取消写入。确认执行时使用当前登录用户的有效飞书配置，先写同步流水再执行消息/任务/日程/文档动作，并写入操作审计与集成同步日志。集成中心新增“飞书写入待确认队列”，可查看风险提示、字段预览、确认执行或取消。
