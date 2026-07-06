@@ -67,6 +67,10 @@ npm run build
 - 飞书端已建立8张业务表；公开项目记录API会等用户登录和授权模型完成后再开放。
 - 全仓历史 ESLint 基线仍有旧问题；V4新增/改动文件执行独立零错误门禁。
 
+## AI-PMO System V5.3.49
+
+V5.3.49 将通用飞书写入动作从“token 直写”升级为“预览 + 待确认队列 + 当前用户确认执行”：新增 `supabase-v5349-feishu-action-confirmations.sql` 和 `feishu_action_confirmations`，保存动作类型、幂等键、目标摘要、风险等级、预览、载荷、状态、执行资源和错误信息；`POST /api/integrations/feishu/actions` 不再直接调用飞书 OpenAPI，而是返回 `confirmation_required` 并创建待确认记录；新增 `/api/integrations/feishu/actions/confirmations`、`/confirm`、`/cancel`，支持登录用户查看、创建、确认执行或取消写入。确认执行时使用当前登录用户的有效飞书配置，先写同步流水再执行消息/任务/日程/文档动作，并写入操作审计与集成同步日志。集成中心新增“飞书写入待确认队列”，可查看风险提示、字段预览、确认执行或取消。
+
 ## AI-PMO System V5.3.48
 
 V5.3.48 补齐用户级飞书与 AI 配置的“一键测试 + 状态可见”闭环：新增 `POST /api/user/ai-settings/test`，按当前登录用户的个人模型配置或输入草稿测试 DeepSeek、MiniMax、GLM、Anthropic、OpenAI 兼容接口，并返回失败原因分类、延迟、端点来源和下一步处理建议；新增 `POST /api/user/feishu-connection/test`，逐项检查用户飞书 App、Base Token、表 ID、字段映射权限，写入权限测试只在用户明确确认后向同步流水表写入一条测试记录。用户中心新增“测试AI模型 / 测试飞书连接 / 确认写入测试”入口；集成中心新增 `IntegrationStatusPanel`，统一展示当前账号实际使用的 AI、飞书、RAG 和同步审计状态。本版本不新增 SQL，继续依赖 V5.3.22 用户配置表和 V5.3.27 集成同步日志表。
