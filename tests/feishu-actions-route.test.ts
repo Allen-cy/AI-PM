@@ -67,7 +67,7 @@ test('rejects an invalid action before creating a ledger record', async () => {
   }
 });
 
-test('persists, executes, and completes an authenticated message action', async () => {
+test('queues an authenticated message action instead of executing directly', async () => {
   const previousEnvironment = configure();
   const previousFetch = globalThis.fetch;
   const calls: Array<{ url: string; init?: RequestInit }> = [];
@@ -90,11 +90,12 @@ test('persists, executes, and completes an authenticated message action', async 
       text: '项目周报已生成',
     }));
     const body = await response.json();
-    assert.equal(response.status, 201);
-    assert.equal(body.status, 'succeeded');
-    assert.deepEqual(body.resource, { messageId: 'om-1', chatId: 'oc-1' });
-    assert.equal(calls.some(call => call.url.includes('/im/v1/messages')), true);
-    assert.equal(calls.some(call => call.url.endsWith('/records/rec-action-1')), true);
+    assert.equal(response.status, 503);
+    assert.equal(body.status, 'not_configured');
+    assert.equal(body.code, 'FEISHU_ACTION_CONFIRMATION_QUEUE_NOT_CONFIGURED');
+    assert.equal(body.preview.confirmationRequired, true);
+    assert.match(body.preview.targetSummary, /群聊/);
+    assert.equal(calls.length, 0);
   } finally {
     globalThis.fetch = previousFetch;
     process.env = previousEnvironment;

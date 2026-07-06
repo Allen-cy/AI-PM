@@ -103,6 +103,10 @@ function notConfigured(): { status: "not_configured"; warning: string; migration
   };
 }
 
+function hasAuthStorageEnvironment(): boolean {
+  return Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
+}
+
 export function canManageFeishuActionConfirmation(user: AppUser, confirmation: FeishuActionConfirmationRecord): boolean {
   if (user.role === "admin") return true;
   return confirmation.requesterId === user.id;
@@ -115,6 +119,9 @@ export async function createFeishuActionConfirmation(input: {
   payload: FeishuActionBody;
   requestId: string;
 }): Promise<FeishuActionConfirmationWriteResult> {
+  if (!hasAuthStorageEnvironment()) {
+    return { ...notConfigured(), warning: "Supabase 未配置，无法创建飞书写入确认队列。" };
+  }
   const auth = await import("../auth/server.ts");
   const { getAuthSupabase, isAuthStorageConfigured } = auth;
   if (!isAuthStorageConfigured()) {
@@ -157,6 +164,7 @@ export async function listFeishuActionConfirmations(input: {
   limit?: number;
   status?: FeishuActionConfirmationStatus | "all";
 }): Promise<FeishuActionConfirmationListResult> {
+  if (!hasAuthStorageEnvironment()) return { ...notConfigured(), confirmations: [] };
   const auth = await import("../auth/server.ts");
   const { getAuthSupabase, isAuthStorageConfigured } = auth;
   if (!isAuthStorageConfigured()) return { ...notConfigured(), confirmations: [] };
@@ -186,6 +194,7 @@ export async function getFeishuActionConfirmation(id: string): Promise<
   | { status: "not_found"; warning: string }
   | { status: "failed"; warning: string }
 > {
+  if (!hasAuthStorageEnvironment()) return notConfigured();
   const auth = await import("../auth/server.ts");
   const { getAuthSupabase, isAuthStorageConfigured } = auth;
   if (!isAuthStorageConfigured()) return notConfigured();
@@ -211,6 +220,7 @@ export async function updateFeishuActionConfirmationStatus(input: {
   errorCode?: string | null;
   cancelReason?: string | null;
 }): Promise<FeishuActionConfirmationWriteResult> {
+  if (!hasAuthStorageEnvironment()) return notConfigured();
   const auth = await import("../auth/server.ts");
   const { getAuthSupabase, isAuthStorageConfigured } = auth;
   if (!isAuthStorageConfigured()) return notConfigured();

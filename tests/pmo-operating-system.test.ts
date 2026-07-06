@@ -1646,6 +1646,26 @@ test('Feishu action confirmation can only be managed by requester or admin', () 
   assert.equal(canManageFeishuActionConfirmation({ id: 'admin-1', email: 'admin@example.com', phone: '13800000002', name: '管理员', role: 'admin', status: 'active' }, confirmation), true);
 });
 
+test('generic Feishu action APIs expose queue confirm and cancel boundaries', () => {
+  const actionRouteSource = readFileSync(new URL('../src/app/api/integrations/feishu/actions/route.ts', import.meta.url), 'utf8');
+  const confirmationsRouteSource = readFileSync(new URL('../src/app/api/integrations/feishu/actions/confirmations/route.ts', import.meta.url), 'utf8');
+  const confirmRouteSource = readFileSync(new URL('../src/app/api/integrations/feishu/actions/confirmations/[id]/confirm/route.ts', import.meta.url), 'utf8');
+  const cancelRouteSource = readFileSync(new URL('../src/app/api/integrations/feishu/actions/confirmations/[id]/cancel/route.ts', import.meta.url), 'utf8');
+  const confirmationSql = readFileSync(new URL('../supabase-v5349-feishu-action-confirmations.sql', import.meta.url), 'utf8');
+
+  assert.match(actionRouteSource, /confirmation_required/);
+  assert.match(actionRouteSource, /createFeishuActionConfirmation/);
+  assert.doesNotMatch(actionRouteSource, /executeFeishuAction\(config/);
+  assert.match(confirmationsRouteSource, /listFeishuActionConfirmations/);
+  assert.match(confirmationsRouteSource, /createFeishuActionConfirmation/);
+  assert.match(confirmRouteSource, /executeFeishuAction/);
+  assert.match(confirmRouteSource, /claimEvent/);
+  assert.match(confirmRouteSource, /writeOperationAudit/);
+  assert.match(cancelRouteSource, /updateFeishuActionConfirmationStatus/);
+  assert.match(confirmationSql, /create table if not exists feishu_action_confirmations/);
+  assert.match(confirmationSql, /pending_confirmation/);
+});
+
 test('operational workbench filters projects risks todos and reminders for current user', () => {
   const workbench = buildOperationalWorkbench({
     user: { name: '张三', email: 'zhangsan@example.com', phone: '13800000000', role: 'user' },
