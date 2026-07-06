@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { IntegrationStatusPanel, type IntegrationStatusItem } from "@/components/IntegrationStatusPanel";
 
 type Snapshot = {
   checked_at: string;
@@ -142,6 +143,44 @@ export default function IntegrationCenterPage() {
   const ragIndexVersion = snapshot?.rag.indexVersion ?? snapshot?.rag.index_version ?? "未知";
   const ragPageCount = snapshot?.rag.pageCount ?? snapshot?.rag.page_count ?? 0;
   const ragRetrievalMode = snapshot?.rag.retrievalMode ?? snapshot?.rag.retrieval_mode ?? "未知";
+  const statusItems: IntegrationStatusItem[] = snapshot ? [
+    {
+      id: "ai-model",
+      label: "AI 模型",
+      status: snapshot.ai_model.configured ? "ok" : "not_configured",
+      source: snapshot.ai_model.source === "user" ? "用户配置" : snapshot.ai_model.source === "global" ? "系统配置" : "默认模型",
+      detail: `${snapshot.ai_model.providerLabel} · ${snapshot.ai_model.model}${snapshot.ai_model.configured ? "，已配置密钥。" : "，缺少可用 API Key。"}`,
+      nextAction: snapshot.ai_model.configured ? "如需验证个人模型，请到用户中心点击“测试AI模型”。" : "到用户中心配置并测试个人模型，或联系管理员补齐全局模型密钥。",
+      href: "/account",
+    },
+    {
+      id: "feishu",
+      label: "飞书业务底座",
+      status: snapshot.feishu.status,
+      source: snapshot.feishu.source === "user" ? "个人配置" : snapshot.feishu.source === "global" ? "全局配置" : "未配置",
+      detail: snapshot.feishu.detail || `已配置 ${snapshot.feishu.configured_table_count ?? 0} 张表；Base 中识别 ${snapshot.feishu.table_count ?? 0} 张表。`,
+      nextAction: snapshot.feishu.status === "ok" ? "如需验证字段和写入权限，请到用户中心执行飞书连接测试。" : "到用户中心补齐个人飞书 App、Base Token、表 ID，并执行连接测试。",
+      href: "/account",
+    },
+    {
+      id: "rag",
+      label: "RAG 知识库",
+      status: snapshot.rag.status,
+      source: snapshot.rag.provider,
+      detail: `索引 ${ragIndexVersion}；语料 ${ragPageCount} 篇；检索模式 ${ragRetrievalMode}。`,
+      nextAction: snapshot.rag.status === "ok" ? "知识问答可用；实时业务数据问题仍按边界拒答。" : "检查 RAG 语料加载和健康接口。",
+      href: "/knowledge",
+    },
+    {
+      id: "sync-log",
+      label: "同步审计",
+      status: logs?.status || "unknown",
+      source: "Supabase",
+      detail: logs?.status === "succeeded" ? `最近同步日志 ${logs.logs.length} 条。` : logs?.detail || logs?.migration || "同步日志状态待检查。",
+      nextAction: logs?.status === "succeeded" ? "同步审计可用，继续保持写入动作留痕。" : "检查集成同步日志 SQL 和 Supabase 权限。",
+      href: "/integration-center",
+    },
+  ] : [];
 
   return (
     <main style={{ minHeight: "100vh", background: "var(--bg)", padding: "28px 32px" }}>
@@ -166,6 +205,8 @@ export default function IntegrationCenterPage() {
           <div className="card" aria-busy="true">正在检查系统依赖...</div>
         ) : (
           <>
+            <IntegrationStatusPanel items={statusItems} checkedAt={snapshot.checked_at} />
+
             <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 14, marginBottom: 18 }}>
               <div className="card">
                 <div className="section-title">🤖 AI 模型</div>

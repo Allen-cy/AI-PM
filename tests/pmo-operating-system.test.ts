@@ -622,12 +622,16 @@ test('migration quality issues become accountable remediation actions', () => {
 test('migration center is discoverable from home and integration center', () => {
   const homeSource = readFileSync(new URL('../src/app/page.tsx', import.meta.url), 'utf8');
   const integrationSource = readFileSync(new URL('../src/app/integration-center/page.tsx', import.meta.url), 'utf8');
+  const integrationStatusPanelSource = readFileSync(new URL('../src/components/IntegrationStatusPanel.tsx', import.meta.url), 'utf8');
   const migrationPageSource = readFileSync(new URL('../src/app/migration-center/page.tsx', import.meta.url), 'utf8');
   const comparisonReportRouteSource = readFileSync(new URL('../src/app/api/migration/batch-comparison/report/route.ts', import.meta.url), 'utf8');
   const cutoverDecisionRouteSource = readFileSync(new URL('../src/app/api/migration/cutover-decision/report/route.ts', import.meta.url), 'utf8');
 
   assert.match(homeSource, /href: "\/migration-center"/);
   assert.match(integrationSource, /href="\/migration-center"/);
+  assert.match(integrationSource, /IntegrationStatusPanel/);
+  assert.match(integrationStatusPanelSource, /统一集成状态/);
+  assert.match(integrationStatusPanelSource, /当前账号实际使用的 AI、飞书、RAG 和同步审计状态/);
   assert.match(migrationPageSource, /迁移与数据接入中心/);
   assert.match(migrationPageSource, /字段均要求中文口径/);
   assert.match(migrationPageSource, /\/api\/migration\/analyze/);
