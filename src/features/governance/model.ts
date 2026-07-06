@@ -27,6 +27,11 @@ export interface GovernanceInstanceRecord {
   source: string;
   feishuRecordId?: string | null;
   createdByName?: string | null;
+  metadata?: Record<string, unknown>;
+  sourceType?: string | null;
+  sourceId?: string | null;
+  sourceLinkId?: string | null;
+  sourceSummary?: string | null;
   createdAt: string;
   updatedAt: string;
   closedAt?: string | null;

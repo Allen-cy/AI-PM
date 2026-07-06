@@ -28,6 +28,7 @@ import {
   suppressRiskRetrospectiveGovernanceReminderDraftsForWeek,
 } from '../src/features/risk/retrospective-governance-operation-analytics.ts';
 import { buildKnowledgeGovernanceWorkflowCandidate } from '../src/features/risk/retrospective-governance-workflow-candidate.ts';
+import { buildKnowledgeGovernanceWritebackRecommendation } from '../src/features/risk/retrospective-governance-evidence-chain-model.ts';
 import {
   buildGovernanceReport,
   deriveGovernanceNextState,
@@ -785,6 +786,8 @@ test('risk sensitivity impact is discoverable from api dashboard and sensitivity
   const retrospectiveGovernanceWeeklyReminderApiSource = readFileSync(new URL('../src/app/api/risk/retrospective/assets/governance/followups/weekly-reminder/route.ts', import.meta.url), 'utf8');
   const retrospectiveGovernanceOperationHistoryApiSource = readFileSync(new URL('../src/app/api/risk/retrospective/assets/governance/followups/operation-history/route.ts', import.meta.url), 'utf8');
   const retrospectiveGovernanceWorkflowApiSource = readFileSync(new URL('../src/app/api/risk/retrospective/assets/governance/followups/operation-history/governance-workflow/route.ts', import.meta.url), 'utf8');
+  const retrospectiveGovernanceEvidenceChainApiSource = readFileSync(new URL('../src/app/api/risk/retrospective/assets/governance/followups/evidence-chain/route.ts', import.meta.url), 'utf8');
+  const retrospectiveGovernanceEvidenceChainFeatureSource = readFileSync(new URL('../src/features/risk/retrospective-governance-evidence-chain.ts', import.meta.url), 'utf8');
   const issueChangeRepositorySource = readFileSync(new URL('../src/features/issue-change/repository.ts', import.meta.url), 'utf8');
   const retrospectiveAssetsSql = readFileSync(new URL('../supabase-v5330-risk-retrospective-assets.sql', import.meta.url), 'utf8');
   const retrospectiveExportSql = readFileSync(new URL('../supabase-v5331-risk-retrospective-knowledge-sync.sql', import.meta.url), 'utf8');
@@ -792,6 +795,7 @@ test('risk sensitivity impact is discoverable from api dashboard and sensitivity
   const retrospectiveGovernanceSql = readFileSync(new URL('../supabase-v5334-risk-retrospective-governance.sql', import.meta.url), 'utf8');
   const retrospectiveGovernanceFollowupsSql = readFileSync(new URL('../supabase-v5338-risk-retrospective-governance-followups.sql', import.meta.url), 'utf8');
   const retrospectiveGovernanceOperationsSql = readFileSync(new URL('../supabase-v5344-risk-retrospective-governance-operations.sql', import.meta.url), 'utf8');
+  const retrospectiveGovernanceEvidenceChainSql = readFileSync(new URL('../supabase-v5347-knowledge-governance-evidence-chain.sql', import.meta.url), 'utf8');
   const ragQueryRouteSource = readFileSync(new URL('../src/app/api/rag/query/route.ts', import.meta.url), 'utf8');
   const riskPageSource = readFileSync(new URL('../src/app/risk/page.tsx', import.meta.url), 'utf8');
   const workbenchPageSource = readFileSync(new URL('../src/app/workbench/page.tsx', import.meta.url), 'utf8');
@@ -841,6 +845,12 @@ test('risk sensitivity impact is discoverable from api dashboard and sensitivity
   assert.match(retrospectiveGovernanceWorkflowApiSource, /buildKnowledgeGovernanceWorkflowCandidate/);
   assert.match(retrospectiveGovernanceWorkflowApiSource, /createGovernanceInstance/);
   assert.match(retrospectiveGovernanceWorkflowApiSource, /duplicate_skipped/);
+  assert.match(retrospectiveGovernanceEvidenceChainApiSource, /getKnowledgeGovernanceEvidenceChain/);
+  assert.match(retrospectiveGovernanceEvidenceChainApiSource, /saveKnowledgeGovernanceEvidenceRecommendation/);
+  assert.match(retrospectiveGovernanceEvidenceChainApiSource, /applyKnowledgeGovernanceEvidenceRecommendation/);
+  assert.match(retrospectiveGovernanceEvidenceChainApiSource, /confirmation_required/);
+  assert.match(retrospectiveGovernanceEvidenceChainFeatureSource, /buildKnowledgeGovernanceWritebackRecommendation/);
+  assert.match(retrospectiveGovernanceEvidenceChainFeatureSource, /risk_retrospective_governance_evidence_links/);
   assert.match(riskPageSource, /知识治理周趋势/);
   assert.match(riskPageSource, /确认发送飞书提醒/);
   assert.match(riskPageSource, /\/api\/risk\/retrospective\/assets\/governance\/followups\/weekly-reminder/);
@@ -863,6 +873,9 @@ test('risk sensitivity impact is discoverable from api dashboard and sensitivity
   assert.match(retrospectiveGovernanceOperationsSql, /risk_retrospective_governance_operation_snapshots/);
   assert.match(retrospectiveGovernanceOperationsSql, /risk_retrospective_governance_reminder_logs/);
   assert.match(retrospectiveGovernanceOperationsSql, /processed/);
+  assert.match(retrospectiveGovernanceEvidenceChainSql, /risk_retrospective_governance_evidence_links/);
+  assert.match(retrospectiveGovernanceEvidenceChainSql, /governance_instance_id/);
+  assert.match(retrospectiveGovernanceEvidenceChainSql, /review_status/);
   assert.match(ragQueryRouteSource, /listPublishedRiskRetrospectiveRagDocuments/);
   assert.match(ragQueryRouteSource, /recordRiskRetrospectiveRagUsage/);
   assert.match(riskPageSource, /关闭证据/);
@@ -2019,6 +2032,124 @@ test('knowledge governance workflow candidate requires manual confirmation and p
   assert.match(candidate.inputSummary, /知识治理升级输入/);
   assert.match(candidate.sourceSummary, /需要PMO升级处理/);
   assert.match(candidate.boundary, /显式确认/);
+});
+
+test('knowledge governance evidence chain recommendation requires manual confirmation before followup writeback', () => {
+  const recommendation = buildKnowledgeGovernanceWritebackRecommendation({
+    followup: {
+      id: 'followup-1',
+      actionKey: 'risk-retro-governance-action:followup-1',
+      sourceLogId: null,
+      assetTitle: '验收付款知识卡',
+      reason: '同类风险仍重复出现',
+      actionRequired: '补齐验收付款早期预警规则',
+      ownerName: 'PMO知识管理员',
+      dueDate: '2026-07-10',
+      priority: 'high',
+      status: '处理中',
+      closingCriteria: '规则被RAG引用并降低重复风险',
+      reminderText: '请补齐知识卡',
+      closureNote: null,
+      reviewResult: null,
+      feishuSyncStatus: '待确认',
+      feishuTaskGuid: null,
+      feishuTaskUrl: null,
+      feishuSyncError: null,
+      feishuSyncedAt: null,
+      feishuSyncRequestId: null,
+      createdByName: 'PMO',
+      createdAt: '2026-07-01T00:00:00.000Z',
+      updatedAt: '2026-07-05T00:00:00.000Z',
+      closedAt: null,
+    },
+    reminderLog: {
+      id: 'reminder-log-1',
+      reminderKey: '2026-07-05:overdue-followup-1',
+      reminderType: 'overdue',
+      originalReminderId: 'overdue-followup-1',
+      sourceFollowupId: 'followup-1',
+      priority: 'P0',
+      title: '[逾期提醒] 验收付款知识卡',
+      assetTitle: '验收付款知识卡',
+      ownerName: 'PMO知识管理员',
+      dueDate: '2026-07-10',
+      actionRequired: '补齐治理动作和关闭证据',
+      status: 'escalated',
+      feishuMessageId: 'msg-1',
+      feishuReceiveIdType: 'chat_id',
+      feishuReceiveIdMasked: 'oc_1***cdef',
+      sentAt: '2026-07-05T01:00:00.000Z',
+      closedAt: '2026-07-05T02:00:00.000Z',
+      closureNote: '需要PMO升级处理',
+      error: null,
+      createdByName: 'PMO',
+      requestId: 'req-1',
+      createdAt: '2026-07-05T01:00:00.000Z',
+      updatedAt: '2026-07-05T02:00:00.000Z',
+    },
+    governanceInstance: {
+      id: 'governance-1',
+      workflowId: 'risk-escalation',
+      workflowName: '风险升级评审',
+      stage: '监控阶段',
+      projectId: null,
+      projectName: '风险复盘资产治理',
+      title: '[知识治理升级] 验收付款知识卡',
+      triggerSummary: '知识治理提醒升级',
+      inputSummary: '来源提醒、来源资产和升级原因',
+      outputSummary: '已形成验收付款早期预警规则并补齐责任人。',
+      owner: 'PMO知识管理员',
+      approver: 'PMO',
+      state: '已关闭',
+      priority: 'high',
+      deadline: '2026-07-10',
+      source: 'ai-pmo',
+      feishuRecordId: null,
+      createdByName: 'PMO',
+      sourceType: 'risk_retrospective_governance_reminder',
+      sourceId: 'reminder-log-1',
+      sourceLinkId: 'followup-1',
+      sourceSummary: '运营提醒升级',
+      createdAt: '2026-07-05T03:00:00.000Z',
+      updatedAt: '2026-07-06T03:00:00.000Z',
+      closedAt: '2026-07-06T03:00:00.000Z',
+    },
+    governanceEvents: [
+      {
+        id: 'event-1',
+        instanceId: 'governance-1',
+        eventType: 'close',
+        fromState: '应对中',
+        toState: '已关闭',
+        comment: '治理动作完成，进入PMO验收。',
+        actorName: 'PMO',
+        actorRole: 'admin',
+        decision: 'close',
+        outputs: { output_summary: '已补齐规则' },
+        createdAt: '2026-07-06T03:00:00.000Z',
+      },
+    ],
+    governanceActions: [
+      {
+        id: 'governance-action-1',
+        instanceId: 'governance-1',
+        title: '补齐验收付款规则',
+        owner: 'PMO知识管理员',
+        dueDate: '2026-07-10',
+        status: 'done',
+        closeEvidence: 'RAG知识卡已更新并通过复核。',
+        createdAt: '2026-07-05T03:00:00.000Z',
+        updatedAt: '2026-07-06T03:00:00.000Z',
+      },
+    ],
+  });
+
+  assert.equal(recommendation.targetFollowupStatus, '待验收');
+  assert.match(recommendation.closureNote, /治理流程反写建议/);
+  assert.match(recommendation.evidenceSummary, /风险升级评审/);
+  assert.match(recommendation.evidenceSummary, /RAG知识卡已更新/);
+  assert.match(recommendation.boundary, /显式确认/);
+  assert.equal(recommendation.riskWarnings.length, 0);
 });
 
 test('ai evidence builders expose basis citations and convertible actions', () => {

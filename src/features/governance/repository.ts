@@ -60,6 +60,8 @@ function isMissingTableError(message?: string): boolean {
 }
 
 function mapInstance(row: Record<string, unknown>): GovernanceInstanceRecord {
+  const metadata = typeof row.metadata === "object" && row.metadata !== null ? row.metadata as Record<string, unknown> : {};
+  const source = typeof metadata.source === "object" && metadata.source !== null ? metadata.source as Record<string, unknown> : {};
   return {
     id: String(row.id),
     workflowId: String(row.workflow_id),
@@ -79,6 +81,11 @@ function mapInstance(row: Record<string, unknown>): GovernanceInstanceRecord {
     source: String(row.source || "ai-pmo"),
     feishuRecordId: row.feishu_record_id ? String(row.feishu_record_id) : null,
     createdByName: row.created_by_name ? String(row.created_by_name) : null,
+    metadata,
+    sourceType: typeof source.type === "string" ? source.type : null,
+    sourceId: typeof source.id === "string" ? source.id : null,
+    sourceLinkId: typeof source.link_id === "string" ? source.link_id : null,
+    sourceSummary: typeof source.summary === "string" ? source.summary : null,
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
     closedAt: row.closed_at ? String(row.closed_at) : null,
