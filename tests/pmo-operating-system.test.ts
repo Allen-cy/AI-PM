@@ -1666,8 +1666,34 @@ test('generic Feishu action APIs expose queue confirm and cancel boundaries', ()
   assert.match(integrationCenterSource, /飞书写入待确认队列/);
   assert.match(integrationCenterSource, /confirmFeishuAction/);
   assert.match(integrationCenterSource, /cancelFeishuAction/);
+  assert.match(integrationCenterSource, /confirmationStatusFilter/);
+  assert.match(integrationCenterSource, /confirmationSearch/);
+  assert.match(integrationCenterSource, /batchCancelFeishuActions/);
+  assert.match(integrationCenterSource, /批量取消/);
   assert.match(confirmationSql, /create table if not exists feishu_action_confirmations/);
   assert.match(confirmationSql, /pending_confirmation/);
+});
+
+test('core operating pages reuse unified integration status panel', () => {
+  const integrationStatusPanelClientSource = readFileSync(new URL('../src/components/IntegrationStatusPanelClient.tsx', import.meta.url), 'utf8');
+  const pages = [
+    ['../src/app/dashboard/page.tsx', '项目组合看板'],
+    ['../src/app/risk/page.tsx', '风险管理'],
+    ['../src/app/pmo/page.tsx', 'PMO治理中心'],
+    ['../src/app/reports/page.tsx', '报告工厂'],
+    ['../src/app/workbench/page.tsx', 'PM/PMO每日工作台'],
+    ['../src/app/knowledge/page.tsx', '知识库与AI问答'],
+  ] as const;
+
+  assert.match(integrationStatusPanelClientSource, new RegExp('/api/operating-system/integrations'));
+  assert.match(integrationStatusPanelClientSource, new RegExp('/api/operating-system/sync-logs'));
+  assert.match(integrationStatusPanelClientSource, /IntegrationStatusPanel/);
+
+  for (const [path, moduleName] of pages) {
+    const pageSource = readFileSync(new URL(path, import.meta.url), 'utf8');
+    assert.match(pageSource, /IntegrationStatusPanelClient/);
+    assert.match(pageSource, new RegExp(moduleName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  }
 });
 
 test('operational workbench filters projects risks todos and reminders for current user', () => {

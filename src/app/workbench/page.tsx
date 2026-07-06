@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { IntegrationStatusPanelClient } from "@/components/IntegrationStatusPanelClient";
 
 type Workbench = {
   kpis: Array<{ label: string; value: string; hint: string; status: string }>;
@@ -317,6 +318,8 @@ export default function WorkbenchPage() {
             <Link href="/risk" className="btn-secondary" style={{ textDecoration: "none" }}>风险管理</Link>
           </div>
         </div>
+
+        <IntegrationStatusPanelClient moduleName="PM/PMO每日工作台" />
 
         {error && <div className="card" style={{ borderColor: "var(--red)", color: "var(--red)", marginBottom: 18 }}>{error}</div>}
 

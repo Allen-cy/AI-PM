@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { IntegrationStatusPanelClient } from "@/components/IntegrationStatusPanelClient";
 import {
   REPORT_TYPE_LABELS,
   TONE_LABELS,
@@ -200,6 +201,8 @@ export default function ReportsPage() {
             P8 报告工厂会引用项目台账、业财驾驶舱、风险/回款数据和用户输入；会议纪要中的待办可以转入统一行动项闭环。
           </p>
         </div>
+
+        <IntegrationStatusPanelClient moduleName="报告工厂" />
 
         {(message || error) && (
           <div style={{

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { IntegrationStatusPanelClient } from "@/components/IntegrationStatusPanelClient";
 import { buildDashboardData, DEFAULT_DASHBOARD_DATA, normalizeProjectRows } from "@/features/dashboard/normalizer";
 import type { DashboardData } from "@/features/dashboard/types";
 import { feishuTableUrl } from "@/features/feishu/links";
@@ -538,6 +539,8 @@ export default function DashboardPage() {
       </header>
 
       <main style={{ flex: 1, padding: "24px 32px", maxWidth: 1400, margin: "0 auto", width: "100%" }}>
+        <IntegrationStatusPanelClient moduleName="项目组合看板" />
+
         <div className="card" style={{ marginBottom: 24, display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
           <div style={{ flex: 1, minWidth: 260 }}>
             <div style={{ fontSize: "0.85rem", fontWeight: 700, marginBottom: 4 }}>数据源：{dashboardData.source.name}</div>

@@ -108,6 +108,9 @@ const statusColor: Record<string, string> = {
   degraded: "var(--amber)",
   warning: "var(--amber)",
   not_configured: "var(--amber)",
+  pending_confirmation: "var(--amber)",
+  writing: "var(--cyan)",
+  cancelled: "var(--text2)",
   unknown: "var(--text2)",
   skipped: "var(--text2)",
   failed: "var(--red)",
@@ -120,6 +123,9 @@ const statusText: Record<string, string> = {
   degraded: "需关注",
   warning: "需关注",
   not_configured: "未配置",
+  pending_confirmation: "待确认",
+  writing: "写入中",
+  cancelled: "已取消",
   unknown: "待检查",
   skipped: "已跳过",
   failed: "失败",
@@ -134,18 +140,27 @@ function StatusPill({ status }: { status: string }) {
   );
 }
 
+function canCancelFeishuAction(status: string): boolean {
+  return !["succeeded", "writing", "cancelled"].includes(status);
+}
+
 export default function IntegrationCenterPage() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [logs, setLogs] = useState<SyncLogSnapshot | null>(null);
   const [confirmations, setConfirmations] = useState<FeishuActionConfirmationSnapshot | null>(null);
   const [confirmationBusyId, setConfirmationBusyId] = useState("");
+  const [confirmationStatusFilter, setConfirmationStatusFilter] = useState("all");
+  const [confirmationSearch, setConfirmationSearch] = useState("");
+  const [selectedConfirmationIds, setSelectedConfirmationIds] = useState<string[]>([]);
   const [confirmationMessage, setConfirmationMessage] = useState("");
   const [error, setError] = useState("");
 
-  async function loadConfirmations() {
-    const response = await fetch("/api/integrations/feishu/actions/confirmations?status=all&limit=20", { cache: "no-store" });
+  async function loadConfirmations(status = confirmationStatusFilter) {
+    const params = new URLSearchParams({ status, limit: "50" });
+    const response = await fetch(`/api/integrations/feishu/actions/confirmations?${params.toString()}`, { cache: "no-store" });
     const data = await response.json();
     setConfirmations(data);
+    setSelectedConfirmationIds([]);
   }
 
   useEffect(() => {
@@ -166,6 +181,7 @@ export default function IntegrationCenterPage() {
           setSnapshot(integrationData);
           setLogs(logsData);
           setConfirmations(confirmationData);
+          setSelectedConfirmationIds([]);
         }
       } catch {
         if (!cancelled) setError("无法读取集成状态，请稍后重试。");
@@ -217,9 +233,56 @@ export default function IntegrationCenterPage() {
     }
   }
 
+  async function batchCancelFeishuActions() {
+    const ids = selectedConfirmationIds.filter(id => confirmations?.confirmations.some(item => item.id === id && canCancelFeishuAction(item.status)));
+    if (ids.length === 0) {
+      setConfirmationMessage("请先勾选可取消的飞书写入动作。");
+      return;
+    }
+    const reason = window.prompt(`将批量取消 ${ids.length} 条飞书写入动作，请输入取消原因：`) || "用户批量取消飞书写入。";
+    setConfirmationBusyId("batch");
+    setConfirmationMessage("");
+    try {
+      let successCount = 0;
+      let failedCount = 0;
+      for (const id of ids) {
+        const response = await fetch(`/api/integrations/feishu/actions/confirmations/${id}/cancel`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ reason }),
+        });
+        if (response.ok) successCount += 1;
+        else failedCount += 1;
+      }
+      setConfirmationMessage(`批量取消完成：成功 ${successCount} 条，失败 ${failedCount} 条。`);
+      await loadConfirmations();
+    } catch {
+      setConfirmationMessage("批量取消请求失败，请稍后重试。");
+    } finally {
+      setConfirmationBusyId("");
+    }
+  }
+
   const ragIndexVersion = snapshot?.rag.indexVersion ?? snapshot?.rag.index_version ?? "未知";
   const ragPageCount = snapshot?.rag.pageCount ?? snapshot?.rag.page_count ?? 0;
   const ragRetrievalMode = snapshot?.rag.retrievalMode ?? snapshot?.rag.retrieval_mode ?? "未知";
+  const confirmationRows = confirmations?.confirmations ?? [];
+  const confirmationKeyword = confirmationSearch.trim().toLowerCase();
+  const visibleConfirmations = confirmationRows.filter(item => {
+    if (!confirmationKeyword) return true;
+    return [
+      item.targetSummary,
+      item.actionType,
+      item.source,
+      item.sourcePage || "",
+      item.requesterName || "",
+      item.status,
+      item.preview.targetType,
+      ...item.preview.fields.map(field => `${field.label}:${field.value}`),
+    ].join(" ").toLowerCase().includes(confirmationKeyword);
+  });
+  const selectableConfirmationIds = visibleConfirmations.filter(item => canCancelFeishuAction(item.status)).map(item => item.id);
+  const selectedVisibleConfirmationIds = selectedConfirmationIds.filter(id => selectableConfirmationIds.includes(id));
   const statusItems: IntegrationStatusItem[] = snapshot ? [
     {
       id: "ai-model",
@@ -308,18 +371,89 @@ export default function IntegrationCenterPage() {
                     </p>
                   )}
                 </div>
-              ) : confirmations.confirmations.length === 0 ? (
-                <p style={{ color: "var(--text2)", lineHeight: 1.7 }}>暂无待确认飞书写入动作。</p>
               ) : (
                 <div style={{ display: "grid", gap: 12 }}>
-                  {confirmations.confirmations.map(item => (
+                  <div style={{ display: "grid", gridTemplateColumns: "180px minmax(220px, 1fr) auto auto", gap: 10, alignItems: "center" }}>
+                    <label style={{ display: "grid", gap: 6 }}>
+                      <span style={{ color: "var(--text2)", fontSize: "0.74rem" }}>状态筛选</span>
+                      <select
+                        className="input"
+                        value={confirmationStatusFilter}
+                        onChange={event => {
+                          const next = event.target.value;
+                          setConfirmationStatusFilter(next);
+                          void loadConfirmations(next);
+                        }}
+                      >
+                        <option value="all">全部状态</option>
+                        <option value="pending_confirmation">待确认</option>
+                        <option value="failed">失败可重试</option>
+                        <option value="succeeded">已成功</option>
+                        <option value="cancelled">已取消</option>
+                        <option value="writing">写入中</option>
+                      </select>
+                    </label>
+                    <label style={{ display: "grid", gap: 6 }}>
+                      <span style={{ color: "var(--text2)", fontSize: "0.74rem" }}>关键词搜索</span>
+                      <input
+                        className="input"
+                        value={confirmationSearch}
+                        onChange={event => setConfirmationSearch(event.target.value)}
+                        placeholder="搜索目标、来源、申请人、字段内容"
+                      />
+                    </label>
+                    <button
+                      className="btn-secondary"
+                      type="button"
+                      disabled={selectableConfirmationIds.length === 0}
+                      onClick={() => {
+                        setSelectedConfirmationIds(prev => (
+                          selectedVisibleConfirmationIds.length === selectableConfirmationIds.length
+                            ? prev.filter(id => !selectableConfirmationIds.includes(id))
+                            : Array.from(new Set([...prev, ...selectableConfirmationIds]))
+                        ));
+                      }}
+                    >
+                      {selectedVisibleConfirmationIds.length === selectableConfirmationIds.length && selectableConfirmationIds.length > 0 ? "取消全选" : "全选可取消"}
+                    </button>
+                    <button
+                      className="btn-primary"
+                      type="button"
+                      disabled={selectedVisibleConfirmationIds.length === 0 || confirmationBusyId === "batch"}
+                      onClick={() => void batchCancelFeishuActions()}
+                    >
+                      {confirmationBusyId === "batch" ? "批量处理中..." : `批量取消${selectedVisibleConfirmationIds.length ? ` ${selectedVisibleConfirmationIds.length}` : ""}`}
+                    </button>
+                  </div>
+                  <p style={{ color: "var(--text2)", fontSize: "0.78rem", lineHeight: 1.6 }}>
+                    当前筛选返回 {confirmationRows.length} 条，页面匹配 {visibleConfirmations.length} 条；只有未成功、未写入中、未取消的动作可以批量取消。
+                  </p>
+                  {confirmationRows.length === 0 ? (
+                    <p style={{ color: "var(--text2)", lineHeight: 1.7 }}>暂无飞书写入动作。</p>
+                  ) : visibleConfirmations.length === 0 ? (
+                    <p style={{ color: "var(--text2)", lineHeight: 1.7 }}>没有匹配当前关键词的飞书写入动作。</p>
+                  ) : visibleConfirmations.map(item => (
                     <div key={item.id} style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 12, padding: 14 }}>
                       <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-                        <div>
-                          <strong>{item.targetSummary}</strong>
-                          <p style={{ color: "var(--text2)", fontSize: "0.78rem", lineHeight: 1.6, marginTop: 4 }}>
-                            来源：{item.sourcePage || item.source} · 申请人：{item.requesterName || "系统/API"} · 创建：{new Date(item.createdAt).toLocaleString("zh-CN")}
-                          </p>
+                        <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                          <input
+                            type="checkbox"
+                            aria-label={`选择 ${item.targetSummary}`}
+                            checked={selectedConfirmationIds.includes(item.id)}
+                            disabled={!canCancelFeishuAction(item.status)}
+                            onChange={event => {
+                              setSelectedConfirmationIds(prev => event.target.checked
+                                ? Array.from(new Set([...prev, item.id]))
+                                : prev.filter(id => id !== item.id));
+                            }}
+                            style={{ marginTop: 4 }}
+                          />
+                          <div>
+                            <strong>{item.targetSummary}</strong>
+                            <p style={{ color: "var(--text2)", fontSize: "0.78rem", lineHeight: 1.6, marginTop: 4 }}>
+                              来源：{item.sourcePage || item.source} · 申请人：{item.requesterName || "系统/API"} · 创建：{new Date(item.createdAt).toLocaleString("zh-CN")}
+                            </p>
+                          </div>
                         </div>
                         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                           <StatusPill status={item.status} />
@@ -347,7 +481,7 @@ export default function IntegrationCenterPage() {
                             {confirmationBusyId === item.id ? "处理中..." : "确认执行"}
                           </button>
                         )}
-                        {!["succeeded", "writing", "cancelled"].includes(item.status) && (
+                        {canCancelFeishuAction(item.status) && (
                           <button className="btn-secondary" type="button" disabled={confirmationBusyId === item.id} onClick={() => void cancelFeishuAction(item.id)}>
                             取消写入
                           </button>

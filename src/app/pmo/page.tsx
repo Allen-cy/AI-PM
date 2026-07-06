@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { IntegrationStatusPanelClient } from '@/components/IntegrationStatusPanelClient';
 import type { RiskRetrospectiveGovernanceFollowupOperationReport } from '@/features/risk/retrospective-governance-followup-workbench';
 import {
   initialProjects,
@@ -63,6 +64,8 @@ export default function PMOPage() {
           项目组合健康度监控 · OKR追踪 · PRINCE2合规 · 治理指标
         </p>
       </div>
+
+      <IntegrationStatusPanelClient moduleName="PMO治理中心" />
 
       <div className="card" style={{
         marginBottom: '20px',

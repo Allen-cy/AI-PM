@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
+import { IntegrationStatusPanelClient } from '@/components/IntegrationStatusPanelClient';
 import { toAssistantMessage } from '@/features/rag/client-adapter';
 import type { RagQueryResult } from '@/features/rag/types';
 import {
@@ -118,6 +119,8 @@ export default function KnowledgePage() {
           基于27篇已审AI-PMO知识的可追溯问答 · 30题黄金评测 Top1 通过
         </p>
       </div>
+
+      <IntegrationStatusPanelClient moduleName="知识库与AI问答" />
 
       <div style={{ display: 'grid', gridTemplateColumns: '280px 1fr', gap: '24px' }}>
         {/* Left Sidebar */}
