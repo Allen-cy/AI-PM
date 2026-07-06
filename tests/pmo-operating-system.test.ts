@@ -13,6 +13,15 @@ import {
   evaluateDataQuality,
   evaluateFeishuFieldMappings,
 } from '../src/features/operating-system/diagnostics.ts';
+import {
+  aiConnectionFailureActions,
+  classifyAiConnectionHttpFailure,
+} from '../src/features/ai/connection-test.ts';
+import {
+  buildFeishuConfigCompletenessSteps,
+  summarizeFeishuConnectionSteps,
+  writeCheckStep,
+} from '../src/features/feishu/connection-test.ts';
 import { buildOperationalWorkbench } from '../src/features/operating-system/workbench.ts';
 import {
   buildRiskRetrospectiveGovernanceFollowupClosureDashboard,
@@ -1532,6 +1541,47 @@ test('integration diagnostics summarize failed mappings and data quality issues'
   assert.equal(advices.some(item => item.id === 'data-quality-issues'), true);
   assert.equal(advices.some(item => item.id === 'ai-model-not-configured'), true);
   assert.equal(advices.some(item => item.id === 'sync-log-not-persisted'), true);
+});
+
+test('user AI connection test classifies provider failures without exposing secrets', () => {
+  assert.equal(classifyAiConnectionHttpFailure(401), 'auth_error');
+  assert.equal(classifyAiConnectionHttpFailure(403), 'auth_error');
+  assert.equal(classifyAiConnectionHttpFailure(429), 'rate_limited');
+  assert.equal(classifyAiConnectionHttpFailure(503), 'provider_error');
+  assert.equal(classifyAiConnectionHttpFailure(400), 'http_error');
+  assert.equal(aiConnectionFailureActions('missing_key').some(action => action.includes('API Key')), true);
+});
+
+test('user Feishu connection test summarizes config field and write permission steps', () => {
+  const incomplete = buildFeishuConfigCompletenessSteps({
+    appId: '',
+    appSecret: 'secret',
+    baseToken: '',
+    configuredTableCount: 0,
+  });
+  assert.equal(incomplete.some(step => step.id === 'app_id' && step.status === 'failed'), true);
+  assert.equal(incomplete.some(step => step.id === 'table_mapping' && step.status === 'warning'), true);
+
+  const writeSkipped = writeCheckStep({ requested: false, attempted: false, succeeded: false });
+  const summary = summarizeFeishuConnectionSteps([...incomplete, writeSkipped]);
+  assert.equal(writeSkipped.status, 'skipped');
+  assert.equal(summary.status, 'failed');
+  assert.equal(summary.failedCount > 0, true);
+});
+
+test('user center exposes one click AI and Feishu connection tests', () => {
+  const accountPageSource = readFileSync(new URL('../src/app/account/page.tsx', import.meta.url), 'utf8');
+  const aiTestRouteSource = readFileSync(new URL('../src/app/api/user/ai-settings/test/route.ts', import.meta.url), 'utf8');
+  const feishuTestRouteSource = readFileSync(new URL('../src/app/api/user/feishu-connection/test/route.ts', import.meta.url), 'utf8');
+
+  assert.match(accountPageSource, /测试AI模型/);
+  assert.match(accountPageSource, /测试飞书连接/);
+  assert.match(accountPageSource, /确认写入测试/);
+  assert.match(accountPageSource, /\/api\/user\/ai-settings\/test/);
+  assert.match(accountPageSource, /\/api\/user\/feishu-connection\/test/);
+  assert.match(aiTestRouteSource, /testAiConnection/);
+  assert.match(feishuTestRouteSource, /writeCheckStep/);
+  assert.match(feishuTestRouteSource, /includeWriteCheck/);
 });
 
 test('operational workbench filters projects risks todos and reminders for current user', () => {

@@ -40,6 +40,45 @@ interface FeishuConnection {
   larkCliHint: string;
 }
 
+interface AiConnectionTestResult {
+  status: "ok" | "not_configured" | "failed";
+  providerLabel: string;
+  model: string;
+  checkedAt: string;
+  latencyMs?: number;
+  failureCategory?: string;
+  message: string;
+  nextActions: string[];
+  endpointHost?: string;
+  responsePreview?: string;
+}
+
+interface FeishuConnectionTestStep {
+  id: string;
+  label: string;
+  status: "ok" | "warning" | "failed" | "skipped";
+  detail: string;
+  nextAction?: string;
+  code?: string;
+}
+
+interface FeishuConnectionTestResult {
+  status: "ok" | "warning" | "failed" | "not_configured";
+  checkedAt: string;
+  baseAccessible: boolean;
+  tableCount: number;
+  configuredTableCount: number;
+  steps: FeishuConnectionTestStep[];
+  summary: {
+    status: "ok" | "warning" | "failed" | "not_configured";
+    message: string;
+    okCount: number;
+    warningCount: number;
+    failedCount: number;
+    skippedCount: number;
+  };
+}
+
 const FIELD_LABELS: Record<Exclude<EditMode, null | "password">, string> = {
   name: "用户名称",
   email: "邮箱",
@@ -76,10 +115,14 @@ export default function AccountPage() {
   const [passwordMessage, setPasswordMessage] = useState<string | null>(null);
   const [aiMessage, setAiMessage] = useState<string | null>(null);
   const [feishuMessage, setFeishuMessage] = useState<string | null>(null);
+  const [aiTestResult, setAiTestResult] = useState<AiConnectionTestResult | null>(null);
+  const [feishuTestResult, setFeishuTestResult] = useState<FeishuConnectionTestResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [aiSaving, setAiSaving] = useState(false);
   const [feishuSaving, setFeishuSaving] = useState(false);
+  const [aiTesting, setAiTesting] = useState(false);
+  const [feishuTesting, setFeishuTesting] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -223,6 +266,27 @@ export default function AccountPage() {
     }
   };
 
+  const testAiSettings = async () => {
+    setAiTesting(true);
+    setAiMessage(null);
+    setAiTestResult(null);
+    try {
+      const response = await fetch("/api/user/ai-settings/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(aiDraft),
+      });
+      const data = await response.json() as { test?: AiConnectionTestResult; warning?: string };
+      if (!data.test) throw new Error(data.warning || "AI模型测试失败");
+      setAiTestResult(data.test);
+      setAiMessage(data.test.message);
+    } catch (error) {
+      setAiMessage(error instanceof Error ? error.message : "AI模型测试失败");
+    } finally {
+      setAiTesting(false);
+    }
+  };
+
   const saveFeishuConnection = async () => {
     setFeishuSaving(true);
     setFeishuMessage(null);
@@ -246,6 +310,28 @@ export default function AccountPage() {
       setFeishuMessage(error instanceof Error ? error.message : "飞书配置保存失败");
     } finally {
       setFeishuSaving(false);
+    }
+  };
+
+  const testFeishuConnection = async (includeWriteCheck = false) => {
+    if (includeWriteCheck && !window.confirm("确认向飞书同步流水表写入一条 AI-PMO 连接测试记录？该操作用于验证写入权限，不会写入项目台账。")) return;
+    setFeishuTesting(true);
+    setFeishuMessage(null);
+    setFeishuTestResult(null);
+    try {
+      const response = await fetch("/api/user/feishu-connection/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...feishuDraft, includeWriteCheck }),
+      });
+      const data = await response.json() as { test?: FeishuConnectionTestResult; warning?: string };
+      if (!data.test) throw new Error(data.warning || "飞书连接测试失败");
+      setFeishuTestResult(data.test);
+      setFeishuMessage(data.test.summary.message);
+    } catch (error) {
+      setFeishuMessage(error instanceof Error ? error.message : "飞书连接测试失败");
+    } finally {
+      setFeishuTesting(false);
     }
   };
 
@@ -688,8 +774,32 @@ export default function AccountPage() {
           </label>
           <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 16 }}>
             <button className="btn-primary" onClick={saveAiSettings} disabled={aiSaving}>{aiSaving ? "保存中..." : "保存AI模型配置"}</button>
+            <button className="btn-secondary" onClick={testAiSettings} disabled={aiTesting}>{aiTesting ? "测试中..." : "测试AI模型"}</button>
             {aiMessage && <span style={{ color: aiMessage.includes("已") ? "#287d4b" : "#a13d2c", fontSize: "0.84rem", fontWeight: 900 }}>{aiMessage}</span>}
           </div>
+
+          {aiTestResult && (
+            <div style={{
+              marginTop: 16,
+              padding: 14,
+              borderRadius: 16,
+              background: aiTestResult.status === "ok" ? "rgba(40,131,76,0.12)" : "rgba(172,61,44,0.12)",
+              border: aiTestResult.status === "ok" ? "1px solid rgba(40,131,76,0.24)" : "1px solid rgba(172,61,44,0.24)",
+              color: aiTestResult.status === "ok" ? "#287d4b" : "#a13d2c",
+              lineHeight: 1.7,
+              fontSize: "0.84rem",
+            }}>
+              <strong>{aiTestResult.providerLabel} · {aiTestResult.model}</strong>
+              <div>{aiTestResult.message}</div>
+              <div>接口主机：{aiTestResult.endpointHost || "未识别"}{aiTestResult.latencyMs ? `；耗时 ${aiTestResult.latencyMs}ms` : ""}</div>
+              {aiTestResult.failureCategory && <div>失败分类：{aiTestResult.failureCategory}</div>}
+              {aiTestResult.nextActions.length > 0 && (
+                <ul style={{ margin: "8px 0 0 18px", color: "inherit" }}>
+                  {aiTestResult.nextActions.map(action => <li key={action}>{action}</li>)}
+                </ul>
+              )}
+            </div>
+          )}
         </section>
 
         <section style={{
@@ -770,8 +880,40 @@ export default function AccountPage() {
 
           <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 16 }}>
             <button className="btn-primary" onClick={saveFeishuConnection} disabled={feishuSaving}>{feishuSaving ? "保存中..." : "保存个人飞书配置"}</button>
+            <button className="btn-secondary" onClick={() => testFeishuConnection(false)} disabled={feishuTesting}>{feishuTesting ? "测试中..." : "测试飞书连接"}</button>
+            <button className="btn-secondary" onClick={() => testFeishuConnection(true)} disabled={feishuTesting}>确认写入测试</button>
             {feishuMessage && <span style={{ color: feishuMessage.includes("已") ? "#287d4b" : "#a13d2c", fontSize: "0.84rem", fontWeight: 900 }}>{feishuMessage}</span>}
           </div>
+
+          {feishuTestResult && (
+            <div style={{
+              marginTop: 16,
+              padding: 14,
+              borderRadius: 16,
+              background: feishuTestResult.status === "ok" ? "rgba(40,131,76,0.12)" : feishuTestResult.status === "warning" ? "rgba(180,111,25,0.12)" : "rgba(172,61,44,0.12)",
+              border: feishuTestResult.status === "ok" ? "1px solid rgba(40,131,76,0.24)" : feishuTestResult.status === "warning" ? "1px solid rgba(180,111,25,0.24)" : "1px solid rgba(172,61,44,0.24)",
+              color: feishuTestResult.status === "ok" ? "#287d4b" : feishuTestResult.status === "warning" ? "#9a5b11" : "#a13d2c",
+              lineHeight: 1.7,
+              fontSize: "0.84rem",
+            }}>
+              <strong>{feishuTestResult.summary.message}</strong>
+              <div>Base访问：{feishuTestResult.baseAccessible ? "可访问" : "未通过"}；表：{feishuTestResult.configuredTableCount} / {feishuTestResult.tableCount}</div>
+              <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
+                {feishuTestResult.steps.map(step => (
+                  <div key={step.id} style={{
+                    padding: 10,
+                    borderRadius: 12,
+                    background: "rgba(255,255,255,0.46)",
+                    border: "1px solid rgba(79,125,104,0.14)",
+                  }}>
+                    <strong>{step.label}：{step.status === "ok" ? "通过" : step.status === "warning" ? "需关注" : step.status === "skipped" ? "未执行" : "失败"}</strong>
+                    <div>{step.detail}</div>
+                    {step.nextAction && <div style={{ marginTop: 4 }}>下一步：{step.nextAction}</div>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </section>
       </div>
     </main>
