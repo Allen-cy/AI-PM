@@ -345,7 +345,7 @@ async function resolveGovernanceInstance(input: {
   governanceInstanceId?: string | null;
   followupId?: string | null;
   reminderLogId?: string | null;
-}): Promise<ReturnType<typeof getGovernanceInstanceBundle>> {
+}): Promise<Awaited<ReturnType<typeof getGovernanceInstanceBundle>>> {
   if (input.governanceInstanceId) return getGovernanceInstanceBundle(input.governanceInstanceId);
   const list = await listGovernanceInstances(200);
   if (list.status !== "succeeded") {

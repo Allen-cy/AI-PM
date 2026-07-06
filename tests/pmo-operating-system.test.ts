@@ -223,6 +223,10 @@ test('governance workflows define inputs outputs owners states and audit trail',
   assert.match(governancePageSource, /处理率/);
   assert.match(governancePageSource, /知识治理升级候选流程/);
   assert.match(governancePageSource, /带入创建表单/);
+  assert.match(governancePageSource, /知识治理证据链/);
+  assert.match(governancePageSource, /生成反写建议/);
+  assert.match(governancePageSource, /确认反写待办/);
+  assert.match(governancePageSource, /\/api\/risk\/retrospective\/assets\/governance\/followups\/evidence-chain/);
   assert.match(governancePageSource, /治理审计包导出/);
   assert.match(governancePageSource, /治理策略配置与预览/);
   assert.match(governancePageSource, /\/api\/governance\/strategy/);

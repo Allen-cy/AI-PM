@@ -56,6 +56,10 @@ type Instance = {
     reportFacts: string[];
     nextAction: string;
   };
+  sourceType?: string | null;
+  sourceId?: string | null;
+  sourceLinkId?: string | null;
+  sourceSummary?: string | null;
 };
 
 type GovernanceWorkItem = {
@@ -195,6 +199,78 @@ type StrategyPreview = {
   };
 };
 
+type KnowledgeGovernanceEvidenceGap = {
+  code: string;
+  severity: "high" | "medium" | "low";
+  message: string;
+};
+
+type KnowledgeGovernanceEvidenceRecommendation = {
+  targetFollowupStatus: "处理中" | "待验收" | "已关闭";
+  closureNote: string;
+  reviewResult: string;
+  evidenceSummary: string;
+  sourceEvents: string[];
+  riskWarnings: string[];
+  boundary: string;
+};
+
+type KnowledgeGovernanceEvidenceChainResponse = {
+  status: "succeeded" | "confirmation_required" | "not_configured" | "not_found" | "failed";
+  warning?: string;
+  boundary?: string;
+  confirmationRequired?: boolean;
+  chain?: {
+    followup?: {
+      id: string;
+      assetTitle?: string;
+      status?: string;
+      ownerName?: string | null;
+      dueDate?: string | null;
+    } | null;
+    reminderLog?: {
+      id: string;
+      title?: string;
+      status?: string;
+      actionRequired?: string | null;
+    } | null;
+    governanceInstance?: {
+      id: string;
+      title?: string;
+      state?: string;
+      sourceSummary?: string | null;
+    } | null;
+    unifiedAction?: {
+      id: string;
+      title?: string;
+      status?: string;
+      owner?: string | null;
+      dueDate?: string | null;
+    } | null;
+    evidenceLink?: {
+      id: string;
+      status?: string;
+      reviewStatus?: string;
+      reviewNote?: string | null;
+    } | null;
+  };
+  timeline?: Array<{
+    at: string;
+    type: string;
+    title: string;
+    actor?: string | null;
+    evidence?: string | null;
+  }>;
+  gaps?: KnowledgeGovernanceEvidenceGap[];
+  recommendation?: KnowledgeGovernanceEvidenceRecommendation;
+  evidenceLink?: {
+    id: string;
+    status?: string;
+    reviewStatus?: string;
+    reviewNote?: string | null;
+  };
+};
+
 type CreateForm = {
   workflowId: string;
   projectName: string;
@@ -269,6 +345,10 @@ function trendHeight(value: number, maxValue: number): string {
   return `${Math.max(8, Math.round((value / maxValue) * 100))}%`;
 }
 
+function supportsKnowledgeGovernanceEvidenceChain(instance: Instance): boolean {
+  return instance.sourceType === "risk_retrospective_governance_reminder" || Boolean(instance.sourceLinkId);
+}
+
 export default function GovernanceWorkflowsClient() {
   const [data, setData] = useState<GovernanceResponse | null>(null);
   const [form, setForm] = useState<CreateForm>(emptyForm());
@@ -278,6 +358,8 @@ export default function GovernanceWorkflowsClient() {
   const [transitionOutput, setTransitionOutput] = useState<Record<string, string>>({});
   const [transitionActions, setTransitionActions] = useState<Record<string, string>>({});
   const [auditFilter, setAuditFilter] = useState({ projectName: "", dateFrom: "", dateTo: "" });
+  const [evidenceChainByInstance, setEvidenceChainByInstance] = useState<Record<string, KnowledgeGovernanceEvidenceChainResponse>>({});
+  const [evidenceBusy, setEvidenceBusy] = useState("");
   const [strategyForm, setStrategyForm] = useState<StrategyForm>({
     projectName: "",
     projectLevel: "",
@@ -314,6 +396,93 @@ export default function GovernanceWorkflowsClient() {
     setData(body);
     if (body.workflows?.length && !form.workflowId) {
       setForm(emptyForm(body.workflows[0]));
+    }
+  }
+
+  function evidenceRequestPayload(instance: Instance) {
+    return {
+      governanceInstanceId: instance.id,
+      followupId: instance.sourceLinkId || undefined,
+      reminderLogId: instance.sourceType === "risk_retrospective_governance_reminder" ? instance.sourceId || undefined : undefined,
+    };
+  }
+
+  async function loadEvidenceChain(instance: Instance) {
+    setEvidenceBusy(`${instance.id}:load`);
+    setMessage("");
+    try {
+      const payload = evidenceRequestPayload(instance);
+      const params = new URLSearchParams({ governanceInstanceId: payload.governanceInstanceId });
+      if (payload.followupId) params.set("followupId", payload.followupId);
+      if (payload.reminderLogId) params.set("reminderLogId", payload.reminderLogId);
+      const response = await fetch(`/api/risk/retrospective/assets/governance/followups/evidence-chain?${params.toString()}`, { cache: "no-store" });
+      const body = await response.json() as KnowledgeGovernanceEvidenceChainResponse;
+      if (!response.ok || body.status !== "succeeded") {
+        setMessage(body.warning || "知识治理证据链读取失败。");
+      } else {
+        setEvidenceChainByInstance(current => ({ ...current, [instance.id]: body }));
+        setMessage(body.warning || "知识治理证据链已刷新。");
+      }
+    } catch {
+      setMessage("知识治理证据链读取失败。");
+    } finally {
+      setEvidenceBusy("");
+    }
+  }
+
+  async function generateEvidenceRecommendation(instance: Instance) {
+    setEvidenceBusy(`${instance.id}:recommend`);
+    setMessage("");
+    try {
+      const response = await fetch("/api/risk/retrospective/assets/governance/followups/evidence-chain", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(evidenceRequestPayload(instance)),
+      });
+      const body = await response.json() as KnowledgeGovernanceEvidenceChainResponse;
+      if (!response.ok || body.status !== "confirmation_required") {
+        setMessage(body.warning || "知识治理反写建议生成失败。");
+      } else {
+        setEvidenceChainByInstance(current => ({ ...current, [instance.id]: body }));
+        setMessage(body.warning || `已生成反写建议：建议将二次治理待办更新为“${body.recommendation?.targetFollowupStatus || "待确认"}”，需人工确认后才会写回。`);
+      }
+    } catch {
+      setMessage("知识治理反写建议生成失败。");
+    } finally {
+      setEvidenceBusy("");
+    }
+  }
+
+  async function applyEvidenceRecommendation(instance: Instance) {
+    const cached = evidenceChainByInstance[instance.id];
+    const targetStatus = cached?.recommendation?.targetFollowupStatus || "待验收";
+    const confirmed = window.confirm(`确认将该治理结果反写到来源二次治理待办？\n\n建议状态：${targetStatus}\n\n该操作会追加关闭/复核说明，不会静默覆盖已有证据。`);
+    if (!confirmed) return;
+    setEvidenceBusy(`${instance.id}:apply`);
+    setMessage("");
+    try {
+      const response = await fetch("/api/risk/retrospective/assets/governance/followups/evidence-chain", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...evidenceRequestPayload(instance),
+          evidenceLinkId: cached?.evidenceLink?.id || cached?.chain?.evidenceLink?.id,
+          confirm: true,
+          reviewNote: "用户在 PMO 治理工作流中心显式确认反写。",
+        }),
+      });
+      const body = await response.json() as KnowledgeGovernanceEvidenceChainResponse;
+      if (!response.ok || body.status !== "succeeded") {
+        setMessage(body.warning || "知识治理待办反写失败。");
+      } else {
+        setEvidenceChainByInstance(current => ({ ...current, [instance.id]: body }));
+        setMessage(`已反写来源二次治理待办：${body.chain?.followup?.assetTitle || "待办"} / ${body.chain?.followup?.status || targetStatus}`);
+        await load();
+      }
+    } catch {
+      setMessage("知识治理待办反写失败。");
+    } finally {
+      setEvidenceBusy("");
     }
   }
 
@@ -464,6 +633,89 @@ export default function GovernanceWorkflowsClient() {
     } finally {
       setBusy("");
     }
+  }
+
+  function renderEvidenceChainPanel(instance: Instance) {
+    if (!supportsKnowledgeGovernanceEvidenceChain(instance)) return null;
+    const evidence = evidenceChainByInstance[instance.id];
+    const evidenceLink = evidence?.evidenceLink || evidence?.chain?.evidenceLink;
+    const busyPrefix = `${instance.id}:`;
+    const isBusy = evidenceBusy.startsWith(busyPrefix);
+    const gaps = evidence?.gaps ?? [];
+    const highGaps = gaps.filter(gap => gap.severity === "high").length;
+    const timeline = evidence?.timeline ?? [];
+    const recommendation = evidence?.recommendation;
+
+    return (
+      <div style={{ background: "rgba(139,92,246,0.08)", border: "1px solid rgba(139,92,246,0.28)", borderRadius: 10, padding: 12, marginTop: 12 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start", flexWrap: "wrap" }}>
+          <div>
+            <strong style={{ color: "var(--accent2)", fontSize: "0.84rem" }}>知识治理证据链</strong>
+            <p style={{ color: "var(--text2)", fontSize: "0.76rem", lineHeight: 1.6, marginTop: 5 }}>
+              来源待办：{evidence?.chain?.followup?.assetTitle || instance.sourceSummary || instance.sourceLinkId || "待读取"}；证据链状态：{evidenceLink?.status || "未保存"}
+            </p>
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button type="button" className="btn-secondary" disabled={isBusy} onClick={() => loadEvidenceChain(instance)} style={{ padding: "7px 10px", fontSize: "0.76rem" }}>
+              {evidenceBusy === `${instance.id}:load` ? "读取中..." : "查看证据链"}
+            </button>
+            <button type="button" className="btn-secondary" disabled={isBusy} onClick={() => generateEvidenceRecommendation(instance)} style={{ padding: "7px 10px", fontSize: "0.76rem" }}>
+              {evidenceBusy === `${instance.id}:recommend` ? "生成中..." : "生成反写建议"}
+            </button>
+            <button type="button" className="btn-primary" disabled={isBusy || !recommendation} onClick={() => applyEvidenceRecommendation(instance)} style={{ padding: "7px 10px", fontSize: "0.76rem" }}>
+              {evidenceBusy === `${instance.id}:apply` ? "反写中..." : "确认反写待办"}
+            </button>
+          </div>
+        </div>
+
+        {evidence?.warning && (
+          <div style={{ border: "1px solid rgba(245,158,11,0.42)", background: "rgba(245,158,11,0.08)", color: "var(--amber)", borderRadius: 8, padding: 8, marginTop: 10, fontSize: "0.74rem", lineHeight: 1.6 }}>
+            {evidence.warning}
+          </div>
+        )}
+
+        {evidence && (
+          <div style={{ display: "grid", gap: 10, marginTop: 10 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 8 }}>
+              <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 8, padding: 10 }}>
+                <div style={{ color: "var(--text2)", fontSize: "0.7rem" }}>时间线证据</div>
+                <strong style={{ fontSize: "0.92rem" }}>{timeline.length}</strong>
+              </div>
+              <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 8, padding: 10 }}>
+                <div style={{ color: "var(--text2)", fontSize: "0.7rem" }}>缺口提示</div>
+                <strong style={{ fontSize: "0.92rem" }}>{gaps.length} 项{highGaps > 0 ? ` / 高风险 ${highGaps}` : ""}</strong>
+              </div>
+              <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 8, padding: 10 }}>
+                <div style={{ color: "var(--text2)", fontSize: "0.7rem" }}>建议状态</div>
+                <strong style={{ fontSize: "0.92rem" }}>{recommendation?.targetFollowupStatus || "待生成"}</strong>
+              </div>
+            </div>
+
+            {recommendation && (
+              <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 8, padding: 10 }}>
+                <strong style={{ fontSize: "0.78rem" }}>反写依据</strong>
+                <p style={{ color: "var(--text2)", fontSize: "0.72rem", lineHeight: 1.6, whiteSpace: "pre-line", marginTop: 6 }}>
+                  {recommendation.evidenceSummary}
+                </p>
+                <p style={{ color: "var(--accent2)", fontSize: "0.72rem", lineHeight: 1.6, marginTop: 6 }}>
+                  边界：{recommendation.boundary}
+                </p>
+              </div>
+            )}
+
+            {gaps.length > 0 && (
+              <div style={{ display: "grid", gap: 6 }}>
+                {gaps.slice(0, 3).map(gap => (
+                  <div key={gap.code} style={{ color: gap.severity === "high" ? "var(--red)" : gap.severity === "medium" ? "var(--amber)" : "var(--text2)", fontSize: "0.72rem", lineHeight: 1.5 }}>
+                    {gap.severity === "high" ? "高" : gap.severity === "medium" ? "中" : "低"}：{gap.message}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
   }
 
   return (
@@ -951,6 +1203,7 @@ export default function GovernanceWorkflowsClient() {
                               )}
                             </div>
                           )}
+                          {renderEvidenceChainPanel(instance)}
                         </div>
                         <a href={`/api/governance/workflows/${instance.id}/report`} className="btn-secondary" style={{ textDecoration: "none", alignSelf: "start" }}>下载审计包</a>
                       </div>
