@@ -305,7 +305,7 @@ async function findUnifiedActionByFollowupId(followupId: string): Promise<Knowle
     .limit(1)
     .maybeSingle();
   if (error || !data) return null;
-  return mapUnifiedAction(data as Record<string, unknown>);
+  return mapUnifiedAction(data as unknown as Record<string, unknown>);
 }
 
 async function findEvidenceLink(input: {
@@ -335,7 +335,7 @@ async function findEvidenceLink(input: {
         warning: sqlWarning(error.message),
       };
     }
-    return { status: "succeeded", link: data ? mapEvidenceLink(data as Record<string, unknown>) : null };
+    return { status: "succeeded", link: data ? mapEvidenceLink(data as unknown as Record<string, unknown>) : null };
   } catch (error) {
     return { status: "failed", warning: error instanceof Error ? error.message : "读取知识治理证据链失败。" };
   }
@@ -366,9 +366,10 @@ export async function getKnowledgeGovernanceEvidenceChain(input: {
 }): Promise<KnowledgeGovernanceEvidenceChainResult> {
   if (!await authStorageConfigured()) return { status: "not_configured", warning: "Supabase 未配置，无法读取知识治理证据链。" };
   const governance = await resolveGovernanceInstance(input);
-  if (governance.status !== "succeeded" || !governance.instance) {
+  if (governance.status !== "succeeded") {
     return { status: governance.status, warning: governance.warning || "未找到关联治理流程实例。" };
   }
+  if (!governance.instance) return { status: "not_found", warning: "未找到关联治理流程实例。" };
   const sourceFollowupId = input.followupId || governance.instance.sourceLinkId || null;
   const sourceReminderId = input.reminderLogId || (governance.instance.sourceType === "risk_retrospective_governance_reminder" ? governance.instance.sourceId : null);
   const [followupResult, reminderResult, evidenceResult] = await Promise.all([
@@ -464,7 +465,7 @@ export async function saveKnowledgeGovernanceEvidenceRecommendation(input: {
         warning: sqlWarning(error?.message),
       };
     }
-    const evidenceLink = mapEvidenceLink(data as Record<string, unknown>);
+    const evidenceLink = mapEvidenceLink(data as unknown as Record<string, unknown>);
     const chain = { ...chainResult.chain, evidenceLink };
     return {
       status: "confirmation_required",
@@ -557,7 +558,7 @@ export async function applyKnowledgeGovernanceEvidenceRecommendation(input: {
         warning: sqlWarning(error?.message),
       };
     }
-    const evidenceLink = mapEvidenceLink(data as Record<string, unknown>);
+    const evidenceLink = mapEvidenceLink(data as unknown as Record<string, unknown>);
     const chain = {
       ...recommendationResult.chain,
       followup: updateResult.followup,
