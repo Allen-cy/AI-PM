@@ -1,5 +1,7 @@
 import { getCurrentUser } from "../../../../../../features/auth/server.ts";
 import {
+  buildFeishuConfirmationQueueSummary,
+  buildFeishuConfirmationRiskReview,
   createFeishuActionConfirmation,
   listFeishuActionConfirmations,
   type FeishuActionConfirmationRecord,
@@ -49,7 +51,17 @@ export async function GET(request: Request): Promise<Response> {
     limit: Math.min(100, Math.max(1, Number(url.searchParams.get("limit") || 50))),
   });
   const status = result.status === "succeeded" ? 200 : result.status === "not_configured" ? 503 : 500;
-  return json({ request_id: requestId, ...result }, status, requestId);
+  if (result.status !== "succeeded") return json({ request_id: requestId, ...result }, status, requestId);
+
+  return json({
+    request_id: requestId,
+    ...result,
+    confirmations: result.confirmations.map(confirmation => ({
+      ...confirmation,
+      riskReview: buildFeishuConfirmationRiskReview(confirmation, { user }),
+    })),
+    summary: buildFeishuConfirmationQueueSummary(result.confirmations),
+  }, status, requestId);
 }
 
 export async function POST(request: Request): Promise<Response> {
@@ -88,6 +100,7 @@ export async function POST(request: Request): Promise<Response> {
     request_id: requestId,
     ...result,
     preview: result.status === "succeeded" ? result.confirmation.preview : preview,
+    riskReview: result.status === "succeeded" ? buildFeishuConfirmationRiskReview(result.confirmation, { user }) : undefined,
     confirmation_required: result.status === "succeeded",
   }, status, requestId);
 }

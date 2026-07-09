@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { FeishuConfirmationInlinePanelClient } from '@/components/FeishuConfirmationInlinePanelClient';
 import { IntegrationStatusPanelClient } from '@/components/IntegrationStatusPanelClient';
 import type { RiskRetrospectiveGovernanceFollowupOperationReport } from '@/features/risk/retrospective-governance-followup-workbench';
 import {
@@ -66,6 +67,7 @@ export default function PMOPage() {
       </div>
 
       <IntegrationStatusPanelClient moduleName="PMO治理中心" />
+      <FeishuConfirmationInlinePanelClient moduleName="PMO治理中心" />
 
       <div className="card" style={{
         marginBottom: '20px',

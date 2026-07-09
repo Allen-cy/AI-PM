@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { FeishuConfirmationInlinePanelClient } from "@/components/FeishuConfirmationInlinePanelClient";
 import { IntegrationStatusPanelClient } from "@/components/IntegrationStatusPanelClient";
 import {
   REPORT_TYPE_LABELS,
@@ -203,6 +204,7 @@ export default function ReportsPage() {
         </div>
 
         <IntegrationStatusPanelClient moduleName="报告工厂" />
+        <FeishuConfirmationInlinePanelClient moduleName="报告工厂" />
 
         {(message || error) && (
           <div style={{

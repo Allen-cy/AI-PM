@@ -81,6 +81,22 @@ type FeishuActionConfirmationSnapshot = {
   status: string;
   warning?: string;
   migration?: string;
+  summary?: {
+    totalCount: number;
+    pendingCount: number;
+    failedCount: number;
+    highRiskPendingCount: number;
+    overduePendingCount: number;
+    requiresSecondConfirmCount: number;
+    reminderDrafts: Array<{
+      id: string;
+      priority: "P0" | "P1" | "P2";
+      title: string;
+      detail: string;
+      nextAction: string;
+      targetSummary: string;
+    }>;
+  };
   confirmations: Array<{
     id: string;
     requesterName?: string | null;
@@ -96,10 +112,37 @@ type FeishuActionConfirmationSnapshot = {
       riskReasons: string[];
       fields: Array<{ label: string; value: string }>;
     };
+    riskReview?: {
+      riskLevel: "low" | "medium" | "high";
+      baseRiskLevel: "low" | "medium" | "high";
+      canConfirm: boolean;
+      canCancel: boolean;
+      requiresSecondConfirm: boolean;
+      ageDays: number | null;
+      blockingIssues: string[];
+      warnings: string[];
+      checklist: Array<{ id: string; label: string; status: "pass" | "warning" | "block"; detail: string }>;
+      suggestedAction: "confirm" | "review" | "cancel";
+    };
     errorCode?: string | null;
     cancelReason?: string | null;
     createdAt: string;
   }>;
+};
+
+type FeishuBatchRiskReview = {
+  selectedCount: number;
+  confirmableCount: number;
+  blockedCount: number;
+  highRiskCount: number;
+  requiresSecondConfirmCount: number;
+  confirmableIds: string[];
+  blockedIds: string[];
+  inaccessibleIds?: string[];
+  missingIds?: string[];
+  warnings: string[];
+  blockingIssues: string[];
+  decisionText: string;
 };
 
 const statusColor: Record<string, string> = {
@@ -142,6 +185,22 @@ function StatusPill({ status }: { status: string }) {
 
 function canCancelFeishuAction(status: string): boolean {
   return !["succeeded", "writing", "cancelled"].includes(status);
+}
+
+function canConfirmFeishuAction(status: string): boolean {
+  return status === "pending_confirmation" || status === "failed";
+}
+
+function riskLabel(value: string): string {
+  if (value === "high") return "高风险";
+  if (value === "medium") return "中风险";
+  return "低风险";
+}
+
+function riskColor(value: string): string {
+  if (value === "high") return "var(--red)";
+  if (value === "medium") return "var(--amber)";
+  return "var(--accent2)";
 }
 
 export default function IntegrationCenterPage() {
@@ -193,21 +252,90 @@ export default function IntegrationCenterPage() {
     };
   }, []);
 
-  async function confirmFeishuAction(id: string) {
-    if (!window.confirm("确认后系统会使用当前账号的有效飞书配置执行该写入动作，并写入同步流水。是否继续？")) return;
-    setConfirmationBusyId(id);
+  async function confirmFeishuAction(item: FeishuActionConfirmationSnapshot["confirmations"][number]) {
+    const riskReview = item.riskReview;
+    const riskLines = [
+      `目标：${item.targetSummary}`,
+      `风险：${riskLabel(riskReview?.riskLevel || item.riskLevel)}`,
+      ...(riskReview?.requiresSecondConfirm ? ["该动作需要二次风险确认。"] : []),
+      ...(riskReview?.blockingIssues.length ? [`阻断项：${riskReview.blockingIssues.join("；")}`] : []),
+      ...(riskReview?.warnings.length ? [`提示：${riskReview.warnings.slice(0, 4).join("；")}`] : []),
+    ];
+    if (riskReview && !riskReview.canConfirm) {
+      setConfirmationMessage(riskReview.blockingIssues[0] || "该动作风险复核未通过，不能确认执行。");
+      return;
+    }
+    if (!window.confirm(`${riskLines.join("\n")}\n\n确认后系统会使用当前账号的有效飞书配置执行该写入动作，并写入同步流水。是否继续？`)) return;
+    setConfirmationBusyId(item.id);
     setConfirmationMessage("");
     try {
-      const response = await fetch(`/api/integrations/feishu/actions/confirmations/${id}/confirm`, {
+      const response = await fetch(`/api/integrations/feishu/actions/confirmations/${item.id}/confirm`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ confirm: true }),
+        body: JSON.stringify({ confirm: true, riskAcknowledged: true }),
       });
       const data = await response.json();
       setConfirmationMessage(response.ok ? "飞书写入已确认执行。" : data.warning || "飞书写入确认失败。");
       await loadConfirmations();
     } catch {
       setConfirmationMessage("飞书写入确认请求失败，请稍后重试。");
+    } finally {
+      setConfirmationBusyId("");
+    }
+  }
+
+  async function reviewFeishuBatch(ids: string[]): Promise<FeishuBatchRiskReview | null> {
+    const response = await fetch("/api/integrations/feishu/actions/confirmations/batch-review", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids }),
+    });
+    const data = await response.json();
+    if (!response.ok || data.status !== "succeeded") {
+      setConfirmationMessage(data.warning || "批量确认前风险复核失败。");
+      return null;
+    }
+    return data.batchReview as FeishuBatchRiskReview;
+  }
+
+  async function batchConfirmFeishuActions() {
+    const ids = selectedConfirmationIds.filter(id => confirmations?.confirmations.some(item => item.id === id && canConfirmFeishuAction(item.status)));
+    if (ids.length === 0) {
+      setConfirmationMessage("请先勾选待确认或失败可重试的飞书写入动作。");
+      return;
+    }
+    setConfirmationBusyId("batch-confirm-review");
+    setConfirmationMessage("");
+    try {
+      const review = await reviewFeishuBatch(ids);
+      if (!review) return;
+      if (review.confirmableCount === 0) {
+        setConfirmationMessage(review.blockingIssues[0] || "本次选择没有可批量确认的记录。");
+        return;
+      }
+      const warningLines = [
+        review.decisionText,
+        ...(review.blockingIssues.length ? [`阻断项：${review.blockingIssues.join("；")}`] : []),
+        ...(review.warnings.length ? [`风险提示：${review.warnings.slice(0, 6).join("；")}`] : []),
+      ];
+      if (!window.confirm(`${warningLines.join("\n")}\n\n将仅确认可执行的 ${review.confirmableCount} 条记录。是否继续？`)) return;
+
+      setConfirmationBusyId("batch-confirm");
+      let successCount = 0;
+      let failedCount = 0;
+      for (const id of review.confirmableIds) {
+        const response = await fetch(`/api/integrations/feishu/actions/confirmations/${id}/confirm`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ confirm: true, riskAcknowledged: true }),
+        });
+        if (response.ok) successCount += 1;
+        else failedCount += 1;
+      }
+      setConfirmationMessage(`批量确认完成：成功 ${successCount} 条，失败 ${failedCount} 条；复核阻断 ${review.blockedCount} 条。`);
+      await loadConfirmations();
+    } catch {
+      setConfirmationMessage("批量确认请求失败，请稍后重试。");
     } finally {
       setConfirmationBusyId("");
     }
@@ -281,8 +409,13 @@ export default function IntegrationCenterPage() {
       ...item.preview.fields.map(field => `${field.label}:${field.value}`),
     ].join(" ").toLowerCase().includes(confirmationKeyword);
   });
-  const selectableConfirmationIds = visibleConfirmations.filter(item => canCancelFeishuAction(item.status)).map(item => item.id);
+  const selectableConfirmationIds = visibleConfirmations.filter(item => canCancelFeishuAction(item.status) || canConfirmFeishuAction(item.status)).map(item => item.id);
   const selectedVisibleConfirmationIds = selectedConfirmationIds.filter(id => selectableConfirmationIds.includes(id));
+  const confirmableConfirmationIds = visibleConfirmations.filter(item => canConfirmFeishuAction(item.status)).map(item => item.id);
+  const selectedConfirmableConfirmationIds = selectedConfirmationIds.filter(id => confirmableConfirmationIds.includes(id));
+  const cancellableConfirmationIds = visibleConfirmations.filter(item => canCancelFeishuAction(item.status)).map(item => item.id);
+  const selectedCancellableConfirmationIds = selectedConfirmationIds.filter(id => cancellableConfirmationIds.includes(id));
+  const confirmationSummary = confirmations?.summary;
   const statusItems: IntegrationStatusItem[] = snapshot ? [
     {
       id: "ai-model",
@@ -373,7 +506,43 @@ export default function IntegrationCenterPage() {
                 </div>
               ) : (
                 <div style={{ display: "grid", gap: 12 }}>
-                  <div style={{ display: "grid", gridTemplateColumns: "180px minmax(220px, 1fr) auto auto", gap: 10, alignItems: "center" }}>
+                  {confirmationSummary && (
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10 }}>
+                      {[
+                        ["待确认", confirmationSummary.pendingCount, "需人工确认后才写飞书"],
+                        ["失败可重试", confirmationSummary.failedCount, "可先复核再重试"],
+                        ["高风险", confirmationSummary.highRiskPendingCount, "需要二次确认"],
+                        ["逾期待处理", confirmationSummary.overduePendingCount, "超过7天未处理"],
+                        ["二次确认", confirmationSummary.requiresSecondConfirmCount, "需显式风险确认"],
+                      ].map(([label, value, hint]) => (
+                        <div key={label} style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 10, padding: 12 }}>
+                          <div style={{ color: "var(--text2)", fontSize: "0.74rem", marginBottom: 6 }}>{label}</div>
+                          <div style={{ fontSize: "1.35rem", fontWeight: 900, color: label === "高风险" ? "var(--red)" : label === "逾期待处理" ? "var(--amber)" : "var(--accent2)" }}>{value}</div>
+                          <p style={{ color: "var(--text2)", fontSize: "0.72rem", lineHeight: 1.5, marginTop: 4 }}>{hint}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {confirmationSummary?.reminderDrafts?.length ? (
+                    <div style={{ background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.28)", borderRadius: 12, padding: 12 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+                        <strong style={{ color: "var(--amber)" }}>待处理提醒草稿</strong>
+                        <span className="tag tag-amber">{confirmationSummary.reminderDrafts.length} 条需提醒</span>
+                      </div>
+                      <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
+                        {confirmationSummary.reminderDrafts.map(draft => (
+                          <div key={draft.id} style={{ display: "grid", gridTemplateColumns: "auto minmax(0, 1fr)", gap: 8, alignItems: "start" }}>
+                            <span className={draft.priority === "P0" ? "tag tag-amber" : "tag tag-blue"}>{draft.priority}</span>
+                            <div>
+                              <div style={{ fontSize: "0.82rem", fontWeight: 800 }}>{draft.title}</div>
+                              <p style={{ color: "var(--text2)", fontSize: "0.76rem", lineHeight: 1.5, marginTop: 2 }}>{draft.detail} · {draft.nextAction}</p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                  <div style={{ display: "grid", gridTemplateColumns: "180px minmax(220px, 1fr) auto auto auto", gap: 10, alignItems: "center" }}>
                     <label style={{ display: "grid", gap: 6 }}>
                       <span style={{ color: "var(--text2)", fontSize: "0.74rem" }}>状态筛选</span>
                       <select
@@ -414,19 +583,27 @@ export default function IntegrationCenterPage() {
                         ));
                       }}
                     >
-                      {selectedVisibleConfirmationIds.length === selectableConfirmationIds.length && selectableConfirmationIds.length > 0 ? "取消全选" : "全选可取消"}
+                      {selectedVisibleConfirmationIds.length === selectableConfirmationIds.length && selectableConfirmationIds.length > 0 ? "取消全选" : "全选待处理"}
                     </button>
                     <button
                       className="btn-primary"
                       type="button"
-                      disabled={selectedVisibleConfirmationIds.length === 0 || confirmationBusyId === "batch"}
+                      disabled={selectedConfirmableConfirmationIds.length === 0 || confirmationBusyId.startsWith("batch-confirm")}
+                      onClick={() => void batchConfirmFeishuActions()}
+                    >
+                      {confirmationBusyId.startsWith("batch-confirm") ? "批量确认中..." : `批量确认${selectedConfirmableConfirmationIds.length ? ` ${selectedConfirmableConfirmationIds.length}` : ""}`}
+                    </button>
+                    <button
+                      className="btn-primary"
+                      type="button"
+                      disabled={selectedCancellableConfirmationIds.length === 0 || confirmationBusyId === "batch"}
                       onClick={() => void batchCancelFeishuActions()}
                     >
-                      {confirmationBusyId === "batch" ? "批量处理中..." : `批量取消${selectedVisibleConfirmationIds.length ? ` ${selectedVisibleConfirmationIds.length}` : ""}`}
+                      {confirmationBusyId === "batch" ? "批量处理中..." : `批量取消${selectedCancellableConfirmationIds.length ? ` ${selectedCancellableConfirmationIds.length}` : ""}`}
                     </button>
                   </div>
                   <p style={{ color: "var(--text2)", fontSize: "0.78rem", lineHeight: 1.6 }}>
-                    当前筛选返回 {confirmationRows.length} 条，页面匹配 {visibleConfirmations.length} 条；只有未成功、未写入中、未取消的动作可以批量取消。
+                    当前筛选返回 {confirmationRows.length} 条，页面匹配 {visibleConfirmations.length} 条；批量确认会先调用风险复核接口，阻断项不会执行。
                   </p>
                   {confirmationRows.length === 0 ? (
                     <p style={{ color: "var(--text2)", lineHeight: 1.7 }}>暂无飞书写入动作。</p>
@@ -440,7 +617,7 @@ export default function IntegrationCenterPage() {
                             type="checkbox"
                             aria-label={`选择 ${item.targetSummary}`}
                             checked={selectedConfirmationIds.includes(item.id)}
-                            disabled={!canCancelFeishuAction(item.status)}
+                            disabled={!canCancelFeishuAction(item.status) && !canConfirmFeishuAction(item.status)}
                             onChange={event => {
                               setSelectedConfirmationIds(prev => event.target.checked
                                 ? Array.from(new Set([...prev, item.id]))
@@ -457,7 +634,10 @@ export default function IntegrationCenterPage() {
                         </div>
                         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                           <StatusPill status={item.status} />
-                          <span className={item.riskLevel === "high" ? "tag tag-amber" : "tag tag-blue"}>{item.riskLevel === "high" ? "高风险" : item.riskLevel === "medium" ? "中风险" : "低风险"}</span>
+                          <span className="tag" style={{ background: `${riskColor(item.riskReview?.riskLevel || item.riskLevel)}22`, color: riskColor(item.riskReview?.riskLevel || item.riskLevel) }}>
+                            {riskLabel(item.riskReview?.riskLevel || item.riskLevel)}
+                          </span>
+                          {item.riskReview?.requiresSecondConfirm && <span className="tag tag-amber">需二次确认</span>}
                         </div>
                       </div>
                       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8, marginTop: 10 }}>
@@ -473,11 +653,39 @@ export default function IntegrationCenterPage() {
                           风险提示：{item.preview.riskReasons.join("；")}
                         </p>
                       )}
+                      {item.riskReview && (
+                        <div style={{ marginTop: 10, borderTop: "1px solid var(--border)", paddingTop: 10 }}>
+                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 8 }}>
+                            <strong style={{ fontSize: "0.82rem" }}>确认前风险复核</strong>
+                            <span className="tag">{item.riskReview.canConfirm ? "可确认" : "需处理阻断"}</span>
+                            {item.riskReview.ageDays !== null && <span className="tag">等待 {item.riskReview.ageDays} 天</span>}
+                          </div>
+                          {item.riskReview.blockingIssues.length > 0 && (
+                            <p style={{ color: "var(--red)", fontSize: "0.78rem", lineHeight: 1.6 }}>
+                              阻断项：{item.riskReview.blockingIssues.join("；")}
+                            </p>
+                          )}
+                          {item.riskReview.warnings.length > 0 && (
+                            <p style={{ color: "var(--amber)", fontSize: "0.78rem", lineHeight: 1.6, marginTop: 4 }}>
+                              复核提示：{item.riskReview.warnings.slice(0, 4).join("；")}
+                            </p>
+                          )}
+                          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 6, marginTop: 8 }}>
+                            {item.riskReview.checklist.slice(0, 6).map(check => (
+                              <div key={`${item.id}-${check.id}`} style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 8, padding: 8 }}>
+                                <span className={check.status === "block" ? "tag tag-amber" : check.status === "warning" ? "tag tag-blue" : "tag"}>{check.status === "block" ? "阻断" : check.status === "warning" ? "提示" : "通过"}</span>
+                                <div style={{ fontSize: "0.76rem", fontWeight: 800, marginTop: 6 }}>{check.label}</div>
+                                <p style={{ color: "var(--text2)", fontSize: "0.72rem", lineHeight: 1.45, marginTop: 3 }}>{check.detail}</p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                       {item.errorCode && <p style={{ color: "var(--red)", fontSize: "0.8rem", lineHeight: 1.6, marginTop: 8 }}>失败原因：{item.errorCode}</p>}
                       {item.cancelReason && <p style={{ color: "var(--text2)", fontSize: "0.8rem", lineHeight: 1.6, marginTop: 8 }}>取消原因：{item.cancelReason}</p>}
                       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
                         {["pending_confirmation", "failed"].includes(item.status) && (
-                          <button className="btn-primary" type="button" disabled={confirmationBusyId === item.id} onClick={() => void confirmFeishuAction(item.id)}>
+                          <button className="btn-primary" type="button" disabled={confirmationBusyId === item.id || item.riskReview?.canConfirm === false} onClick={() => void confirmFeishuAction(item)}>
                             {confirmationBusyId === item.id ? "处理中..." : "确认执行"}
                           </button>
                         )}

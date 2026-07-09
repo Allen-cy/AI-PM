@@ -6,7 +6,7 @@ import {
   type FeishuActionType,
 } from "./action-payload.ts";
 
-interface AppUser {
+export interface AppUser {
   id: string;
   email: string;
   phone: string;
@@ -45,6 +45,60 @@ export interface FeishuActionConfirmationRecord {
   confirmedAt: string | null;
   executedAt: string | null;
   cancelledAt: string | null;
+}
+
+export type FeishuActionConfirmationRiskReviewLevel = "low" | "medium" | "high";
+export type FeishuActionConfirmationRiskReviewCheckStatus = "pass" | "warning" | "block";
+
+export interface FeishuActionConfirmationRiskReview {
+  confirmationId: string;
+  riskLevel: FeishuActionConfirmationRiskReviewLevel;
+  baseRiskLevel: FeishuActionConfirmationRiskReviewLevel;
+  canConfirm: boolean;
+  canCancel: boolean;
+  requiresSecondConfirm: boolean;
+  ageDays: number | null;
+  blockingIssues: string[];
+  warnings: string[];
+  checklist: Array<{
+    id: string;
+    label: string;
+    status: FeishuActionConfirmationRiskReviewCheckStatus;
+    detail: string;
+  }>;
+  suggestedAction: "confirm" | "review" | "cancel";
+}
+
+export interface FeishuActionConfirmationBatchRiskReview {
+  selectedCount: number;
+  confirmableCount: number;
+  blockedCount: number;
+  highRiskCount: number;
+  requiresSecondConfirmCount: number;
+  confirmableIds: string[];
+  blockedIds: string[];
+  warnings: string[];
+  blockingIssues: string[];
+  reviews: FeishuActionConfirmationRiskReview[];
+  decisionText: string;
+}
+
+export interface FeishuActionConfirmationQueueSummary {
+  basis: "current_page";
+  totalCount: number;
+  pendingCount: number;
+  failedCount: number;
+  highRiskPendingCount: number;
+  overduePendingCount: number;
+  requiresSecondConfirmCount: number;
+  reminderDrafts: Array<{
+    id: string;
+    priority: "P0" | "P1" | "P2";
+    title: string;
+    detail: string;
+    nextAction: string;
+    targetSummary: string;
+  }>;
 }
 
 export type FeishuActionConfirmationWriteResult =
@@ -110,6 +164,227 @@ function hasAuthStorageEnvironment(): boolean {
 export function canManageFeishuActionConfirmation(user: AppUser, confirmation: FeishuActionConfirmationRecord): boolean {
   if (user.role === "admin") return true;
   return confirmation.requesterId === user.id;
+}
+
+export function isFeishuActionConfirmationConfirmable(status: FeishuActionConfirmationStatus): boolean {
+  return status === "pending_confirmation" || status === "failed";
+}
+
+export function isFeishuActionConfirmationCancellable(status: FeishuActionConfirmationStatus): boolean {
+  return !["succeeded", "writing", "cancelled"].includes(status);
+}
+
+function riskRank(level: FeishuActionConfirmationRiskReviewLevel): number {
+  return level === "high" ? 3 : level === "medium" ? 2 : 1;
+}
+
+function elevateRisk(
+  current: FeishuActionConfirmationRiskReviewLevel,
+  next: FeishuActionConfirmationRiskReviewLevel,
+): FeishuActionConfirmationRiskReviewLevel {
+  return riskRank(next) > riskRank(current) ? next : current;
+}
+
+function ageInDays(createdAt: string, now: Date): number | null {
+  const parsed = Date.parse(createdAt);
+  if (!Number.isFinite(parsed)) return null;
+  return Math.max(0, Math.floor((now.getTime() - parsed) / 86_400_000));
+}
+
+function addUnique(target: string[], value: string) {
+  if (!target.includes(value)) target.push(value);
+}
+
+function payloadString(payload: FeishuActionBody, field: string): string {
+  const value = payload[field];
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function payloadArrayLength(payload: FeishuActionBody, field: string): number {
+  const value = payload[field];
+  return Array.isArray(value) ? value.length : 0;
+}
+
+export function buildFeishuConfirmationRiskReview(
+  confirmation: FeishuActionConfirmationRecord,
+  input: { user?: AppUser | null; now?: Date } = {},
+): FeishuActionConfirmationRiskReview {
+  const now = input.now ?? new Date();
+  const checklist: FeishuActionConfirmationRiskReview["checklist"] = [];
+  const warnings: string[] = [];
+  const blockingIssues: string[] = [];
+  const currentAgeDays = ageInDays(confirmation.createdAt, now);
+  let riskLevel = confirmation.riskLevel;
+
+  function pushCheck(
+    id: string,
+    label: string,
+    status: FeishuActionConfirmationRiskReviewCheckStatus,
+    detail: string,
+  ) {
+    checklist.push({ id, label, status, detail });
+    if (status === "warning") addUnique(warnings, detail);
+    if (status === "block") addUnique(blockingIssues, detail);
+  }
+
+  if (isFeishuActionConfirmationConfirmable(confirmation.status)) {
+    pushCheck("status", "状态可执行", "pass", `当前状态为 ${confirmation.status}，允许进入确认前复核。`);
+  } else {
+    pushCheck("status", "状态可执行", "block", `当前状态为 ${confirmation.status}，不能批量确认。`);
+  }
+
+  if (input.user && !canManageFeishuActionConfirmation(input.user, confirmation)) {
+    pushCheck("permission", "确认权限", "block", "当前用户不是申请人，也不是管理员，不能确认该写入。");
+  } else {
+    pushCheck("permission", "确认权限", "pass", "当前用户具备确认或复核权限。");
+  }
+
+  if (confirmation.source === "api_token" || !confirmation.requesterId) {
+    riskLevel = elevateRisk(riskLevel, "high");
+    pushCheck("requester", "申请来源", "warning", "该动作来自 API token 或系统入队，缺少明确业务申请人，确认前应核对来源。");
+  } else {
+    pushCheck("requester", "申请来源", "pass", `申请人：${confirmation.requesterName || confirmation.requesterEmail || confirmation.requesterId}`);
+  }
+
+  if (currentAgeDays !== null && currentAgeDays >= 14) {
+    riskLevel = elevateRisk(riskLevel, "high");
+    pushCheck("freshness", "时效性", "warning", `该写入已等待 ${currentAgeDays} 天，业务上下文可能变化，确认前必须重新核对。`);
+  } else if (currentAgeDays !== null && currentAgeDays >= 7) {
+    riskLevel = elevateRisk(riskLevel, "medium");
+    pushCheck("freshness", "时效性", "warning", `该写入已等待 ${currentAgeDays} 天，建议先核对目标和内容。`);
+  } else {
+    pushCheck("freshness", "时效性", "pass", currentAgeDays === null ? "创建时间无法解析，按实时复核处理。" : `创建于 ${currentAgeDays} 天内。`);
+  }
+
+  if (confirmation.status === "failed") {
+    riskLevel = elevateRisk(riskLevel, "medium");
+    pushCheck("retry", "失败重试", "warning", `该动作此前执行失败${confirmation.errorCode ? `：${confirmation.errorCode}` : ""}，重试前应核对配置和目标权限。`);
+  }
+
+  for (const reason of confirmation.preview.riskReasons) {
+    addUnique(warnings, reason);
+  }
+
+  switch (confirmation.actionType) {
+    case "message": {
+      const receiveIdType = payloadString(confirmation.payload, "receive_id_type");
+      if (receiveIdType === "chat_id") {
+        riskLevel = elevateRisk(riskLevel, "high");
+        pushCheck("target", "写入对象", "warning", "消息目标为群聊，发送后会被多人看见，需二次确认内容和接收群。");
+      } else {
+        pushCheck("target", "写入对象", "pass", "消息目标为单个用户，仍需核对接收对象。");
+      }
+      if (payloadString(confirmation.payload, "text").length > 1200) {
+        riskLevel = elevateRisk(riskLevel, "medium");
+        pushCheck("content-size", "内容长度", "warning", "消息内容较长，建议确认没有包含敏感信息或未脱敏客户数据。");
+      }
+      break;
+    }
+    case "task": {
+      const assigneeCount = payloadArrayLength(confirmation.payload, "assignee_ids");
+      if (assigneeCount === 0) {
+        pushCheck("owner", "责任人", "warning", "飞书任务未指定责任人，创建后可能无人跟进。");
+      } else {
+        pushCheck("owner", "责任人", "pass", `已指定 ${assigneeCount} 个任务责任人。`);
+      }
+      if (!confirmation.payload.due_at) {
+        pushCheck("deadline", "截止时间", "warning", "飞书任务未设置截止时间，建议补充 deadline 后再确认。");
+      }
+      break;
+    }
+    case "calendar": {
+      const attendeeCount = payloadArrayLength(confirmation.payload, "attendee_ids");
+      if (attendeeCount >= 10) {
+        riskLevel = elevateRisk(riskLevel, "high");
+        pushCheck("attendees", "参与人", "warning", `日程参与人 ${attendeeCount} 人，可能触发大范围通知。`);
+      } else {
+        pushCheck("attendees", "参与人", "pass", `日程参与人 ${attendeeCount} 人。`);
+      }
+      break;
+    }
+    case "document":
+      if (!payloadString(confirmation.payload, "parent_token")) {
+        pushCheck("location", "文档位置", "warning", "飞书文档未指定父目录，将使用默认目录或应用配置目录。");
+      } else {
+        pushCheck("location", "文档位置", "pass", "已指定飞书文档父目录。");
+      }
+      break;
+  }
+
+  const requiresSecondConfirm = riskLevel === "high" || warnings.length >= 3 || (currentAgeDays ?? 0) >= 7;
+  const canConfirm = blockingIssues.length === 0 && isFeishuActionConfirmationConfirmable(confirmation.status);
+  const canCancel = isFeishuActionConfirmationCancellable(confirmation.status);
+
+  return {
+    confirmationId: confirmation.id,
+    riskLevel,
+    baseRiskLevel: confirmation.riskLevel,
+    canConfirm,
+    canCancel,
+    requiresSecondConfirm,
+    ageDays: currentAgeDays,
+    blockingIssues,
+    warnings,
+    checklist,
+    suggestedAction: !canConfirm ? "review" : riskLevel === "high" ? "review" : "confirm",
+  };
+}
+
+export function buildFeishuConfirmationBatchRiskReview(
+  confirmations: FeishuActionConfirmationRecord[],
+  input: { user?: AppUser | null; now?: Date } = {},
+): FeishuActionConfirmationBatchRiskReview {
+  const reviews = confirmations.map(confirmation => buildFeishuConfirmationRiskReview(confirmation, input));
+  const confirmableIds = reviews.filter(review => review.canConfirm).map(review => review.confirmationId);
+  const blockedIds = reviews.filter(review => !review.canConfirm).map(review => review.confirmationId);
+  const highRiskCount = reviews.filter(review => review.riskLevel === "high").length;
+  const requiresSecondConfirmCount = reviews.filter(review => review.requiresSecondConfirm).length;
+  const warnings = Array.from(new Set(reviews.flatMap(review => review.warnings))).slice(0, 12);
+  const blockingIssues = Array.from(new Set(reviews.flatMap(review => review.blockingIssues))).slice(0, 12);
+
+  return {
+    selectedCount: confirmations.length,
+    confirmableCount: confirmableIds.length,
+    blockedCount: blockedIds.length,
+    highRiskCount,
+    requiresSecondConfirmCount,
+    confirmableIds,
+    blockedIds,
+    warnings,
+    blockingIssues,
+    reviews,
+    decisionText: `本次选择 ${confirmations.length} 条，允许确认 ${confirmableIds.length} 条，阻断 ${blockedIds.length} 条，高风险 ${highRiskCount} 条，需要二次确认 ${requiresSecondConfirmCount} 条。`,
+  };
+}
+
+export function buildFeishuConfirmationQueueSummary(
+  confirmations: FeishuActionConfirmationRecord[],
+  now = new Date(),
+): FeishuActionConfirmationQueueSummary {
+  const active = confirmations.filter(item => isFeishuActionConfirmationConfirmable(item.status));
+  const reviews = active.map(item => ({ confirmation: item, review: buildFeishuConfirmationRiskReview(item, { now }) }));
+  const reminderDrafts = reviews
+    .filter(({ confirmation, review }) => confirmation.status === "failed" || review.riskLevel === "high" || (review.ageDays ?? 0) >= 7 || review.requiresSecondConfirm)
+    .slice(0, 5)
+    .map(({ confirmation, review }) => ({
+      id: confirmation.id,
+      priority: review.riskLevel === "high" || review.blockingIssues.length > 0 ? "P0" as const : (review.ageDays ?? 0) >= 7 || confirmation.status === "failed" ? "P1" as const : "P2" as const,
+      title: `飞书写入待确认：${confirmation.targetSummary}`,
+      detail: review.blockingIssues[0] || review.warnings[0] || "该写入需要人工确认后才会执行。",
+      nextAction: review.canConfirm ? "请在集成中心完成风险复核后确认执行，或取消写入。" : "请先处理阻断项，再决定是否重新发起写入。",
+      targetSummary: confirmation.targetSummary,
+    }));
+
+  return {
+    basis: "current_page",
+    totalCount: confirmations.length,
+    pendingCount: confirmations.filter(item => item.status === "pending_confirmation").length,
+    failedCount: confirmations.filter(item => item.status === "failed").length,
+    highRiskPendingCount: reviews.filter(item => item.review.riskLevel === "high").length,
+    overduePendingCount: reviews.filter(item => (item.review.ageDays ?? 0) >= 7).length,
+    requiresSecondConfirmCount: reviews.filter(item => item.review.requiresSecondConfirm).length,
+    reminderDrafts,
+  };
 }
 
 export async function createFeishuActionConfirmation(input: {

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { FeishuConfirmationInlinePanelClient } from "@/components/FeishuConfirmationInlinePanelClient";
 import { IntegrationStatusPanelClient } from "@/components/IntegrationStatusPanelClient";
 
 type Workbench = {
@@ -320,6 +321,7 @@ export default function WorkbenchPage() {
         </div>
 
         <IntegrationStatusPanelClient moduleName="PM/PMO每日工作台" />
+        <FeishuConfirmationInlinePanelClient moduleName="PM/PMO每日工作台" />
 
         {error && <div className="card" style={{ borderColor: "var(--red)", color: "var(--red)", marginBottom: 18 }}>{error}</div>}
 

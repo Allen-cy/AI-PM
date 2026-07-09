@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { FeishuConfirmationInlinePanelClient } from "@/components/FeishuConfirmationInlinePanelClient";
 import { IntegrationStatusPanelClient } from "@/components/IntegrationStatusPanelClient";
 import type { AiEvidence, AiSuggestedAction } from "@/features/ai/evidence";
 import type { RiskClosureDashboard, RiskClosureDecision } from "@/features/risk/closure";
@@ -1521,6 +1522,7 @@ export default function RiskPage() {
 
       <main style={{ flex: 1, padding: "32px", maxWidth: 1440, margin: "0 auto", width: "100%" }}>
         <IntegrationStatusPanelClient moduleName="风险管理" />
+        <FeishuConfirmationInlinePanelClient moduleName="风险管理" />
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 16, marginBottom: 24 }}>
           <StatCard label="风险总数" value={classified.total} sub="登记册总量" />

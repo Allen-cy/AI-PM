@@ -28,6 +28,9 @@ import {
 } from '../src/features/feishu/action-payload.ts';
 import { buildKnowledgeOperationDashboard } from '../src/features/knowledge/operations.ts';
 import {
+  buildFeishuConfirmationBatchRiskReview,
+  buildFeishuConfirmationQueueSummary,
+  buildFeishuConfirmationRiskReview,
   canManageFeishuActionConfirmation,
   type FeishuActionConfirmationRecord,
 } from '../src/features/feishu/action-confirmations.ts';
@@ -1651,12 +1654,71 @@ test('Feishu action confirmation can only be managed by requester or admin', () 
   assert.equal(canManageFeishuActionConfirmation({ id: 'admin-1', email: 'admin@example.com', phone: '13800000002', name: '管理员', role: 'admin', status: 'active' }, confirmation), true);
 });
 
+test('Feishu action confirmation risk review supports batch pre-check and reminders', () => {
+  const confirmation = {
+    id: 'confirmation-risk-1',
+    requesterId: null,
+    requesterName: null,
+    requesterEmail: null,
+    source: 'api_token',
+    sourcePage: '/api/integrations/feishu/actions',
+    actionType: 'message',
+    idempotencyKey: 'message-1',
+    targetSummary: '向群聊 oc-team 发送消息',
+    riskLevel: 'medium',
+    status: 'pending_confirmation',
+    payload: {
+      type: 'message',
+      idempotency_key: 'message-1',
+      receive_id_type: 'chat_id',
+      receive_id: 'oc-team',
+      text: '项目风险提醒，请确认责任人与截止时间。',
+    },
+    preview: buildFeishuActionPreview({
+      type: 'message',
+      idempotency_key: 'message-1',
+      receive_id_type: 'chat_id',
+      receive_id: 'oc-team',
+      text: '项目风险提醒，请确认责任人与截止时间。',
+    }),
+    resource: null,
+    errorCode: null,
+    cancelReason: null,
+    requestId: 'req-risk-1',
+    createdAt: '2026-06-20T00:00:00.000Z',
+    confirmedAt: null,
+    executedAt: null,
+    cancelledAt: null,
+  } satisfies FeishuActionConfirmationRecord;
+  const admin = { id: 'admin-1', email: 'admin@example.com', phone: '13800000002', name: '管理员', role: 'admin' as const, status: 'active' as const };
+
+  const review = buildFeishuConfirmationRiskReview(confirmation, { user: admin, now: new Date('2026-07-09T00:00:00.000Z') });
+  assert.equal(review.riskLevel, 'high');
+  assert.equal(review.canConfirm, true);
+  assert.equal(review.requiresSecondConfirm, true);
+  assert.equal(review.ageDays, 19);
+  assert.equal(review.warnings.some(item => item.includes('群聊')), true);
+
+  const batchReview = buildFeishuConfirmationBatchRiskReview([confirmation], { user: admin, now: new Date('2026-07-09T00:00:00.000Z') });
+  assert.equal(batchReview.selectedCount, 1);
+  assert.equal(batchReview.confirmableCount, 1);
+  assert.equal(batchReview.highRiskCount, 1);
+  assert.match(batchReview.decisionText, /需要二次确认 1 条/);
+
+  const summary = buildFeishuConfirmationQueueSummary([confirmation], new Date('2026-07-09T00:00:00.000Z'));
+  assert.equal(summary.highRiskPendingCount, 1);
+  assert.equal(summary.overduePendingCount, 1);
+  assert.equal(summary.reminderDrafts[0].priority, 'P0');
+});
+
 test('generic Feishu action APIs expose queue confirm and cancel boundaries', () => {
   const actionRouteSource = readFileSync(new URL('../src/app/api/integrations/feishu/actions/route.ts', import.meta.url), 'utf8');
   const confirmationsRouteSource = readFileSync(new URL('../src/app/api/integrations/feishu/actions/confirmations/route.ts', import.meta.url), 'utf8');
   const confirmRouteSource = readFileSync(new URL('../src/app/api/integrations/feishu/actions/confirmations/[id]/confirm/route.ts', import.meta.url), 'utf8');
   const cancelRouteSource = readFileSync(new URL('../src/app/api/integrations/feishu/actions/confirmations/[id]/cancel/route.ts', import.meta.url), 'utf8');
+  const batchReviewRouteSource = readFileSync(new URL('../src/app/api/integrations/feishu/actions/confirmations/batch-review/route.ts', import.meta.url), 'utf8');
   const integrationCenterSource = readFileSync(new URL('../src/app/integration-center/page.tsx', import.meta.url), 'utf8');
+  const inlinePanelSource = readFileSync(new URL('../src/components/FeishuConfirmationInlinePanelClient.tsx', import.meta.url), 'utf8');
   const confirmationSql = readFileSync(new URL('../supabase-v5349-feishu-action-confirmations.sql', import.meta.url), 'utf8');
 
   assert.match(actionRouteSource, /confirmation_required/);
@@ -1664,17 +1726,28 @@ test('generic Feishu action APIs expose queue confirm and cancel boundaries', ()
   assert.doesNotMatch(actionRouteSource, /executeFeishuAction\(config/);
   assert.match(confirmationsRouteSource, /listFeishuActionConfirmations/);
   assert.match(confirmationsRouteSource, /createFeishuActionConfirmation/);
+  assert.match(confirmationsRouteSource, /buildFeishuConfirmationQueueSummary/);
+  assert.match(confirmationsRouteSource, /riskReview/);
   assert.match(confirmRouteSource, /executeFeishuAction/);
   assert.match(confirmRouteSource, /claimEvent/);
   assert.match(confirmRouteSource, /writeOperationAudit/);
+  assert.match(confirmRouteSource, /riskAcknowledged/);
+  assert.match(confirmRouteSource, /risk_acknowledgement_required/);
   assert.match(cancelRouteSource, /updateFeishuActionConfirmationStatus/);
+  assert.match(batchReviewRouteSource, /buildFeishuConfirmationBatchRiskReview/);
+  assert.match(batchReviewRouteSource, /只做批量确认前风险复核/);
   assert.match(integrationCenterSource, /飞书写入待确认队列/);
   assert.match(integrationCenterSource, /confirmFeishuAction/);
   assert.match(integrationCenterSource, /cancelFeishuAction/);
   assert.match(integrationCenterSource, /confirmationStatusFilter/);
   assert.match(integrationCenterSource, /confirmationSearch/);
   assert.match(integrationCenterSource, /batchCancelFeishuActions/);
+  assert.match(integrationCenterSource, /batchConfirmFeishuActions/);
+  assert.match(integrationCenterSource, /确认前风险复核/);
+  assert.match(integrationCenterSource, /待处理提醒草稿/);
   assert.match(integrationCenterSource, /批量取消/);
+  assert.match(inlinePanelSource, /飞书写入确认提醒/);
+  assert.match(inlinePanelSource, /\/api\/integrations\/feishu\/actions\/confirmations/);
   assert.match(confirmationSql, /create table if not exists feishu_action_confirmations/);
   assert.match(confirmationSql, /pending_confirmation/);
 });
@@ -1697,6 +1770,7 @@ test('core operating pages reuse unified integration status panel', () => {
   for (const [path, moduleName] of pages) {
     const pageSource = readFileSync(new URL(path, import.meta.url), 'utf8');
     assert.match(pageSource, /IntegrationStatusPanelClient/);
+    assert.match(pageSource, /FeishuConfirmationInlinePanelClient/);
     assert.match(pageSource, new RegExp(moduleName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   }
 });

@@ -2,6 +2,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import Link from 'next/link';
+import { FeishuConfirmationInlinePanelClient } from '@/components/FeishuConfirmationInlinePanelClient';
 import { IntegrationStatusPanelClient } from '@/components/IntegrationStatusPanelClient';
 import { toAssistantMessage } from '@/features/rag/client-adapter';
 import type { RagQueryResult } from '@/features/rag/types';
@@ -127,6 +128,7 @@ export default function KnowledgePage() {
       </div>
 
       <IntegrationStatusPanelClient moduleName="知识库与AI问答" />
+      <FeishuConfirmationInlinePanelClient moduleName="知识库与AI问答" />
 
       <div style={{ display: 'grid', gridTemplateColumns: '280px 1fr', gap: '24px' }}>
         {/* Left Sidebar */}
