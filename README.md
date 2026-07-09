@@ -67,6 +67,22 @@ npm run build
 - 飞书端已建立8张业务表；公开项目记录API会等用户登录和授权模型完成后再开放。
 - 全仓历史 ESLint 基线仍有旧问题；V4新增/改动文件执行独立零错误门禁。
 
+## AI-PMO System V5.3.58
+
+V5.3.58 将 P16 知识运营补齐为“可下载审计包”：新增 `/api/knowledge/change-reports/[id]/download` 与 `/api/knowledge/audit-packages/[id]/download`，知识变更报告和 PMO 知识运营审计包均可下载 Markdown 归档。`POST /api/knowledge/operations` 新增 `generate_knowledge_audit_package`，会汇总知识版本引用链、模板/最佳实践目录、模板使用事件、订阅投递回执和知识变更报告，保存到 `knowledge_audit_packages`，并写入生命周期事件和操作审计。`/knowledge/operations` 新增“PMO知识运营审计包预览/生成/下载”区域。
+
+## AI-PMO System V5.3.57
+
+V5.3.57 将知识订阅从“生成通知记录”推进到“投递回执闭环”：新增 `knowledge_subscription_delivery_receipts`，支持记录站内、飞书、邮件提醒的 queued、sent、read、handled、failed、cancelled 状态；`POST /api/knowledge/operations` 新增 `record_subscription_delivery_receipt`，使用者可以为通知补充接收对象、投递状态和处理状态。飞书提醒仍保持待确认队列边界，不会静默外发；确认后的结果可通过投递回执补充到知识运营审计包。
+
+## AI-PMO System V5.3.56
+
+V5.3.56 将模板与最佳实践目录从运行时关联推进到可维护目录：新增 `knowledge_template_directory_items` 和 `knowledge_template_usage_events`，支持模板/最佳实践目录持久化、责任人、关联知识 pageId、生命周期状态、下载次数和引用次数。`POST /api/knowledge/operations` 新增 `upsert_template_directory_item` 与 `record_template_usage`；`/knowledge/operations` 可维护目录并记录“下载/引用”统计，为后续制度、模板、最佳实践运营提供数据底座。
+
+## AI-PMO System V5.3.55
+
+V5.3.55 将知识引用从“页面展示引用”推进到“输出绑定具体知识版本”：新增 `knowledge_output_references`，记录 AI 问答、RAG 问答、报告工厂、治理结论、风险输出和模板引用使用的 `page_id`、`knowledge_item_versions`、版本号和引用说明。`GET /api/knowledge/operations` 新增 `referenceAudit`，返回已保存引用、候选引用、模板目录、投递回执和审计包预览；`POST /api/knowledge/operations` 新增 `create_output_reference`。`/api/knowledge`、`/api/rag/query` 和 `/api/reports` 会在知识生命周期表可用时尝试自动写入输出引用链；SQL 未执行或知识条目未同步时不阻断原功能。本版本新增的统一 SQL 为 `supabase-v5355-v5358-knowledge-reference-template-audit.sql`，前置依赖 `supabase-v5352-knowledge-lifecycle.sql` 与 `supabase-v5354-knowledge-governance-operations.sql`。
+
 ## AI-PMO System V5.3.54
 
 V5.3.54 将 P16 知识运营继续推进到“可操作治理闭环”：新增 `supabase-v5354-knowledge-governance-operations.sql`，扩展 `knowledge_lifecycle_events` 事件类型，并新增 `knowledge_subscription_notifications`、`knowledge_change_reports` 两张表，用于记录订阅提醒发送状态和知识变更报告。`GET /api/knowledge/operations` 新增 `governance`，返回可管理知识条目、订阅关系、通知记录、历史报告和知识变更报告预览；`PATCH /api/knowledge/operations` 支持 `target=knowledge_item` 的状态流转，可将知识条目流转为草稿、已评审、已发布、已废弃/过期、已归档，并强制填写复核/审批意见；`POST /api/knowledge/operations` 新增 `upsert_subscription`、`update_subscription_status`、`send_subscription_reminders`、`generate_change_report`，分别用于维护订阅、启停订阅、生成提醒发送记录和保存知识变更报告。`/knowledge/operations` 新增“知识状态流转、订阅发送与变更报告”操作面板；飞书提醒不会直接外发，而是进入既有飞书写入待确认队列。本版本需要在 Supabase SQL Editor 执行 `supabase-v5354-knowledge-governance-operations.sql`；如果使用飞书待确认队列，还需已执行 `supabase-v5349-feishu-action-confirmations.sql`。
