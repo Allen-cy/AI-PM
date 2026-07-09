@@ -67,6 +67,10 @@ npm run build
 - 飞书端已建立8张业务表；公开项目记录API会等用户登录和授权模型完成后再开放。
 - 全仓历史 ESLint 基线仍有旧问题；V4新增/改动文件执行独立零错误门禁。
 
+## AI-PMO System V5.3.54
+
+V5.3.54 将 P16 知识运营继续推进到“可操作治理闭环”：新增 `supabase-v5354-knowledge-governance-operations.sql`，扩展 `knowledge_lifecycle_events` 事件类型，并新增 `knowledge_subscription_notifications`、`knowledge_change_reports` 两张表，用于记录订阅提醒发送状态和知识变更报告。`GET /api/knowledge/operations` 新增 `governance`，返回可管理知识条目、订阅关系、通知记录、历史报告和知识变更报告预览；`PATCH /api/knowledge/operations` 支持 `target=knowledge_item` 的状态流转，可将知识条目流转为草稿、已评审、已发布、已废弃/过期、已归档，并强制填写复核/审批意见；`POST /api/knowledge/operations` 新增 `upsert_subscription`、`update_subscription_status`、`send_subscription_reminders`、`generate_change_report`，分别用于维护订阅、启停订阅、生成提醒发送记录和保存知识变更报告。`/knowledge/operations` 新增“知识状态流转、订阅发送与变更报告”操作面板；飞书提醒不会直接外发，而是进入既有飞书写入待确认队列。本版本需要在 Supabase SQL Editor 执行 `supabase-v5354-knowledge-governance-operations.sql`；如果使用飞书待确认队列，还需已执行 `supabase-v5349-feishu-action-confirmations.sql`。
+
 ## AI-PMO System V5.3.53
 
 V5.3.53 将 P16 知识运营从“持久化第一版”推进到“变更控制闭环”：`GET /api/knowledge/operations` 新增 `changeControl`，会对比当前 RAG 快照与 Supabase 中上一持久化版本，形成新增、更新、撤出和无变化统计；基于 `knowledge_subscriptions` 生成订阅提醒草稿；从 `knowledge_impact_reviews` 中提取 P0/P1 复核任务作为行动项候选。`POST /api/knowledge/operations` 新增 `action=create_action_items`，必须 `confirm=true` 且用户登录后才会把 P0/P1 知识影响复核转为 `unified_action_items`，并写入操作审计和知识生命周期事件；已存在行动项会被跳过，避免重复创建。`/knowledge/operations` 页面新增“知识版本差异与订阅提醒”面板，展示版本差异、订阅提醒、行动候选和“生成统一行动项”按钮。本版本不新增 SQL，继续依赖 `supabase-v5352-knowledge-lifecycle.sql`；如要生成统一行动项，还需要已执行既有 `supabase-v530-issue-change-action-chain.sql`。
