@@ -1702,6 +1702,9 @@ test('knowledge operation dashboard maps lifecycle to impact modules templates a
   const knowledgePageSource = readFileSync(new URL('../src/app/knowledge/page.tsx', import.meta.url), 'utf8');
   const operationPageSource = readFileSync(new URL('../src/app/knowledge/operations/page.tsx', import.meta.url), 'utf8');
   const operationRouteSource = readFileSync(new URL('../src/app/api/knowledge/operations/route.ts', import.meta.url), 'utf8');
+  const lifecycleRepositorySource = readFileSync(new URL('../src/features/knowledge/lifecycle-repository.ts', import.meta.url), 'utf8');
+  const lifecycleClientSource = readFileSync(new URL('../src/components/KnowledgeLifecyclePersistenceClient.tsx', import.meta.url), 'utf8');
+  const lifecycleSql = readFileSync(new URL('../supabase-v5352-knowledge-lifecycle.sql', import.meta.url), 'utf8');
 
   assert.equal(dashboard.summary.total, 27);
   assert.equal(dashboard.summary.reviewed > 0, true);
@@ -1712,7 +1715,20 @@ test('knowledge operation dashboard maps lifecycle to impact modules templates a
   assert.match(dashboard.boundary, /不会自动修改/);
   assert.match(knowledgePageSource, new RegExp('/knowledge/operations'));
   assert.match(operationPageSource, /知识生命周期运营/);
+  assert.match(operationPageSource, /KnowledgeLifecyclePersistenceClient/);
   assert.match(operationRouteSource, /buildKnowledgeOperationDashboard/);
+  assert.match(operationRouteSource, /syncKnowledgeLifecycleFromDashboard/);
+  assert.match(operationRouteSource, /transitionKnowledgeImpactReview/);
+  assert.match(operationRouteSource, /confirm=true/);
+  assert.match(lifecycleRepositorySource, /knowledge_items/);
+  assert.match(lifecycleRepositorySource, /knowledge_impact_reviews/);
+  assert.match(lifecycleClientSource, /同步当前快照/);
+  assert.match(lifecycleClientSource, /关闭复核/);
+  assert.equal(lifecycleSql.includes('create table if not exists public.knowledge_items'), true);
+  assert.equal(lifecycleSql.includes('create table if not exists public.knowledge_item_versions'), true);
+  assert.equal(lifecycleSql.includes('create table if not exists public.knowledge_lifecycle_events'), true);
+  assert.equal(lifecycleSql.includes('create table if not exists public.knowledge_impact_reviews'), true);
+  assert.equal(lifecycleSql.includes('create table if not exists public.knowledge_subscriptions'), true);
 });
 
 test('operational workbench filters projects risks todos and reminders for current user', () => {

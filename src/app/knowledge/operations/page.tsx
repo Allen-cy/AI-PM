@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { KnowledgeLifecyclePersistenceClient } from "@/components/KnowledgeLifecyclePersistenceClient";
 import { buildKnowledgeOperationDashboard } from "@/features/knowledge/operations";
 
 const priorityClass: Record<string, string> = {
@@ -56,6 +57,8 @@ export default function KnowledgeOperationsPage() {
           <StatCard label="需复核" value={dashboard.summary.needsReview} hint="草稿、过期、即将过期或已废弃。" />
           <StatCard label="影响模块" value={dashboard.summary.affectedModules} hint="知识变更后需复核的系统模块数。" />
         </section>
+
+        <KnowledgeLifecyclePersistenceClient />
 
         <section className="card" style={{ marginBottom: 18, borderColor: "rgba(59,130,246,0.25)" }}>
           <div className="section-title">🔁 知识变更影响模块</div>
