@@ -833,6 +833,8 @@ test('risk sensitivity impact is discoverable from api dashboard and sensitivity
   assert.match(sensitivityPageSource, /系统联动口径/);
   assert.match(sensitivityPageSource, /\/api\/risk\/sensitivity-impact/);
   assert.match(reportRouteSource, /riskSensitivityImpact/);
+  assert.match(reportRouteSource, /knowledge_references/);
+  assert.match(reportRouteSource, /createKnowledgeOutputReference/);
   assert.match(closureApiSource, /buildRiskClosureDashboard/);
   assert.match(retrospectiveApiSource, /buildRiskRetrospectiveDashboard/);
   assert.match(retrospectiveAssetsApiSource, /confirmRiskRetrospectiveAsset/);
@@ -904,6 +906,8 @@ test('risk sensitivity impact is discoverable from api dashboard and sensitivity
   assert.match(retrospectiveGovernanceEvidenceChainSql, /review_status/);
   assert.match(ragQueryRouteSource, /listPublishedRiskRetrospectiveRagDocuments/);
   assert.match(ragQueryRouteSource, /recordRiskRetrospectiveRagUsage/);
+  assert.match(ragQueryRouteSource, /knowledge_references/);
+  assert.match(ragQueryRouteSource, /saveKnowledgeOutputReference/);
   assert.match(riskPageSource, /关闭证据/);
   assert.match(riskPageSource, /\/api\/risk\/closure/);
   assert.match(riskPageSource, /复盘资产/);
@@ -1705,8 +1709,10 @@ test('knowledge operation dashboard maps lifecycle to impact modules templates a
   const lifecycleRepositorySource = readFileSync(new URL('../src/features/knowledge/lifecycle-repository.ts', import.meta.url), 'utf8');
   const lifecycleClientSource = readFileSync(new URL('../src/components/KnowledgeLifecyclePersistenceClient.tsx', import.meta.url), 'utf8');
   const governanceClientSource = readFileSync(new URL('../src/components/KnowledgeGovernanceOperationsClient.tsx', import.meta.url), 'utf8');
+  const referenceAuditClientSource = readFileSync(new URL('../src/components/KnowledgeReferenceAuditClient.tsx', import.meta.url), 'utf8');
   const lifecycleSql = readFileSync(new URL('../supabase-v5352-knowledge-lifecycle.sql', import.meta.url), 'utf8');
   const governanceSql = readFileSync(new URL('../supabase-v5354-knowledge-governance-operations.sql', import.meta.url), 'utf8');
+  const referenceAuditSql = readFileSync(new URL('../supabase-v5355-v5358-knowledge-reference-template-audit.sql', import.meta.url), 'utf8');
 
   assert.equal(dashboard.summary.total, 27);
   assert.equal(dashboard.summary.reviewed > 0, true);
@@ -1718,19 +1724,31 @@ test('knowledge operation dashboard maps lifecycle to impact modules templates a
   assert.match(knowledgePageSource, new RegExp('/knowledge/operations'));
   assert.match(operationPageSource, /知识生命周期运营/);
   assert.match(operationPageSource, /KnowledgeLifecyclePersistenceClient/);
+  assert.match(operationPageSource, /KnowledgeReferenceAuditClient/);
   assert.match(operationRouteSource, /buildKnowledgeOperationDashboard/);
   assert.match(operationRouteSource, /syncKnowledgeLifecycleFromDashboard/);
   assert.match(operationRouteSource, /transitionKnowledgeImpactReview/);
   assert.match(operationRouteSource, /loadKnowledgeChangeControl/);
   assert.match(operationRouteSource, /loadKnowledgeGovernanceWorkbench/);
+  assert.match(operationRouteSource, /loadKnowledgeReferenceAuditWorkbench/);
   assert.match(operationRouteSource, /transitionKnowledgeItemStatus/);
   assert.match(operationRouteSource, /upsertKnowledgeSubscription/);
   assert.match(operationRouteSource, /queueKnowledgeSubscriptionReminders/);
   assert.match(operationRouteSource, /persistKnowledgeChangeReport/);
+  assert.match(operationRouteSource, /createKnowledgeOutputReference/);
+  assert.match(operationRouteSource, /upsertKnowledgeTemplateDirectoryItem/);
+  assert.match(operationRouteSource, /recordKnowledgeTemplateUsage/);
+  assert.match(operationRouteSource, /recordKnowledgeSubscriptionDeliveryReceipt/);
+  assert.match(operationRouteSource, /persistKnowledgeAuditPackage/);
   assert.match(operationRouteSource, /createKnowledgeImpactReviewActionItems/);
   assert.match(operationRouteSource, /create_action_items/);
   assert.match(operationRouteSource, /send_subscription_reminders/);
   assert.match(operationRouteSource, /generate_change_report/);
+  assert.match(operationRouteSource, /create_output_reference/);
+  assert.match(operationRouteSource, /upsert_template_directory_item/);
+  assert.match(operationRouteSource, /record_template_usage/);
+  assert.match(operationRouteSource, /record_subscription_delivery_receipt/);
+  assert.match(operationRouteSource, /generate_knowledge_audit_package/);
   assert.match(operationRouteSource, /confirm=true/);
   assert.match(lifecycleRepositorySource, /knowledge_items/);
   assert.match(lifecycleRepositorySource, /knowledge_impact_reviews/);
@@ -1739,7 +1757,13 @@ test('knowledge operation dashboard maps lifecycle to impact modules templates a
   assert.match(lifecycleRepositorySource, /knowledge_subscriptions/);
   assert.match(lifecycleRepositorySource, /knowledge_subscription_notifications/);
   assert.match(lifecycleRepositorySource, /knowledge_change_reports/);
+  assert.match(lifecycleRepositorySource, /knowledge_output_references/);
+  assert.match(lifecycleRepositorySource, /knowledge_template_directory_items/);
+  assert.match(lifecycleRepositorySource, /knowledge_template_usage_events/);
+  assert.match(lifecycleRepositorySource, /knowledge_subscription_delivery_receipts/);
+  assert.match(lifecycleRepositorySource, /knowledge_audit_packages/);
   assert.match(lifecycleRepositorySource, /supabase-v5354-knowledge-governance-operations\.sql/);
+  assert.match(lifecycleRepositorySource, /supabase-v5355-v5358-knowledge-reference-template-audit\.sql/);
   assert.match(lifecycleRepositorySource, /unified_action_items/);
   assert.match(lifecycleRepositorySource, /supabase-v530-issue-change-action-chain\.sql/);
   assert.match(lifecycleClientSource, /同步当前快照/);
@@ -1749,6 +1773,13 @@ test('knowledge operation dashboard maps lifecycle to impact modules templates a
   assert.match(governanceClientSource, /知识状态流转、订阅发送与变更报告/);
   assert.match(governanceClientSource, /send_subscription_reminders/);
   assert.match(governanceClientSource, /generate_change_report/);
+  assert.match(governanceClientSource, /change-reports/);
+  assert.match(referenceAuditClientSource, /知识版本引用链、模板目录与审计包/);
+  assert.match(referenceAuditClientSource, /create_output_reference/);
+  assert.match(referenceAuditClientSource, /record_template_usage/);
+  assert.match(referenceAuditClientSource, /record_subscription_delivery_receipt/);
+  assert.match(referenceAuditClientSource, /generate_knowledge_audit_package/);
+  assert.match(referenceAuditClientSource, /audit-packages/);
   assert.equal(lifecycleSql.includes('create table if not exists public.knowledge_items'), true);
   assert.equal(lifecycleSql.includes('create table if not exists public.knowledge_item_versions'), true);
   assert.equal(lifecycleSql.includes('create table if not exists public.knowledge_lifecycle_events'), true);
@@ -1758,6 +1789,15 @@ test('knowledge operation dashboard maps lifecycle to impact modules templates a
   assert.equal(governanceSql.includes('create table if not exists public.knowledge_change_reports'), true);
   assert.match(governanceSql, /subscription_notification_queued/);
   assert.match(governanceSql, /change_report_generated/);
+  assert.equal(referenceAuditSql.includes('create table if not exists public.knowledge_output_references'), true);
+  assert.equal(referenceAuditSql.includes('create table if not exists public.knowledge_template_directory_items'), true);
+  assert.equal(referenceAuditSql.includes('create table if not exists public.knowledge_template_usage_events'), true);
+  assert.equal(referenceAuditSql.includes('create table if not exists public.knowledge_subscription_delivery_receipts'), true);
+  assert.equal(referenceAuditSql.includes('create table if not exists public.knowledge_audit_packages'), true);
+  assert.match(referenceAuditSql, /output_reference_created/);
+  assert.match(referenceAuditSql, /template_usage_recorded/);
+  assert.match(referenceAuditSql, /subscription_delivery_recorded/);
+  assert.match(referenceAuditSql, /audit_package_generated/);
 });
 
 test('operational workbench filters projects risks todos and reminders for current user', () => {

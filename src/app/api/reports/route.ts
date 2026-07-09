@@ -15,6 +15,8 @@ import { filterDashboardByProjectAccess, projectAccessMode } from "@/features/se
 import { loadProjectAccessGrantsForUser, writeOperationAudit } from "@/features/security/repository";
 import { buildGovernanceImpactDashboard } from "@/features/governance/impact";
 import { listGovernanceInstances } from "@/features/governance/repository";
+import { buildKnowledgeOperationDashboard } from "@/features/knowledge/operations";
+import { createKnowledgeOutputReference } from "@/features/knowledge/lifecycle-repository";
 import {
   buildReportEvidence,
   buildReportFactoryPackage,
@@ -207,6 +209,22 @@ export async function POST(request: Request): Promise<Response> {
     actionItems,
     requestId,
   });
+  const knowledgeReferences = [];
+  const knowledgeDashboard = buildKnowledgeOperationDashboard();
+  for (const item of knowledgeDashboard.items.filter(entry => entry.impactedModules.includes("报告工厂")).slice(0, 5)) {
+    const saved = await createKnowledgeOutputReference({
+      outputType: "report",
+      outputId: report.id,
+      outputTitle: report.title,
+      moduleName: "报告工厂",
+      pageId: item.pageId,
+      citationText: `报告「${report.title}」生成时引用报告工厂相关知识口径：${item.title} / ${item.version}`,
+      confidence: status === "generated" ? 0.82 : 0.65,
+      user,
+      requestId,
+    }).catch(error => ({ status: "failed" as const, warning: error instanceof Error ? error.message : String(error), requestId }));
+    if (saved.status === "succeeded") knowledgeReferences.push(saved.reference);
+  }
 
   return jsonResponse({
     success: true,
@@ -214,6 +232,7 @@ export async function POST(request: Request): Promise<Response> {
     report,
     evidence,
     access,
+    knowledge_references: knowledgeReferences,
     operation_audit: operationAudit,
     data_sources: dataPackage.dataSources,
     action_items: actionItems,

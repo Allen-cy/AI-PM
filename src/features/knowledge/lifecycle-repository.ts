@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { getAuthSupabase, isAuthStorageConfigured, type AppUser } from "../auth/server.ts";
 import { createFeishuActionConfirmation } from "../feishu/action-confirmations.ts";
+import { templateCatalog } from "../../lib/template-center.ts";
 import type {
   KnowledgeImpactModule,
   KnowledgeImpactPriority,
@@ -12,6 +13,7 @@ import type {
 const SQL_FILE = "supabase-v5352-knowledge-lifecycle.sql";
 const ACTION_SQL_FILE = "supabase-v530-issue-change-action-chain.sql";
 const GOVERNANCE_SQL_FILE = "supabase-v5354-knowledge-governance-operations.sql";
+const REFERENCE_AUDIT_SQL_FILE = "supabase-v5355-v5358-knowledge-reference-template-audit.sql";
 const KNOWLEDGE_ACTION_SOURCE_PREFIX = "knowledge-impact-review:";
 
 export interface KnowledgeImpactReviewRecord {
@@ -263,6 +265,164 @@ export type KnowledgeChangeReportPersistResult =
   | { status: "not_configured"; warning: string; migration: string; requestId: string }
   | { status: "failed"; warning: string; requestId: string };
 
+export type KnowledgeOutputType = "ai_answer" | "report" | "governance" | "risk" | "template" | "other";
+export type KnowledgeTemplateUsageEventType = "download" | "reference" | "import" | "export";
+export type KnowledgeDeliveryStatus = "queued" | "sent" | "read" | "handled" | "failed" | "cancelled";
+
+export interface KnowledgeOutputReferenceRecord {
+  id: string;
+  outputType: KnowledgeOutputType;
+  outputId: string;
+  outputTitle: string;
+  moduleName: string;
+  pageId: string;
+  knowledgeItemId?: string | null;
+  knowledgeVersionId?: string | null;
+  versionLabel?: string | null;
+  citationText: string;
+  confidence: number;
+  referenceStatus: "active" | "stale" | "superseded" | "revoked";
+  createdByName?: string | null;
+  createdAt?: string | null;
+}
+
+export interface KnowledgeTemplateDirectoryRecord {
+  id: string;
+  templateKey: string;
+  title: string;
+  category: string;
+  source: string;
+  description: string;
+  lifecycleStatus: "draft" | "active" | "reviewing" | "deprecated" | "archived";
+  ownerName: string;
+  linkedKnowledgePageIds: string[];
+  downloadCount: number;
+  referenceCount: number;
+  lastUsedAt?: string | null;
+  updatedAt?: string | null;
+}
+
+export interface KnowledgeTemplateUsageEventRecord {
+  id: string;
+  templateKey: string;
+  eventType: KnowledgeTemplateUsageEventType;
+  actorName?: string | null;
+  outputType?: string | null;
+  outputId?: string | null;
+  createdAt?: string | null;
+}
+
+export interface KnowledgeSubscriptionDeliveryReceiptRecord {
+  id: string;
+  notificationId?: string | null;
+  deliveryChannel: KnowledgeNotificationRecord["notificationChannel"];
+  deliveryStatus: KnowledgeDeliveryStatus;
+  deliveredTo?: string | null;
+  handledByName?: string | null;
+  occurredAt?: string | null;
+}
+
+export interface KnowledgeAuditPackageRecord {
+  id?: string;
+  packageType: "knowledge_operations" | "pmo_audit" | "release_handoff";
+  packagePeriod: string;
+  title: string;
+  markdown: string;
+  summary: Record<string, unknown>;
+  createdAt?: string | null;
+}
+
+export interface KnowledgeReferenceCandidate {
+  outputType: KnowledgeOutputType;
+  outputTitle: string;
+  moduleName: string;
+  pageId: string;
+  versionLabel: string;
+  suggestedReason: string;
+}
+
+export type KnowledgeReferenceAuditWorkbenchResult =
+  | {
+      status: "succeeded";
+      summary: {
+        outputReferences: number;
+        managedTemplates: number;
+        templateDownloads: number;
+        templateReferences: number;
+        deliveryReceipts: number;
+        handledDeliveries: number;
+        auditPackages: number;
+      };
+      outputReferences: KnowledgeOutputReferenceRecord[];
+      referenceCandidates: KnowledgeReferenceCandidate[];
+      templateDirectory: KnowledgeTemplateDirectoryRecord[];
+      templateUsageEvents: KnowledgeTemplateUsageEventRecord[];
+      deliveryReceipts: KnowledgeSubscriptionDeliveryReceiptRecord[];
+      recentNotifications: KnowledgeNotificationRecord[];
+      auditPackages: KnowledgeAuditPackageRecord[];
+      auditPackagePreview: KnowledgeAuditPackageRecord;
+    }
+  | {
+      status: "not_configured";
+      warning: string;
+      migration: string;
+      outputReferences: [];
+      referenceCandidates: [];
+      templateDirectory: [];
+      templateUsageEvents: [];
+      deliveryReceipts: [];
+      recentNotifications: [];
+      auditPackages: [];
+      auditPackagePreview: null;
+    }
+  | {
+      status: "failed";
+      warning: string;
+      outputReferences: [];
+      referenceCandidates: [];
+      templateDirectory: [];
+      templateUsageEvents: [];
+      deliveryReceipts: [];
+      recentNotifications: [];
+      auditPackages: [];
+      auditPackagePreview: null;
+    };
+
+export type KnowledgeOutputReferenceMutationResult =
+  | { status: "succeeded"; reference: KnowledgeOutputReferenceRecord; requestId: string }
+  | { status: "not_configured"; warning: string; migration: string; requestId: string }
+  | { status: "not_found"; warning: string; requestId: string }
+  | { status: "failed"; warning: string; requestId: string };
+
+export type KnowledgeTemplateDirectoryMutationResult =
+  | { status: "succeeded"; template: KnowledgeTemplateDirectoryRecord; requestId: string }
+  | { status: "not_configured"; warning: string; migration: string; requestId: string }
+  | { status: "not_found"; warning: string; requestId: string }
+  | { status: "failed"; warning: string; requestId: string };
+
+export type KnowledgeTemplateUsageMutationResult =
+  | { status: "succeeded"; template: KnowledgeTemplateDirectoryRecord; event: KnowledgeTemplateUsageEventRecord; requestId: string }
+  | { status: "not_configured"; warning: string; migration: string; requestId: string }
+  | { status: "not_found"; warning: string; requestId: string }
+  | { status: "failed"; warning: string; requestId: string };
+
+export type KnowledgeDeliveryReceiptMutationResult =
+  | { status: "succeeded"; receipt: KnowledgeSubscriptionDeliveryReceiptRecord; requestId: string }
+  | { status: "not_configured"; warning: string; migration: string; requestId: string }
+  | { status: "not_found"; warning: string; requestId: string }
+  | { status: "failed"; warning: string; requestId: string };
+
+export type KnowledgeAuditPackagePersistResult =
+  | { status: "succeeded"; package: KnowledgeAuditPackageRecord; requestId: string }
+  | { status: "not_configured"; warning: string; migration: string; requestId: string }
+  | { status: "failed"; warning: string; requestId: string };
+
+export type KnowledgeMarkdownDownloadResult =
+  | { status: "succeeded"; title: string; filename: string; markdown: string }
+  | { status: "not_configured"; warning: string; migration: string }
+  | { status: "not_found"; warning: string }
+  | { status: "failed"; warning: string };
+
 function isMissingTableError(message?: string): boolean {
   return Boolean(
     message?.includes("knowledge_items")
@@ -271,6 +431,11 @@ function isMissingTableError(message?: string): boolean {
     || message?.includes("knowledge_impact_reviews")
     || message?.includes("knowledge_subscription_notifications")
     || message?.includes("knowledge_change_reports")
+    || message?.includes("knowledge_output_references")
+    || message?.includes("knowledge_template_directory_items")
+    || message?.includes("knowledge_template_usage_events")
+    || message?.includes("knowledge_subscription_delivery_receipts")
+    || message?.includes("knowledge_audit_packages")
     || message?.includes("relation")
     || message?.includes("does not exist"),
   );
@@ -415,6 +580,15 @@ function governanceNotConfigured(requestId?: string) {
   };
 }
 
+function referenceAuditNotConfigured(requestId?: string) {
+  return {
+    status: "not_configured" as const,
+    warning: "Supabase 尚未创建知识引用链、模板目录和审计包表。",
+    migration: REFERENCE_AUDIT_SQL_FILE,
+    ...(requestId ? { requestId } : {}),
+  };
+}
+
 function toStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
@@ -524,6 +698,145 @@ function mapChangeReport(row: Record<string, unknown>): KnowledgeChangeReportRec
   };
 }
 
+function mapOutputReference(row: Record<string, unknown>): KnowledgeOutputReferenceRecord {
+  return {
+    id: String(row.id),
+    outputType: String(row.output_type || "other") as KnowledgeOutputType,
+    outputId: String(row.output_id || ""),
+    outputTitle: String(row.output_title || ""),
+    moduleName: String(row.module_name || ""),
+    pageId: String(row.page_id || ""),
+    knowledgeItemId: typeof row.knowledge_item_id === "string" ? row.knowledge_item_id : null,
+    knowledgeVersionId: typeof row.knowledge_version_id === "string" ? row.knowledge_version_id : null,
+    versionLabel: typeof row.version_label === "string" ? row.version_label : null,
+    citationText: String(row.citation_text || ""),
+    confidence: Number(row.confidence ?? 0.8),
+    referenceStatus: String(row.reference_status || "active") as KnowledgeOutputReferenceRecord["referenceStatus"],
+    createdByName: typeof row.created_by_name === "string" ? row.created_by_name : null,
+    createdAt: typeof row.created_at === "string" ? row.created_at : null,
+  };
+}
+
+function mapTemplateDirectoryRecord(row: Record<string, unknown>): KnowledgeTemplateDirectoryRecord {
+  return {
+    id: String(row.id),
+    templateKey: String(row.template_key || ""),
+    title: String(row.title || ""),
+    category: String(row.category || "governance"),
+    source: String(row.source || "AI-PMO"),
+    description: String(row.description || ""),
+    lifecycleStatus: String(row.lifecycle_status || "active") as KnowledgeTemplateDirectoryRecord["lifecycleStatus"],
+    ownerName: String(row.owner_name || "知识库管理员"),
+    linkedKnowledgePageIds: toStringArray(row.linked_knowledge_page_ids),
+    downloadCount: Number(row.download_count || 0),
+    referenceCount: Number(row.reference_count || 0),
+    lastUsedAt: typeof row.last_used_at === "string" ? row.last_used_at : null,
+    updatedAt: typeof row.updated_at === "string" ? row.updated_at : null,
+  };
+}
+
+function mapTemplateUsageEvent(row: Record<string, unknown>): KnowledgeTemplateUsageEventRecord {
+  return {
+    id: String(row.id),
+    templateKey: String(row.template_key || ""),
+    eventType: String(row.event_type || "reference") as KnowledgeTemplateUsageEventType,
+    actorName: typeof row.actor_name === "string" ? row.actor_name : null,
+    outputType: typeof row.output_type === "string" ? row.output_type : null,
+    outputId: typeof row.output_id === "string" ? row.output_id : null,
+    createdAt: typeof row.created_at === "string" ? row.created_at : null,
+  };
+}
+
+function mapDeliveryReceipt(row: Record<string, unknown>): KnowledgeSubscriptionDeliveryReceiptRecord {
+  return {
+    id: String(row.id),
+    notificationId: typeof row.notification_id === "string" ? row.notification_id : null,
+    deliveryChannel: String(row.delivery_channel || "in_app") as KnowledgeSubscriptionDeliveryReceiptRecord["deliveryChannel"],
+    deliveryStatus: String(row.delivery_status || "queued") as KnowledgeDeliveryStatus,
+    deliveredTo: typeof row.delivered_to === "string" ? row.delivered_to : null,
+    handledByName: typeof row.handled_by_name === "string" ? row.handled_by_name : null,
+    occurredAt: typeof row.occurred_at === "string" ? row.occurred_at : null,
+  };
+}
+
+function mapAuditPackage(row: Record<string, unknown>): KnowledgeAuditPackageRecord {
+  return {
+    id: String(row.id),
+    packageType: String(row.package_type || "knowledge_operations") as KnowledgeAuditPackageRecord["packageType"],
+    packagePeriod: String(row.package_period || ""),
+    title: String(row.title || ""),
+    markdown: String(row.markdown || ""),
+    summary: metadataObject(row.summary),
+    createdAt: typeof row.created_at === "string" ? row.created_at : null,
+  };
+}
+
+function templateCatalogFallback(templateKey: string): KnowledgeTemplateDirectoryRecord | null {
+  const template = templateCatalog.find(item => item.id === templateKey);
+  if (!template) return null;
+  return {
+    id: `runtime-${template.id}`,
+    templateKey: template.id,
+    title: template.title,
+    category: template.category,
+    source: template.source,
+    description: template.description,
+    lifecycleStatus: "active",
+    ownerName: "知识库管理员",
+    linkedKnowledgePageIds: [],
+    downloadCount: 0,
+    referenceCount: 0,
+    lastUsedAt: null,
+    updatedAt: null,
+  };
+}
+
+function runtimeTemplateDirectory(dashboard: KnowledgeOperationDashboard): KnowledgeTemplateDirectoryRecord[] {
+  const linkedByTemplate = new Map<string, string[]>();
+  for (const item of dashboard.items) {
+    for (const templateKey of item.linkedTemplates) {
+      linkedByTemplate.set(templateKey, [...(linkedByTemplate.get(templateKey) ?? []), item.pageId]);
+    }
+  }
+  return templateCatalog.map(template => ({
+    id: `runtime-${template.id}`,
+    templateKey: template.id,
+    title: template.title,
+    category: template.category,
+    source: template.source,
+    description: template.description,
+    lifecycleStatus: "active",
+    ownerName: "知识库管理员",
+    linkedKnowledgePageIds: linkedByTemplate.get(template.id) ?? [],
+    downloadCount: 0,
+    referenceCount: 0,
+    lastUsedAt: null,
+    updatedAt: null,
+  }));
+}
+
+function referenceCandidates(dashboard: KnowledgeOperationDashboard): KnowledgeReferenceCandidate[] {
+  const mapType = (moduleName: string): KnowledgeOutputType => {
+    if (moduleName.includes("报告")) return "report";
+    if (moduleName.includes("治理")) return "governance";
+    if (moduleName.includes("风险")) return "risk";
+    if (moduleName.includes("模板")) return "template";
+    if (moduleName.includes("问答") || moduleName.includes("AI")) return "ai_answer";
+    return "other";
+  };
+  return dashboard.items
+    .filter(item => item.impactedModules.length > 0)
+    .slice(0, 12)
+    .flatMap(item => item.impactedModules.slice(0, 2).map(moduleName => ({
+      outputType: mapType(moduleName),
+      outputTitle: `${moduleName}输出口径引用：${item.title}`,
+      moduleName,
+      pageId: item.pageId,
+      versionLabel: item.version,
+      suggestedReason: `该知识影响 ${moduleName}，后续输出应绑定 ${item.version}，避免引用旧口径。`,
+    })));
+}
+
 function reportPeriod(date = new Date()): string {
   const year = date.getUTCFullYear();
   const start = new Date(Date.UTC(year, 0, 1));
@@ -583,6 +896,97 @@ function buildKnowledgeChangeReportMarkdown(input: {
     title: `知识变更周报-${period}`,
     markdown: lines.join("\n"),
     summary: input.changeControl.summary,
+    createdAt: generatedAt.toISOString(),
+  };
+}
+
+function buildKnowledgeAuditPackageMarkdown(input: {
+  outputReferences: KnowledgeOutputReferenceRecord[];
+  templateDirectory: KnowledgeTemplateDirectoryRecord[];
+  templateUsageEvents: KnowledgeTemplateUsageEventRecord[];
+  deliveryReceipts: KnowledgeSubscriptionDeliveryReceiptRecord[];
+  notifications: KnowledgeNotificationRecord[];
+  changeReports: KnowledgeChangeReportRecord[];
+  actor: string;
+  generatedAt?: Date;
+}): KnowledgeAuditPackageRecord {
+  const generatedAt = input.generatedAt ?? new Date();
+  const period = reportPeriod(generatedAt);
+  const templateDownloads = input.templateDirectory.reduce((sum, item) => sum + item.downloadCount, 0);
+  const templateReferences = input.templateDirectory.reduce((sum, item) => sum + item.referenceCount, 0);
+  const handledDeliveries = input.deliveryReceipts.filter(item => item.deliveryStatus === "handled").length;
+  const lines = [
+    `# PMO知识运营审计包-${period}`,
+    "",
+    `生成时间：${generatedAt.toISOString()}`,
+    `生成人：${input.actor}`,
+    "",
+    "## 一、审计范围",
+    "",
+    "- 知识版本引用链：AI问答、报告、治理结论、风险输出等是否绑定具体知识版本。",
+    "- 模板/最佳实践目录：模板是否有责任人、关联知识页、下载/引用统计。",
+    "- 订阅投递闭环：站内、飞书、邮件提醒是否有发送、阅读、处理或失败回执。",
+    "- 知识变更报告：本期知识变更周报和历史报告是否可下载归档。",
+    "",
+    "## 二、关键统计",
+    "",
+    `- 输出引用记录：${input.outputReferences.length} 条`,
+    `- 模板目录：${input.templateDirectory.length} 项，下载 ${templateDownloads} 次，引用 ${templateReferences} 次`,
+    `- 订阅通知：${input.notifications.length} 条，投递回执 ${input.deliveryReceipts.length} 条，已处理 ${handledDeliveries} 条`,
+    `- 知识变更报告：${input.changeReports.length} 份`,
+    "",
+    "## 三、知识版本引用链",
+    "",
+    ...(
+      input.outputReferences.length === 0
+        ? ["- 暂无已保存的输出引用记录。建议先为报告工厂、知识问答和治理结论绑定具体知识版本。"]
+        : input.outputReferences.slice(0, 20).map(item => `- [${item.outputType}] ${item.outputTitle}｜模块：${item.moduleName}｜知识：${item.pageId}｜版本：${item.versionLabel || "未绑定"}｜状态：${item.referenceStatus}`)
+    ),
+    "",
+    "## 四、模板与最佳实践目录",
+    "",
+    ...(
+      input.templateDirectory.length === 0
+        ? ["- 暂无模板目录记录。"]
+        : input.templateDirectory.slice(0, 20).map(item => `- ${item.title}｜${item.templateKey}｜状态：${item.lifecycleStatus}｜责任人：${item.ownerName}｜下载：${item.downloadCount}｜引用：${item.referenceCount}｜关联知识：${item.linkedKnowledgePageIds.join("、") || "待补充"}`)
+    ),
+    "",
+    "## 五、订阅通知投递闭环",
+    "",
+    ...(
+      input.deliveryReceipts.length === 0
+        ? ["- 暂无投递回执。站内/飞书/邮件通知生成后，需要补充发送、阅读、处理或失败状态。"]
+        : input.deliveryReceipts.slice(0, 20).map(item => `- [${item.deliveryStatus}] ${item.deliveryChannel}｜通知：${item.notificationId || "未关联"}｜接收对象：${item.deliveredTo || "未记录"}｜处理人：${item.handledByName || "未处理"}｜时间：${item.occurredAt || "未记录"}`)
+    ),
+    "",
+    "## 六、模板使用事件",
+    "",
+    ...(
+      input.templateUsageEvents.length === 0
+        ? ["- 暂无模板使用事件。"]
+        : input.templateUsageEvents.slice(0, 20).map(item => `- ${item.eventType}｜${item.templateKey}｜输出：${item.outputType || "-"} ${item.outputId || ""}｜操作人：${item.actorName || "系统"}｜${item.createdAt || ""}`)
+    ),
+    "",
+    "## 七、审计结论与后续动作",
+    "",
+    "- P0/P1 知识变更必须检查是否影响报告、治理流程、风险扫描和模板中心。",
+    "- 任何 AI 或报告输出进入正式流转前，应在知识输出引用链中记录 page_id 与 version_label。",
+    "- 飞书提醒继续保持待确认边界，确认执行后的结果通过投递回执反写。",
+  ];
+  return {
+    packageType: "pmo_audit",
+    packagePeriod: period,
+    title: `PMO知识运营审计包-${period}`,
+    markdown: lines.join("\n"),
+    summary: {
+      output_references: input.outputReferences.length,
+      managed_templates: input.templateDirectory.length,
+      template_downloads: templateDownloads,
+      template_references: templateReferences,
+      delivery_receipts: input.deliveryReceipts.length,
+      handled_deliveries: handledDeliveries,
+      change_reports: input.changeReports.length,
+    },
     createdAt: generatedAt.toISOString(),
   };
 }
@@ -827,6 +1231,135 @@ export async function loadKnowledgeGovernanceWorkbench(input: {
       notifications: notificationRows,
       actor: actorName(input.user),
     }),
+  };
+}
+
+export async function loadKnowledgeReferenceAuditWorkbench(input: {
+  dashboard: KnowledgeOperationDashboard;
+  user: AppUser | null;
+  limit?: number;
+}): Promise<KnowledgeReferenceAuditWorkbenchResult> {
+  if (!hasEnvironment()) {
+    return {
+      ...referenceAuditNotConfigured(),
+      outputReferences: [],
+      referenceCandidates: [],
+      templateDirectory: [],
+      templateUsageEvents: [],
+      deliveryReceipts: [],
+      recentNotifications: [],
+      auditPackages: [],
+      auditPackagePreview: null,
+    };
+  }
+  const supabase = getAuthSupabase();
+  const limit = input.limit ?? 30;
+
+  const [references, templates, usageEvents, deliveryReceipts, notifications, auditPackages, changeReports] = await Promise.all([
+    supabase
+      .from("knowledge_output_references")
+      .select("id,output_type,output_id,output_title,module_name,page_id,knowledge_item_id,knowledge_version_id,version_label,citation_text,confidence,reference_status,created_by_name,created_at")
+      .order("created_at", { ascending: false })
+      .limit(limit),
+    supabase
+      .from("knowledge_template_directory_items")
+      .select("id,template_key,title,category,source,description,lifecycle_status,owner_name,linked_knowledge_page_ids,download_count,reference_count,last_used_at,updated_at")
+      .order("updated_at", { ascending: false })
+      .limit(200),
+    supabase
+      .from("knowledge_template_usage_events")
+      .select("id,template_key,event_type,actor_name,output_type,output_id,created_at")
+      .order("created_at", { ascending: false })
+      .limit(limit),
+    supabase
+      .from("knowledge_subscription_delivery_receipts")
+      .select("id,notification_id,delivery_channel,delivery_status,delivered_to,handled_by_name,occurred_at")
+      .order("occurred_at", { ascending: false })
+      .limit(limit),
+    supabase
+      .from("knowledge_subscription_notifications")
+      .select("id,subscription_id,subscriber_name,module_name,domain,notification_channel,title,priority,status,related_page_ids,feishu_confirmation_id,created_at,sent_at")
+      .order("created_at", { ascending: false })
+      .limit(limit),
+    supabase
+      .from("knowledge_audit_packages")
+      .select("id,package_type,package_period,title,markdown,summary,created_at")
+      .order("created_at", { ascending: false })
+      .limit(8),
+    supabase
+      .from("knowledge_change_reports")
+      .select("id,report_period,title,markdown,summary,created_at")
+      .order("created_at", { ascending: false })
+      .limit(8),
+  ]);
+
+  const firstError = references.error || templates.error || usageEvents.error || deliveryReceipts.error || notifications.error || auditPackages.error || changeReports.error;
+  if (firstError) {
+    return isMissingTableError(firstError.message)
+      ? {
+          ...referenceAuditNotConfigured(),
+          outputReferences: [],
+          referenceCandidates: [],
+          templateDirectory: [],
+          templateUsageEvents: [],
+          deliveryReceipts: [],
+          recentNotifications: [],
+          auditPackages: [],
+          auditPackagePreview: null,
+        }
+      : {
+          status: "failed",
+          warning: firstError.message,
+          outputReferences: [],
+          referenceCandidates: [],
+          templateDirectory: [],
+          templateUsageEvents: [],
+          deliveryReceipts: [],
+          recentNotifications: [],
+          auditPackages: [],
+          auditPackagePreview: null,
+        };
+  }
+
+  const outputReferenceRows = (references.data ?? []).map(row => mapOutputReference(row as Record<string, unknown>));
+  const persistedTemplates = (templates.data ?? []).map(row => mapTemplateDirectoryRecord(row as Record<string, unknown>));
+  const templateByKey = new Map(runtimeTemplateDirectory(input.dashboard).map(item => [item.templateKey, item]));
+  for (const item of persistedTemplates) templateByKey.set(item.templateKey, item);
+  const templateDirectory = [...templateByKey.values()].sort((a, b) => b.referenceCount - a.referenceCount || b.downloadCount - a.downloadCount || a.title.localeCompare(b.title));
+  const templateUsageRows = (usageEvents.data ?? []).map(row => mapTemplateUsageEvent(row as Record<string, unknown>));
+  const deliveryReceiptRows = (deliveryReceipts.data ?? []).map(row => mapDeliveryReceipt(row as Record<string, unknown>));
+  const notificationRows = (notifications.data ?? []).map(row => mapNotification(row as Record<string, unknown>));
+  const auditPackageRows = (auditPackages.data ?? []).map(row => mapAuditPackage(row as Record<string, unknown>));
+  const changeReportRows = (changeReports.data ?? []).map(row => mapChangeReport(row as Record<string, unknown>));
+  const auditPackagePreview = buildKnowledgeAuditPackageMarkdown({
+    outputReferences: outputReferenceRows,
+    templateDirectory,
+    templateUsageEvents: templateUsageRows,
+    deliveryReceipts: deliveryReceiptRows,
+    notifications: notificationRows,
+    changeReports: changeReportRows,
+    actor: actorName(input.user),
+  });
+
+  return {
+    status: "succeeded",
+    summary: {
+      outputReferences: outputReferenceRows.length,
+      managedTemplates: persistedTemplates.length,
+      templateDownloads: templateDirectory.reduce((sum, item) => sum + item.downloadCount, 0),
+      templateReferences: templateDirectory.reduce((sum, item) => sum + item.referenceCount, 0),
+      deliveryReceipts: deliveryReceiptRows.length,
+      handledDeliveries: deliveryReceiptRows.filter(item => item.deliveryStatus === "handled").length,
+      auditPackages: auditPackageRows.length,
+    },
+    outputReferences: outputReferenceRows,
+    referenceCandidates: referenceCandidates(input.dashboard),
+    templateDirectory,
+    templateUsageEvents: templateUsageRows,
+    deliveryReceipts: deliveryReceiptRows,
+    recentNotifications: notificationRows,
+    auditPackages: auditPackageRows,
+    auditPackagePreview,
   };
 }
 
@@ -1200,6 +1733,368 @@ export async function persistKnowledgeChangeReport(input: {
   return { status: "succeeded", report: persisted, requestId: input.requestId };
 }
 
+export async function createKnowledgeOutputReference(input: {
+  outputType: KnowledgeOutputType;
+  outputId: string;
+  outputTitle: string;
+  moduleName: string;
+  pageId: string;
+  citationText?: string;
+  confidence?: number;
+  user: AppUser | null;
+  requestId: string;
+}): Promise<KnowledgeOutputReferenceMutationResult> {
+  if (!hasEnvironment()) return { ...referenceAuditNotConfigured(), requestId: input.requestId };
+  const outputId = input.outputId.trim();
+  const outputTitle = input.outputTitle.trim();
+  const moduleName = input.moduleName.trim();
+  const pageId = input.pageId.trim();
+  if (!outputId || !outputTitle || !moduleName || !pageId) {
+    return { status: "failed", warning: "输出ID、输出标题、模块名称和知识 pageId 均不能为空。", requestId: input.requestId };
+  }
+  const supabase = getAuthSupabase();
+  const { data: item, error: itemError } = await supabase
+    .from("knowledge_items")
+    .select("id,page_id,title,current_version_label")
+    .eq("page_id", pageId)
+    .maybeSingle();
+  if (itemError) {
+    return isMissingTableError(itemError.message)
+      ? { ...referenceAuditNotConfigured(), requestId: input.requestId }
+      : { status: "failed", warning: itemError.message, requestId: input.requestId };
+  }
+  if (!item) return { status: "not_found", warning: "知识条目不存在，请先在知识生命周期运营页同步当前 RAG 快照。", requestId: input.requestId };
+
+  const { data: version, error: versionError } = await supabase
+    .from("knowledge_item_versions")
+    .select("id,version_label")
+    .eq("page_id", pageId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (versionError) {
+    return isMissingTableError(versionError.message)
+      ? { ...referenceAuditNotConfigured(), requestId: input.requestId }
+      : { status: "failed", warning: versionError.message, requestId: input.requestId };
+  }
+
+  const itemRecord = item as Record<string, unknown>;
+  const versionRecord = version as Record<string, unknown> | null;
+  const versionLabel = typeof versionRecord?.version_label === "string"
+    ? versionRecord.version_label
+    : typeof itemRecord.current_version_label === "string"
+      ? itemRecord.current_version_label
+      : null;
+  const { data, error } = await supabase
+    .from("knowledge_output_references")
+    .upsert({
+      output_type: input.outputType,
+      output_id: outputId,
+      output_title: outputTitle,
+      module_name: moduleName,
+      page_id: pageId,
+      knowledge_item_id: String(itemRecord.id),
+      knowledge_version_id: typeof versionRecord?.id === "string" ? versionRecord.id : null,
+      version_label: versionLabel,
+      citation_text: input.citationText?.trim() || `输出「${outputTitle}」引用知识「${String(itemRecord.title || pageId)}」版本 ${versionLabel || "未设置"}。`,
+      confidence: Math.max(0, Math.min(1, Number(input.confidence ?? 0.8))),
+      reference_status: "active",
+      created_by: input.user?.id ?? null,
+      created_by_name: actorName(input.user),
+      request_id: input.requestId,
+      metadata: { source: "knowledge_operations_reference_audit" },
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "output_type,output_id,page_id,version_label" })
+    .select("id,output_type,output_id,output_title,module_name,page_id,knowledge_item_id,knowledge_version_id,version_label,citation_text,confidence,reference_status,created_by_name,created_at")
+    .single();
+
+  if (error) {
+    return isMissingTableError(error.message)
+      ? { ...referenceAuditNotConfigured(), requestId: input.requestId }
+      : { status: "failed", warning: error.message, requestId: input.requestId };
+  }
+
+  const reference = mapOutputReference(data as Record<string, unknown>);
+  await supabase.from("knowledge_lifecycle_events").insert({
+    knowledge_item_id: String(itemRecord.id),
+    page_id: pageId,
+    event_type: "output_reference_created",
+    actor_id: input.user?.id ?? null,
+    actor_name: actorName(input.user),
+    event_status: "succeeded",
+    review_note: `输出引用已绑定知识版本：${outputTitle}`,
+    request_id: input.requestId,
+    metadata: { reference_id: reference.id, output_type: reference.outputType, output_id: reference.outputId, version_label: reference.versionLabel },
+  });
+
+  return { status: "succeeded", reference, requestId: input.requestId };
+}
+
+export async function upsertKnowledgeTemplateDirectoryItem(input: {
+  templateKey: string;
+  title?: string;
+  category?: string;
+  source?: string;
+  description?: string;
+  lifecycleStatus?: KnowledgeTemplateDirectoryRecord["lifecycleStatus"];
+  ownerName?: string;
+  linkedKnowledgePageIds?: string[];
+  user: AppUser | null;
+  requestId: string;
+}): Promise<KnowledgeTemplateDirectoryMutationResult> {
+  if (!hasEnvironment()) return { ...referenceAuditNotConfigured(), requestId: input.requestId };
+  const templateKey = input.templateKey.trim();
+  if (!templateKey) return { status: "failed", warning: "模板 key 不能为空。", requestId: input.requestId };
+  const fallback = templateCatalogFallback(templateKey);
+  const supabase = getAuthSupabase();
+  const { data, error } = await supabase
+    .from("knowledge_template_directory_items")
+    .upsert({
+      template_key: templateKey,
+      title: input.title?.trim() || fallback?.title || templateKey,
+      category: input.category?.trim() || fallback?.category || "governance",
+      source: input.source?.trim() || fallback?.source || "AI-PMO",
+      description: input.description?.trim() || fallback?.description || "",
+      lifecycle_status: input.lifecycleStatus ?? fallback?.lifecycleStatus ?? "active",
+      owner_name: input.ownerName?.trim() || fallback?.ownerName || actorName(input.user),
+      linked_knowledge_page_ids: input.linkedKnowledgePageIds ?? fallback?.linkedKnowledgePageIds ?? [],
+      updated_by: input.user?.id ?? null,
+      updated_by_name: actorName(input.user),
+      created_by: input.user?.id ?? null,
+      created_by_name: actorName(input.user),
+      request_id: input.requestId,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "template_key" })
+    .select("id,template_key,title,category,source,description,lifecycle_status,owner_name,linked_knowledge_page_ids,download_count,reference_count,last_used_at,updated_at")
+    .single();
+
+  if (error) {
+    return isMissingTableError(error.message)
+      ? { ...referenceAuditNotConfigured(), requestId: input.requestId }
+      : { status: "failed", warning: error.message, requestId: input.requestId };
+  }
+
+  const template = mapTemplateDirectoryRecord(data as Record<string, unknown>);
+  await supabase.from("knowledge_lifecycle_events").insert({
+    page_id: `template:${template.templateKey}`,
+    event_type: "template_directory_upserted",
+    actor_id: input.user?.id ?? null,
+    actor_name: actorName(input.user),
+    event_status: "succeeded",
+    review_note: `模板/最佳实践目录已保存：${template.title}`,
+    request_id: input.requestId,
+    metadata: { template_key: template.templateKey, linked_knowledge_page_ids: template.linkedKnowledgePageIds },
+  });
+
+  return { status: "succeeded", template, requestId: input.requestId };
+}
+
+export async function recordKnowledgeTemplateUsage(input: {
+  templateKey: string;
+  eventType: KnowledgeTemplateUsageEventType;
+  outputType?: string;
+  outputId?: string;
+  user: AppUser | null;
+  requestId: string;
+}): Promise<KnowledgeTemplateUsageMutationResult> {
+  if (!hasEnvironment()) return { ...referenceAuditNotConfigured(), requestId: input.requestId };
+  const templateKey = input.templateKey.trim();
+  if (!templateKey) return { status: "failed", warning: "模板 key 不能为空。", requestId: input.requestId };
+  const supabase = getAuthSupabase();
+  const { data: current, error: currentError } = await supabase
+    .from("knowledge_template_directory_items")
+    .select("id,template_key,title,category,source,description,lifecycle_status,owner_name,linked_knowledge_page_ids,download_count,reference_count,last_used_at,updated_at")
+    .eq("template_key", templateKey)
+    .maybeSingle();
+  if (currentError) {
+    return isMissingTableError(currentError.message)
+      ? { ...referenceAuditNotConfigured(), requestId: input.requestId }
+      : { status: "failed", warning: currentError.message, requestId: input.requestId };
+  }
+  let template = current ? mapTemplateDirectoryRecord(current as Record<string, unknown>) : null;
+  if (!template) {
+    const created = await upsertKnowledgeTemplateDirectoryItem({ templateKey, user: input.user, requestId: input.requestId });
+    if (created.status !== "succeeded") return created;
+    template = created.template;
+  }
+
+  const nextDownloadCount = template.downloadCount + (input.eventType === "download" ? 1 : 0);
+  const nextReferenceCount = template.referenceCount + (input.eventType === "reference" ? 1 : 0);
+  const { data: updated, error: updateError } = await supabase
+    .from("knowledge_template_directory_items")
+    .update({
+      download_count: nextDownloadCount,
+      reference_count: nextReferenceCount,
+      last_used_at: new Date().toISOString(),
+      updated_by: input.user?.id ?? null,
+      updated_by_name: actorName(input.user),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("template_key", templateKey)
+    .select("id,template_key,title,category,source,description,lifecycle_status,owner_name,linked_knowledge_page_ids,download_count,reference_count,last_used_at,updated_at")
+    .single();
+  if (updateError) {
+    return isMissingTableError(updateError.message)
+      ? { ...referenceAuditNotConfigured(), requestId: input.requestId }
+      : { status: "failed", warning: updateError.message, requestId: input.requestId };
+  }
+
+  const { data: eventData, error: eventError } = await supabase
+    .from("knowledge_template_usage_events")
+    .insert({
+      template_item_id: template.id.startsWith("runtime-") ? null : template.id,
+      template_key: templateKey,
+      event_type: input.eventType,
+      actor_id: input.user?.id ?? null,
+      actor_name: actorName(input.user),
+      output_type: input.outputType?.trim() || null,
+      output_id: input.outputId?.trim() || null,
+      request_id: input.requestId,
+      metadata: { source: "knowledge_operations_template_usage" },
+    })
+    .select("id,template_key,event_type,actor_name,output_type,output_id,created_at")
+    .single();
+  if (eventError) {
+    return isMissingTableError(eventError.message)
+      ? { ...referenceAuditNotConfigured(), requestId: input.requestId }
+      : { status: "failed", warning: eventError.message, requestId: input.requestId };
+  }
+
+  const updatedTemplate = mapTemplateDirectoryRecord(updated as Record<string, unknown>);
+  const event = mapTemplateUsageEvent(eventData as Record<string, unknown>);
+  await supabase.from("knowledge_lifecycle_events").insert({
+    page_id: `template:${templateKey}`,
+    event_type: "template_usage_recorded",
+    actor_id: input.user?.id ?? null,
+    actor_name: actorName(input.user),
+    event_status: "succeeded",
+    review_note: `模板使用事件已记录：${templateKey} / ${input.eventType}`,
+    request_id: input.requestId,
+    metadata: { template_key: templateKey, event_id: event.id, event_type: input.eventType },
+  });
+
+  return { status: "succeeded", template: updatedTemplate, event, requestId: input.requestId };
+}
+
+export async function recordKnowledgeSubscriptionDeliveryReceipt(input: {
+  notificationId: string;
+  deliveryChannel: KnowledgeNotificationRecord["notificationChannel"];
+  deliveryStatus: KnowledgeDeliveryStatus;
+  deliveredTo?: string;
+  user: AppUser | null;
+  requestId: string;
+}): Promise<KnowledgeDeliveryReceiptMutationResult> {
+  if (!hasEnvironment()) return { ...referenceAuditNotConfigured(), requestId: input.requestId };
+  const notificationId = input.notificationId.trim();
+  if (!notificationId) return { status: "failed", warning: "notificationId 不能为空。", requestId: input.requestId };
+  const supabase = getAuthSupabase();
+  const { data: notification, error: notificationError } = await supabase
+    .from("knowledge_subscription_notifications")
+    .select("id,title,status,page_id:related_page_ids")
+    .eq("id", notificationId)
+    .maybeSingle();
+  if (notificationError) {
+    return isMissingTableError(notificationError.message)
+      ? { ...referenceAuditNotConfigured(), requestId: input.requestId }
+      : { status: "failed", warning: notificationError.message, requestId: input.requestId };
+  }
+  if (!notification) return { status: "not_found", warning: "知识订阅通知记录不存在。", requestId: input.requestId };
+
+  const { data, error } = await supabase
+    .from("knowledge_subscription_delivery_receipts")
+    .insert({
+      notification_id: notificationId,
+      delivery_channel: input.deliveryChannel,
+      delivery_status: input.deliveryStatus,
+      delivered_to: input.deliveredTo?.trim() || null,
+      handled_by: input.deliveryStatus === "handled" ? input.user?.id ?? null : null,
+      handled_by_name: input.deliveryStatus === "handled" ? actorName(input.user) : null,
+      request_id: input.requestId,
+      metadata: { source: "knowledge_operations_delivery_receipt" },
+    })
+    .select("id,notification_id,delivery_channel,delivery_status,delivered_to,handled_by_name,occurred_at")
+    .single();
+  if (error) {
+    return isMissingTableError(error.message)
+      ? { ...referenceAuditNotConfigured(), requestId: input.requestId }
+      : { status: "failed", warning: error.message, requestId: input.requestId };
+  }
+
+  if (input.deliveryStatus === "sent" || input.deliveryStatus === "failed" || input.deliveryStatus === "cancelled") {
+    await supabase
+      .from("knowledge_subscription_notifications")
+      .update({
+        status: input.deliveryStatus === "sent" ? "sent" : input.deliveryStatus,
+        sent_at: input.deliveryStatus === "sent" ? new Date().toISOString() : undefined,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", notificationId);
+  }
+
+  const receipt = mapDeliveryReceipt(data as Record<string, unknown>);
+  await supabase.from("knowledge_lifecycle_events").insert({
+    page_id: `subscription-notification:${notificationId}`,
+    event_type: "subscription_delivery_recorded",
+    actor_id: input.user?.id ?? null,
+    actor_name: actorName(input.user),
+    event_status: input.deliveryStatus === "failed" ? "failed" : "succeeded",
+    review_note: `知识订阅投递回执：${input.deliveryChannel}/${input.deliveryStatus}`,
+    request_id: input.requestId,
+    metadata: { notification_id: notificationId, receipt_id: receipt.id, delivery_status: input.deliveryStatus },
+  });
+
+  return { status: "succeeded", receipt, requestId: input.requestId };
+}
+
+export async function persistKnowledgeAuditPackage(input: {
+  dashboard: KnowledgeOperationDashboard;
+  user: AppUser | null;
+  requestId: string;
+}): Promise<KnowledgeAuditPackagePersistResult> {
+  if (!hasEnvironment()) return { ...referenceAuditNotConfigured(), requestId: input.requestId };
+  const workbench = await loadKnowledgeReferenceAuditWorkbench({ dashboard: input.dashboard, user: input.user, limit: 80 });
+  if (workbench.status !== "succeeded") {
+    return workbench.status === "not_configured"
+      ? { ...referenceAuditNotConfigured(), warning: workbench.warning, requestId: input.requestId }
+      : { status: "failed", warning: workbench.warning, requestId: input.requestId };
+  }
+  const auditPackage = workbench.auditPackagePreview;
+  const supabase = getAuthSupabase();
+  const { data, error } = await supabase
+    .from("knowledge_audit_packages")
+    .insert({
+      package_type: auditPackage.packageType,
+      package_period: auditPackage.packagePeriod,
+      title: auditPackage.title,
+      markdown: auditPackage.markdown,
+      summary: auditPackage.summary,
+      generated_by: input.user?.id ?? null,
+      generated_by_name: actorName(input.user),
+      request_id: input.requestId,
+    })
+    .select("id,package_type,package_period,title,markdown,summary,created_at")
+    .single();
+  if (error) {
+    return isMissingTableError(error.message)
+      ? { ...referenceAuditNotConfigured(), requestId: input.requestId }
+      : { status: "failed", warning: error.message, requestId: input.requestId };
+  }
+
+  const persisted = mapAuditPackage(data as Record<string, unknown>);
+  await supabase.from("knowledge_lifecycle_events").insert({
+    page_id: `audit-package:${persisted.id}`,
+    event_type: "audit_package_generated",
+    actor_id: input.user?.id ?? null,
+    actor_name: actorName(input.user),
+    event_status: "succeeded",
+    review_note: `知识运营审计包已生成：${persisted.title}`,
+    request_id: input.requestId,
+    metadata: { audit_package_id: persisted.id, package_period: persisted.packagePeriod },
+  });
+
+  return { status: "succeeded", package: persisted, requestId: input.requestId };
+}
+
 export async function syncKnowledgeLifecycleFromDashboard(input: {
   dashboard: KnowledgeOperationDashboard;
   user: AppUser | null;
@@ -1485,5 +2380,55 @@ export async function createKnowledgeImpactReviewActionItems(input: {
       ...createdActions,
     ],
     requestId: input.requestId,
+  };
+}
+
+function safeFilename(name: string): string {
+  return name.replace(/[\\/:*?"<>|\s]+/g, "-").replace(/-+/g, "-").slice(0, 120) || "knowledge-download";
+}
+
+export async function getKnowledgeAuditPackageDownload(id: string): Promise<KnowledgeMarkdownDownloadResult> {
+  if (!hasEnvironment()) return referenceAuditNotConfigured();
+  const supabase = getAuthSupabase();
+  const { data, error } = await supabase
+    .from("knowledge_audit_packages")
+    .select("id,package_type,package_period,title,markdown,summary,created_at")
+    .eq("id", id)
+    .maybeSingle();
+  if (error) {
+    return isMissingTableError(error.message)
+      ? referenceAuditNotConfigured()
+      : { status: "failed", warning: error.message };
+  }
+  if (!data) return { status: "not_found", warning: "知识运营审计包不存在。" };
+  const record = mapAuditPackage(data as Record<string, unknown>);
+  return {
+    status: "succeeded",
+    title: record.title,
+    filename: `${safeFilename(record.title)}.md`,
+    markdown: record.markdown,
+  };
+}
+
+export async function getKnowledgeChangeReportDownload(id: string): Promise<KnowledgeMarkdownDownloadResult> {
+  if (!hasEnvironment()) return governanceNotConfigured();
+  const supabase = getAuthSupabase();
+  const { data, error } = await supabase
+    .from("knowledge_change_reports")
+    .select("id,report_period,title,markdown,summary,created_at")
+    .eq("id", id)
+    .maybeSingle();
+  if (error) {
+    return isMissingTableError(error.message)
+      ? governanceNotConfigured()
+      : { status: "failed", warning: error.message };
+  }
+  if (!data) return { status: "not_found", warning: "知识变更报告不存在。" };
+  const record = mapChangeReport(data as Record<string, unknown>);
+  return {
+    status: "succeeded",
+    title: record.title,
+    filename: `${safeFilename(record.title)}.md`,
+    markdown: record.markdown,
   };
 }

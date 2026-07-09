@@ -42,6 +42,25 @@ async function getOptionalCurrentUser() {
   }
 }
 
+async function saveKnowledgeOutputReference(input: {
+  outputType: 'ai_answer';
+  outputId: string;
+  outputTitle: string;
+  moduleName: string;
+  pageId: string;
+  citationText: string;
+  confidence: number;
+  user: Awaited<ReturnType<typeof getOptionalCurrentUser>>;
+  requestId: string;
+}) {
+  try {
+    const repository = await import('../../../../features/knowledge/lifecycle-repository.ts');
+    return await repository.createKnowledgeOutputReference(input);
+  } catch (error) {
+    return { status: 'failed' as const, warning: error instanceof Error ? error.message : String(error), requestId: input.requestId };
+  }
+}
+
 export async function POST(request: Request): Promise<Response> {
   const id = requestId(request);
   let body: unknown;
@@ -57,11 +76,12 @@ export async function POST(request: Request): Promise<Response> {
     const dynamicDocuments = await listPublishedRiskRetrospectiveRagDocuments();
     const result = queryRagWithAdditionalDocuments(input, dynamicDocuments.documents);
     result.trace_id = id;
+    const user = await getOptionalCurrentUser();
     const usage = await recordRiskRetrospectiveRagUsage({
       query: input.query,
       citations: result.citations,
       requestId: id,
-      user: await getOptionalCurrentUser(),
+      user,
     });
     if (usage.status === 'failed') {
       console.error(JSON.stringify({
@@ -71,11 +91,27 @@ export async function POST(request: Request): Promise<Response> {
         warning: usage.warning,
       }));
     }
-    return Response.json(result, {
+    const knowledgeReferences = [];
+    for (const citation of result.citations.slice(0, 5)) {
+      const saved = await saveKnowledgeOutputReference({
+        outputType: 'ai_answer',
+        outputId: `rag-query-${id}`,
+        outputTitle: `RAG问答：${input.query.slice(0, 80)}`,
+        moduleName: '知识库与AI问答',
+        pageId: citation.page_id,
+        citationText: `${citation.document}：${citation.excerpt}`,
+        confidence: citation.relevance,
+        user,
+        requestId: id,
+      });
+      if (saved.status === 'succeeded') knowledgeReferences.push(saved.reference);
+    }
+    return Response.json({ ...result, knowledge_references: knowledgeReferences }, {
       status: 200,
       headers: {
         'Cache-Control': 'no-store',
         'X-Request-Id': id,
+        'X-Knowledge-References': String(knowledgeReferences.length),
       },
     });
   } catch (error) {

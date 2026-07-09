@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { KnowledgeGovernanceOperationsClient } from "@/components/KnowledgeGovernanceOperationsClient";
 import { KnowledgeLifecyclePersistenceClient } from "@/components/KnowledgeLifecyclePersistenceClient";
+import { KnowledgeReferenceAuditClient } from "@/components/KnowledgeReferenceAuditClient";
 import { buildKnowledgeOperationDashboard } from "@/features/knowledge/operations";
 
 const priorityClass: Record<string, string> = {
@@ -61,6 +62,7 @@ export default function KnowledgeOperationsPage() {
 
         <KnowledgeLifecyclePersistenceClient />
         <KnowledgeGovernanceOperationsClient />
+        <KnowledgeReferenceAuditClient />
 
         <section className="card" style={{ marginBottom: 18, borderColor: "rgba(59,130,246,0.25)" }}>
           <div className="section-title">🔁 知识变更影响模块</div>

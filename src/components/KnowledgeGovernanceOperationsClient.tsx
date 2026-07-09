@@ -429,6 +429,11 @@ export function KnowledgeGovernanceOperationsClient() {
                 <div key={report.id || report.title} style={{ border: "1px solid var(--border)", borderRadius: 10, padding: 10 }}>
                   <strong style={{ fontSize: "0.8rem" }}>{report.title}</strong>
                   <p style={{ color: "var(--text2)", fontSize: "0.74rem", lineHeight: 1.5, marginTop: 4 }}>{report.reportPeriod} · {report.createdAt || "未记录时间"}</p>
+                  {report.id && (
+                    <a href={`/api/knowledge/change-reports/${report.id}/download`} className="btn-secondary" style={{ display: "inline-block", textDecoration: "none", marginTop: 8 }}>
+                      下载报告
+                    </a>
+                  )}
                 </div>
               ))}
             </div>

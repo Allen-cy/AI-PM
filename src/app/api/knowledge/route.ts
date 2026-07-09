@@ -10,6 +10,34 @@ const categoryDomains: Record<string, string> = {
   'ai-pmo': 'AI-PMO能力',
 };
 
+async function getOptionalCurrentUser() {
+  try {
+    const auth = await import('../../../features/auth/server.ts');
+    return await auth.getCurrentUser();
+  } catch {
+    return null;
+  }
+}
+
+async function saveKnowledgeOutputReference(input: {
+  outputType: 'ai_answer';
+  outputId: string;
+  outputTitle: string;
+  moduleName: string;
+  pageId: string;
+  citationText: string;
+  confidence: number;
+  user: Awaited<ReturnType<typeof getOptionalCurrentUser>>;
+  requestId: string;
+}) {
+  try {
+    const repository = await import('../../../features/knowledge/lifecycle-repository.ts');
+    return await repository.createKnowledgeOutputReference(input);
+  } catch (error) {
+    return { status: 'failed' as const, warning: error instanceof Error ? error.message : String(error), requestId: input.requestId };
+  }
+}
+
 export async function POST(request: Request): Promise<Response> {
   let body: unknown;
   try {
@@ -29,10 +57,29 @@ export async function POST(request: Request): Promise<Response> {
 
   const category = typeof raw.category === 'string' ? raw.category : 'all';
   const domain = categoryDomains[category];
+  const sessionId = typeof raw.sessionId === 'string' && raw.sessionId
+    ? raw.sessionId
+    : `session_${crypto.randomUUID()}`;
   const result = getRagService().query({
     query: raw.question.trim(),
     ...(domain ? { filters: { domains: [domain] } } : {}),
   });
+  const user = await getOptionalCurrentUser();
+  const knowledgeReferences = [];
+  for (const citation of result.citations.slice(0, 5)) {
+    const saved = await saveKnowledgeOutputReference({
+      outputType: 'ai_answer',
+      outputId: `${sessionId}-${result.trace_id}`,
+      outputTitle: `知识库问答：${raw.question.trim().slice(0, 80)}`,
+      moduleName: '知识库与AI问答',
+      pageId: citation.page_id,
+      citationText: `${citation.document}：${citation.excerpt}`,
+      confidence: citation.relevance,
+      user,
+      requestId: result.trace_id,
+    });
+    if (saved.status === 'succeeded') knowledgeReferences.push(saved.reference);
+  }
 
   return Response.json({
     answer: result.answer,
@@ -48,10 +95,9 @@ export async function POST(request: Request): Promise<Response> {
       confidentiality: citation.confidentiality,
     })),
     confidence: result.confidence,
-    sessionId: typeof raw.sessionId === 'string' && raw.sessionId
-      ? raw.sessionId
-      : `session_${crypto.randomUUID()}`,
+    sessionId,
     retrieval: result.retrieval,
+    knowledgeReferences,
     traceId: result.trace_id,
     timestamp: new Date().toISOString(),
   }, {
