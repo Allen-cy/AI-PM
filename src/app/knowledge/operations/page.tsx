@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { KnowledgeGovernanceOperationsClient } from "@/components/KnowledgeGovernanceOperationsClient";
 import { KnowledgeLifecyclePersistenceClient } from "@/components/KnowledgeLifecyclePersistenceClient";
 import { buildKnowledgeOperationDashboard } from "@/features/knowledge/operations";
 
@@ -59,6 +60,7 @@ export default function KnowledgeOperationsPage() {
         </section>
 
         <KnowledgeLifecyclePersistenceClient />
+        <KnowledgeGovernanceOperationsClient />
 
         <section className="card" style={{ marginBottom: 18, borderColor: "rgba(59,130,246,0.25)" }}>
           <div className="section-title">🔁 知识变更影响模块</div>

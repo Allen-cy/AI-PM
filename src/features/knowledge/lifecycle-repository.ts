@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { getAuthSupabase, isAuthStorageConfigured, type AppUser } from "../auth/server.ts";
+import { createFeishuActionConfirmation } from "../feishu/action-confirmations.ts";
 import type {
   KnowledgeImpactModule,
   KnowledgeImpactPriority,
@@ -10,6 +11,7 @@ import type {
 
 const SQL_FILE = "supabase-v5352-knowledge-lifecycle.sql";
 const ACTION_SQL_FILE = "supabase-v530-issue-change-action-chain.sql";
+const GOVERNANCE_SQL_FILE = "supabase-v5354-knowledge-governance-operations.sql";
 const KNOWLEDGE_ACTION_SOURCE_PREFIX = "knowledge-impact-review:";
 
 export interface KnowledgeImpactReviewRecord {
@@ -147,12 +149,128 @@ export type KnowledgeImpactReviewActionCreationResult =
   | { status: "not_configured"; warning: string; migration: string; requestId: string }
   | { status: "failed"; warning: string; requestId: string };
 
+export type KnowledgeLifecycleItemStatus = "draft" | "reviewed" | "published" | "deprecated" | "archived";
+export type KnowledgeSubscriptionStatus = "active" | "paused" | "cancelled";
+export type KnowledgeNotificationStatus = "draft" | "queued" | "sent" | "failed" | "cancelled";
+
+export interface KnowledgeLifecycleItemRecord {
+  id: string;
+  pageId: string;
+  title: string;
+  knowledgeType: string;
+  status: KnowledgeLifecycleItemStatus;
+  ownerName: string;
+  currentVersionLabel?: string | null;
+  lifecycleHealth: KnowledgeOperationItem["lifecycleHealth"];
+  expiresAt?: string | null;
+  domains: string[];
+  tags: string[];
+  sourceRefs: string[];
+  impactedModules: string[];
+  linkedTemplates: string[];
+  updatedAt?: string | null;
+}
+
+export interface KnowledgeSubscriptionRecord {
+  id: string;
+  subscriberId?: string | null;
+  subscriberName?: string | null;
+  moduleName: string;
+  domain?: string | null;
+  notificationChannel: KnowledgeSubscriptionReminderDraft["notificationChannel"];
+  status: KnowledgeSubscriptionStatus;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+
+export interface KnowledgeNotificationRecord {
+  id: string;
+  subscriptionId?: string | null;
+  subscriberName?: string | null;
+  moduleName: string;
+  domain?: string | null;
+  notificationChannel: KnowledgeSubscriptionReminderDraft["notificationChannel"];
+  title: string;
+  priority: KnowledgeImpactPriority;
+  status: KnowledgeNotificationStatus;
+  relatedPageIds: string[];
+  feishuConfirmationId?: string | null;
+  createdAt?: string | null;
+  sentAt?: string | null;
+}
+
+export interface KnowledgeChangeReportRecord {
+  id?: string;
+  reportPeriod: string;
+  title: string;
+  markdown: string;
+  summary: Record<string, unknown>;
+  createdAt?: string | null;
+}
+
+export type KnowledgeGovernanceWorkbenchResult =
+  | {
+      status: "succeeded";
+      summary: {
+        managedItems: number;
+        activeSubscriptions: number;
+        queuedNotifications: number;
+        latestReports: number;
+      };
+      items: KnowledgeLifecycleItemRecord[];
+      subscriptions: KnowledgeSubscriptionRecord[];
+      notifications: KnowledgeNotificationRecord[];
+      latestReports: KnowledgeChangeReportRecord[];
+      changeReportPreview: KnowledgeChangeReportRecord;
+    }
+  | {
+      status: "not_configured";
+      warning: string;
+      migration: string;
+      items: [];
+      subscriptions: [];
+      notifications: [];
+      latestReports: [];
+      changeReportPreview: null;
+    }
+  | { status: "failed"; warning: string; items: []; subscriptions: []; notifications: []; latestReports: []; changeReportPreview: null };
+
+export type KnowledgeItemTransitionResult =
+  | { status: "succeeded"; item: KnowledgeLifecycleItemRecord; requestId: string }
+  | { status: "not_configured"; warning: string; migration: string; requestId: string }
+  | { status: "not_found"; warning: string; requestId: string }
+  | { status: "failed"; warning: string; requestId: string };
+
+export type KnowledgeSubscriptionMutationResult =
+  | { status: "succeeded"; subscription: KnowledgeSubscriptionRecord; requestId: string }
+  | { status: "not_configured"; warning: string; migration: string; requestId: string }
+  | { status: "not_found"; warning: string; requestId: string }
+  | { status: "failed"; warning: string; requestId: string };
+
+export type KnowledgeSubscriptionReminderSendResult =
+  | {
+      status: "succeeded";
+      queuedNotifications: number;
+      feishuConfirmations: number;
+      notifications: KnowledgeNotificationRecord[];
+      requestId: string;
+    }
+  | { status: "not_configured"; warning: string; migration: string; requestId: string }
+  | { status: "failed"; warning: string; requestId: string };
+
+export type KnowledgeChangeReportPersistResult =
+  | { status: "succeeded"; report: KnowledgeChangeReportRecord; requestId: string }
+  | { status: "not_configured"; warning: string; migration: string; requestId: string }
+  | { status: "failed"; warning: string; requestId: string };
+
 function isMissingTableError(message?: string): boolean {
   return Boolean(
     message?.includes("knowledge_items")
     || message?.includes("knowledge_item_versions")
     || message?.includes("knowledge_lifecycle_events")
     || message?.includes("knowledge_impact_reviews")
+    || message?.includes("knowledge_subscription_notifications")
+    || message?.includes("knowledge_change_reports")
     || message?.includes("relation")
     || message?.includes("does not exist"),
   );
@@ -288,6 +406,15 @@ function actionNotConfigured(requestId: string) {
   };
 }
 
+function governanceNotConfigured(requestId?: string) {
+  return {
+    status: "not_configured" as const,
+    warning: "Supabase 尚未创建知识治理运营表，无法记录订阅通知和知识变更报告。",
+    migration: GOVERNANCE_SQL_FILE,
+    ...(requestId ? { requestId } : {}),
+  };
+}
+
 function toStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
@@ -316,6 +443,147 @@ function mapUnifiedAction(row: Record<string, unknown>): KnowledgeUnifiedActionR
     dueDate: typeof row.due_date === "string" ? row.due_date : null,
     status: String(row.status || "open"),
     priority: String(row.priority || "P1") as KnowledgeImpactPriority,
+  };
+}
+
+function statusToHealth(status: KnowledgeLifecycleItemStatus): KnowledgeOperationItem["lifecycleHealth"] {
+  if (status === "archived") return "已归档";
+  if (status === "deprecated") return "已过期";
+  if (status === "draft") return "待复核";
+  return "正常";
+}
+
+function eventTypeForStatus(status: KnowledgeLifecycleItemStatus): string {
+  if (status === "published") return "publish";
+  if (status === "archived") return "archive";
+  if (status === "reviewed") return "restore";
+  return "status_transition";
+}
+
+function mapLifecycleItem(row: Record<string, unknown>): KnowledgeLifecycleItemRecord {
+  const metadata = metadataObject(row.metadata);
+  return {
+    id: String(row.id),
+    pageId: String(row.page_id || ""),
+    title: String(row.title || ""),
+    knowledgeType: String(row.knowledge_type || "general"),
+    status: String(row.status || "reviewed") as KnowledgeLifecycleItemStatus,
+    ownerName: String(row.owner_name || "知识库管理员"),
+    currentVersionLabel: typeof row.current_version_label === "string" ? row.current_version_label : null,
+    lifecycleHealth: String(row.lifecycle_health || "正常") as KnowledgeOperationItem["lifecycleHealth"],
+    expiresAt: typeof row.expires_at === "string" ? row.expires_at : null,
+    domains: toStringArray(row.domains),
+    tags: toStringArray(row.tags),
+    sourceRefs: toStringArray(row.source_refs),
+    impactedModules: toStringArray(metadata.impacted_modules),
+    linkedTemplates: toStringArray(metadata.linked_templates),
+    updatedAt: typeof row.updated_at === "string" ? row.updated_at : null,
+  };
+}
+
+function mapSubscription(row: Record<string, unknown>): KnowledgeSubscriptionRecord {
+  return {
+    id: String(row.id),
+    subscriberId: typeof row.subscriber_id === "string" ? row.subscriber_id : null,
+    subscriberName: typeof row.subscriber_name === "string" ? row.subscriber_name : null,
+    moduleName: String(row.module_name || ""),
+    domain: typeof row.domain === "string" ? row.domain : null,
+    notificationChannel: String(row.notification_channel || "in_app") as KnowledgeSubscriptionRecord["notificationChannel"],
+    status: String(row.status || "active") as KnowledgeSubscriptionStatus,
+    createdAt: typeof row.created_at === "string" ? row.created_at : null,
+    updatedAt: typeof row.updated_at === "string" ? row.updated_at : null,
+  };
+}
+
+function mapNotification(row: Record<string, unknown>): KnowledgeNotificationRecord {
+  return {
+    id: String(row.id),
+    subscriptionId: typeof row.subscription_id === "string" ? row.subscription_id : null,
+    subscriberName: typeof row.subscriber_name === "string" ? row.subscriber_name : null,
+    moduleName: String(row.module_name || ""),
+    domain: typeof row.domain === "string" ? row.domain : null,
+    notificationChannel: String(row.notification_channel || "in_app") as KnowledgeNotificationRecord["notificationChannel"],
+    title: String(row.title || ""),
+    priority: String(row.priority || "P1") as KnowledgeImpactPriority,
+    status: String(row.status || "queued") as KnowledgeNotificationStatus,
+    relatedPageIds: toStringArray(row.related_page_ids),
+    feishuConfirmationId: typeof row.feishu_confirmation_id === "string" ? row.feishu_confirmation_id : null,
+    createdAt: typeof row.created_at === "string" ? row.created_at : null,
+    sentAt: typeof row.sent_at === "string" ? row.sent_at : null,
+  };
+}
+
+function mapChangeReport(row: Record<string, unknown>): KnowledgeChangeReportRecord {
+  return {
+    id: String(row.id),
+    reportPeriod: String(row.report_period || ""),
+    title: String(row.title || ""),
+    markdown: String(row.markdown || ""),
+    summary: metadataObject(row.summary),
+    createdAt: typeof row.created_at === "string" ? row.created_at : null,
+  };
+}
+
+function reportPeriod(date = new Date()): string {
+  const year = date.getUTCFullYear();
+  const start = new Date(Date.UTC(year, 0, 1));
+  const day = Math.floor((date.getTime() - start.getTime()) / 86_400_000) + 1;
+  const week = Math.ceil(day / 7);
+  return `${year}-W${String(week).padStart(2, "0")}`;
+}
+
+function buildKnowledgeChangeReportMarkdown(input: {
+  changeControl: Extract<KnowledgeChangeControlResult, { status: "succeeded" }>;
+  notifications: KnowledgeNotificationRecord[];
+  actor: string;
+  generatedAt?: Date;
+}): KnowledgeChangeReportRecord {
+  const generatedAt = input.generatedAt ?? new Date();
+  const period = reportPeriod(generatedAt);
+  const lines = [
+    `# 知识变更周报（${period}）`,
+    "",
+    `生成时间：${generatedAt.toISOString()}`,
+    `生成人：${input.actor}`,
+    "",
+    "## 一、变更摘要",
+    "",
+    `- 对比条目：${input.changeControl.summary.comparedItems}`,
+    `- 新增：${input.changeControl.summary.additions}`,
+    `- 更新：${input.changeControl.summary.modifications}`,
+    `- 撤出：${input.changeControl.summary.removals}`,
+    `- P0/P1行动候选：${input.changeControl.summary.p0p1ActionCandidates}`,
+    `- 订阅提醒草稿：${input.changeControl.summary.reminderDrafts}`,
+    "",
+    "## 二、重点知识差异",
+    "",
+    ...(
+      input.changeControl.versionDiffs.length === 0
+        ? ["- 本期未发现需要人工处理的知识差异。"]
+        : input.changeControl.versionDiffs.slice(0, 12).map(item => `- [${item.priority}] ${item.changeType}｜${item.pageId}｜${item.title}｜责任人：${item.ownerName}｜deadline：${item.dueDate}`)
+    ),
+    "",
+    "## 三、订阅提醒与发送记录",
+    "",
+    ...(
+      input.notifications.length === 0
+        ? ["- 暂无已生成的订阅通知记录。"]
+        : input.notifications.slice(0, 12).map(item => `- [${item.status}] ${item.notificationChannel}｜${item.title}｜${item.subscriberName || "未指定"}｜${item.relatedPageIds.join("、") || "无关联页"}`)
+    ),
+    "",
+    "## 四、后续动作",
+    "",
+    "- PMO/知识管理员复核 P0/P1 差异是否需要调整报告、AI提示词、治理流程或模板目录。",
+    "- 模块负责人按订阅提醒确认是否需要更新本模块输出口径。",
+    "- 已生成统一行动项的复核任务，必须在统一行动项闭环中补充关闭证据。",
+  ];
+
+  return {
+    reportPeriod: period,
+    title: `知识变更周报-${period}`,
+    markdown: lines.join("\n"),
+    summary: input.changeControl.summary,
+    createdAt: generatedAt.toISOString(),
   };
 }
 
@@ -486,6 +754,450 @@ export async function loadKnowledgeChangeControl(input: {
     subscriptionReminders: subscriptionReminders.slice(0, limit),
     actionCandidates: actionCandidates.slice(0, limit),
   };
+}
+
+export async function loadKnowledgeGovernanceWorkbench(input: {
+  dashboard: KnowledgeOperationDashboard;
+  user: AppUser | null;
+  limit?: number;
+}): Promise<KnowledgeGovernanceWorkbenchResult> {
+  if (!hasEnvironment()) return { ...governanceNotConfigured(), items: [], subscriptions: [], notifications: [], latestReports: [], changeReportPreview: null };
+  const supabase = getAuthSupabase();
+  const limit = input.limit ?? 30;
+
+  const changeControl = await loadKnowledgeChangeControl({ dashboard: input.dashboard, limit });
+  if (changeControl.status !== "succeeded") {
+    return {
+      status: changeControl.status,
+      warning: changeControl.warning,
+      migration: "migration" in changeControl ? changeControl.migration : GOVERNANCE_SQL_FILE,
+      items: [],
+      subscriptions: [],
+      notifications: [],
+      latestReports: [],
+      changeReportPreview: null,
+    } as KnowledgeGovernanceWorkbenchResult;
+  }
+
+  const [items, subscriptions, notifications, reports] = await Promise.all([
+    supabase
+      .from("knowledge_items")
+      .select("id,page_id,title,knowledge_type,status,owner_name,current_version_label,lifecycle_health,expires_at,domains,tags,source_refs,metadata,updated_at")
+      .order("updated_at", { ascending: false })
+      .limit(limit),
+    supabase
+      .from("knowledge_subscriptions")
+      .select("id,subscriber_id,subscriber_name,module_name,domain,notification_channel,status,created_at,updated_at")
+      .order("updated_at", { ascending: false })
+      .limit(limit),
+    supabase
+      .from("knowledge_subscription_notifications")
+      .select("id,subscription_id,subscriber_name,module_name,domain,notification_channel,title,priority,status,related_page_ids,feishu_confirmation_id,created_at,sent_at")
+      .order("created_at", { ascending: false })
+      .limit(limit),
+    supabase
+      .from("knowledge_change_reports")
+      .select("id,report_period,title,markdown,summary,created_at")
+      .order("created_at", { ascending: false })
+      .limit(8),
+  ]);
+
+  const firstError = items.error || subscriptions.error || notifications.error || reports.error;
+  if (firstError) {
+    return isMissingTableError(firstError.message)
+      ? { ...governanceNotConfigured(), items: [], subscriptions: [], notifications: [], latestReports: [], changeReportPreview: null }
+      : { status: "failed", warning: firstError.message, items: [], subscriptions: [], notifications: [], latestReports: [], changeReportPreview: null };
+  }
+
+  const notificationRows = (notifications.data ?? []).map(row => mapNotification(row as Record<string, unknown>));
+  return {
+    status: "succeeded",
+    summary: {
+      managedItems: items.data?.length ?? 0,
+      activeSubscriptions: (subscriptions.data ?? []).filter(row => (row as Record<string, unknown>).status === "active").length,
+      queuedNotifications: notificationRows.filter(row => row.status === "queued").length,
+      latestReports: reports.data?.length ?? 0,
+    },
+    items: (items.data ?? []).map(row => mapLifecycleItem(row as Record<string, unknown>)),
+    subscriptions: (subscriptions.data ?? []).map(row => mapSubscription(row as Record<string, unknown>)),
+    notifications: notificationRows,
+    latestReports: (reports.data ?? []).map(row => mapChangeReport(row as Record<string, unknown>)),
+    changeReportPreview: buildKnowledgeChangeReportMarkdown({
+      changeControl,
+      notifications: notificationRows,
+      actor: actorName(input.user),
+    }),
+  };
+}
+
+export async function transitionKnowledgeItemStatus(input: {
+  pageId: string;
+  status: KnowledgeLifecycleItemStatus;
+  reviewNote: string;
+  user: AppUser | null;
+  requestId: string;
+  versionLabel?: string;
+  title?: string;
+  ownerName?: string;
+  expiresAt?: string;
+}): Promise<KnowledgeItemTransitionResult> {
+  if (!hasEnvironment()) return { ...notConfigured(), requestId: input.requestId };
+  const note = input.reviewNote.trim();
+  if (!note) return { status: "failed", warning: "知识状态流转必须填写复核/审批意见。", requestId: input.requestId };
+  const supabase = getAuthSupabase();
+  const { data: current, error: currentError } = await supabase
+    .from("knowledge_items")
+    .select("id,page_id,title,knowledge_type,status,owner_name,current_version_label,lifecycle_health,expires_at,domains,tags,source_refs,metadata,updated_at")
+    .eq("page_id", input.pageId)
+    .maybeSingle();
+
+  if (currentError) {
+    return isMissingTableError(currentError.message)
+      ? { ...notConfigured(), requestId: input.requestId }
+      : { status: "failed", warning: currentError.message, requestId: input.requestId };
+  }
+  if (!current) return { status: "not_found", warning: "知识条目不存在，请先同步当前快照。", requestId: input.requestId };
+
+  const currentRecord = current as Record<string, unknown>;
+  const fromStatus = String(currentRecord.status || "reviewed") as KnowledgeLifecycleItemStatus;
+  const nextVersionLabel = input.versionLabel?.trim()
+    || (input.status === "published"
+      ? `${String(currentRecord.current_version_label || input.pageId)}.${new Date().toISOString().replace(/[-:TZ.]/g, "").slice(0, 12)}`
+      : String(currentRecord.current_version_label || ""));
+
+  const { data, error } = await supabase
+    .from("knowledge_items")
+    .update({
+      title: input.title?.trim() || currentRecord.title,
+      status: input.status,
+      owner_name: input.ownerName?.trim() || currentRecord.owner_name,
+      current_version_label: nextVersionLabel || currentRecord.current_version_label,
+      expires_at: input.expiresAt || currentRecord.expires_at || null,
+      lifecycle_health: statusToHealth(input.status),
+      updated_by: input.user?.id ?? null,
+      updated_by_name: actorName(input.user),
+      updated_at: new Date().toISOString(),
+      metadata: {
+        ...metadataObject(currentRecord.metadata),
+        last_transition_note: note,
+        last_transition_by: actorName(input.user),
+        last_transition_at: new Date().toISOString(),
+      },
+    })
+    .eq("page_id", input.pageId)
+    .select("id,page_id,title,knowledge_type,status,owner_name,current_version_label,lifecycle_health,expires_at,domains,tags,source_refs,metadata,updated_at")
+    .single();
+
+  if (error) {
+    return isMissingTableError(error.message)
+      ? { ...notConfigured(), requestId: input.requestId }
+      : { status: "failed", warning: error.message, requestId: input.requestId };
+  }
+
+  if (input.status === "published") {
+    await supabase.from("knowledge_item_versions").insert({
+      knowledge_item_id: String(currentRecord.id),
+      page_id: input.pageId,
+      version_label: nextVersionLabel || `${input.pageId}.${Date.now()}`,
+      snapshot_index_version: "manual-transition",
+      content_sha256: createHash("sha256").update(JSON.stringify({ ...data, note })).digest("hex"),
+      change_summary: note,
+      source_refs: toStringArray(currentRecord.source_refs),
+      metadata: { transition: "publish", from_status: fromStatus, to_status: input.status },
+      created_by: input.user?.id ?? null,
+      created_by_name: actorName(input.user),
+    });
+  }
+
+  await supabase.from("knowledge_lifecycle_events").insert({
+    knowledge_item_id: String(currentRecord.id),
+    page_id: input.pageId,
+    event_type: eventTypeForStatus(input.status),
+    from_status: fromStatus,
+    to_status: input.status,
+    actor_id: input.user?.id ?? null,
+    actor_name: actorName(input.user),
+    event_status: "succeeded",
+    review_note: note,
+    request_id: input.requestId,
+    metadata: { version_label: nextVersionLabel || null },
+  });
+
+  return { status: "succeeded", item: mapLifecycleItem(data as Record<string, unknown>), requestId: input.requestId };
+}
+
+export async function upsertKnowledgeSubscription(input: {
+  id?: string;
+  moduleName: string;
+  domain?: string;
+  notificationChannel: KnowledgeSubscriptionRecord["notificationChannel"];
+  subscriberName?: string;
+  status?: KnowledgeSubscriptionStatus;
+  user: AppUser | null;
+  requestId: string;
+}): Promise<KnowledgeSubscriptionMutationResult> {
+  if (!hasEnvironment()) return { ...notConfigured(), requestId: input.requestId };
+  const moduleName = input.moduleName.trim();
+  if (!moduleName) return { status: "failed", warning: "订阅模块不能为空。", requestId: input.requestId };
+  const supabase = getAuthSupabase();
+  const payload = {
+    subscriber_id: input.user?.id ?? null,
+    subscriber_name: input.subscriberName?.trim() || actorName(input.user),
+    module_name: moduleName,
+    domain: input.domain?.trim() || null,
+    notification_channel: input.notificationChannel,
+    status: input.status ?? "active",
+    updated_at: new Date().toISOString(),
+  };
+  const query = input.id
+    ? supabase.from("knowledge_subscriptions").update(payload).eq("id", input.id)
+    : supabase.from("knowledge_subscriptions").insert(payload);
+  const { data, error } = await query
+    .select("id,subscriber_id,subscriber_name,module_name,domain,notification_channel,status,created_at,updated_at")
+    .maybeSingle();
+
+  if (error) {
+    return isMissingTableError(error.message)
+      ? { ...notConfigured(), requestId: input.requestId }
+      : { status: "failed", warning: error.message, requestId: input.requestId };
+  }
+  if (!data) return { status: "not_found", warning: "知识订阅记录不存在。", requestId: input.requestId };
+
+  const subscription = mapSubscription(data as Record<string, unknown>);
+  await supabase.from("knowledge_lifecycle_events").insert({
+    page_id: `subscription:${subscription.id}`,
+    event_type: input.id ? "subscription_updated" : "subscription_created",
+    actor_id: input.user?.id ?? null,
+    actor_name: actorName(input.user),
+    event_status: "succeeded",
+    review_note: `知识订阅已${input.id ? "更新" : "创建"}：${subscription.moduleName}`,
+    request_id: input.requestId,
+    metadata: { subscription_id: subscription.id, channel: subscription.notificationChannel, domain: subscription.domain },
+  });
+
+  return { status: "succeeded", subscription, requestId: input.requestId };
+}
+
+export async function updateKnowledgeSubscriptionStatus(input: {
+  id: string;
+  status: KnowledgeSubscriptionStatus;
+  user: AppUser | null;
+  requestId: string;
+}): Promise<KnowledgeSubscriptionMutationResult> {
+  if (!hasEnvironment()) return { ...notConfigured(), requestId: input.requestId };
+  const supabase = getAuthSupabase();
+  const { data, error } = await supabase
+    .from("knowledge_subscriptions")
+    .update({ status: input.status, updated_at: new Date().toISOString() })
+    .eq("id", input.id)
+    .select("id,subscriber_id,subscriber_name,module_name,domain,notification_channel,status,created_at,updated_at")
+    .maybeSingle();
+
+  if (error) {
+    return isMissingTableError(error.message)
+      ? { ...notConfigured(), requestId: input.requestId }
+      : { status: "failed", warning: error.message, requestId: input.requestId };
+  }
+  if (!data) return { status: "not_found", warning: "知识订阅记录不存在。", requestId: input.requestId };
+
+  const subscription = mapSubscription(data as Record<string, unknown>);
+  await supabase.from("knowledge_lifecycle_events").insert({
+    page_id: `subscription:${subscription.id}`,
+    event_type: "subscription_updated",
+    actor_id: input.user?.id ?? null,
+    actor_name: actorName(input.user),
+    event_status: "succeeded",
+    review_note: `知识订阅状态更新为 ${subscription.status}`,
+    request_id: input.requestId,
+    metadata: { subscription_id: subscription.id, status: subscription.status },
+  });
+
+  return { status: "succeeded", subscription, requestId: input.requestId };
+}
+
+function subscriptionIdFromReminder(reminderId: string): string {
+  return reminderId.replace(/^knowledge-subscription-reminder-/, "");
+}
+
+export async function queueKnowledgeSubscriptionReminders(input: {
+  dashboard: KnowledgeOperationDashboard;
+  user: AppUser | null;
+  requestId: string;
+  reminderIds?: string[];
+  feishuReceiveId?: string;
+  feishuReceiveIdType?: "chat_id" | "open_id";
+}): Promise<KnowledgeSubscriptionReminderSendResult> {
+  if (!hasEnvironment()) return { ...governanceNotConfigured(), requestId: input.requestId };
+  const changeControl = await loadKnowledgeChangeControl({ dashboard: input.dashboard, limit: 80 });
+  if (changeControl.status !== "succeeded") {
+    return "migration" in changeControl
+      ? { ...governanceNotConfigured(), warning: changeControl.warning, requestId: input.requestId }
+      : { status: "failed", warning: changeControl.warning, requestId: input.requestId };
+  }
+
+  const reminderIdSet = new Set(input.reminderIds ?? []);
+  const reminders = changeControl.subscriptionReminders
+    .filter(reminder => reminderIdSet.size === 0 || reminderIdSet.has(reminder.id));
+  if (reminders.length === 0) {
+    return { status: "succeeded", queuedNotifications: 0, feishuConfirmations: 0, notifications: [], requestId: input.requestId };
+  }
+
+  const supabase = getAuthSupabase();
+  const created: KnowledgeNotificationRecord[] = [];
+  let feishuConfirmations = 0;
+
+  for (const reminder of reminders) {
+    let feishuConfirmationId: string | null = null;
+    let notificationStatus: KnowledgeNotificationStatus = "queued";
+
+    if (reminder.notificationChannel === "feishu") {
+      if (!input.feishuReceiveId?.trim()) {
+        notificationStatus = "draft";
+      } else {
+        const queued = await createFeishuActionConfirmation({
+          user: input.user,
+          source: "user_center",
+          sourcePage: "/knowledge/operations",
+          requestId: input.requestId,
+          payload: {
+            type: "message",
+            idempotency_key: `knowledge-reminder-${reminder.id}-${input.requestId}`,
+            receive_id_type: input.feishuReceiveIdType ?? "chat_id",
+            receive_id: input.feishuReceiveId.trim(),
+            text: [
+              reminder.title,
+              "",
+              reminder.message,
+              `优先级：${reminder.priority}`,
+              `截止日期：${reminder.dueDate}`,
+              `相关知识：${reminder.relatedPageIds.join("、") || "无"}`,
+              `处理要求：${reminder.actionRequired}`,
+            ].join("\n"),
+            source_page: "/knowledge/operations",
+          },
+        });
+        if (queued.status === "succeeded") {
+          feishuConfirmationId = queued.confirmation.id;
+          feishuConfirmations += 1;
+        } else {
+          notificationStatus = "failed";
+        }
+      }
+    }
+
+    const { data, error } = await supabase
+      .from("knowledge_subscription_notifications")
+      .insert({
+        subscription_id: subscriptionIdFromReminder(reminder.id),
+        subscriber_id: input.user?.id ?? null,
+        subscriber_name: reminder.subscriberName,
+        module_name: reminder.moduleName,
+        domain: reminder.domain ?? null,
+        notification_channel: reminder.notificationChannel,
+        title: reminder.title,
+        message: reminder.message,
+        related_page_ids: reminder.relatedPageIds,
+        action_required: reminder.actionRequired,
+        priority: reminder.priority,
+        status: notificationStatus,
+        feishu_confirmation_id: feishuConfirmationId,
+        sent_by: input.user?.id ?? null,
+        sent_by_name: actorName(input.user),
+        sent_at: notificationStatus === "queued" && reminder.notificationChannel !== "feishu" ? new Date().toISOString() : null,
+        request_id: input.requestId,
+        metadata: {
+          reminder_id: reminder.id,
+          due_date: reminder.dueDate,
+          feishu_receive_id_type: input.feishuReceiveIdType ?? null,
+          delivery_boundary: reminder.notificationChannel === "feishu"
+            ? "已进入飞书写入待确认队列，需用户在集成中心确认后才外发。"
+            : "当前记录为系统内通知发送记录。",
+        },
+      })
+      .select("id,subscription_id,subscriber_name,module_name,domain,notification_channel,title,priority,status,related_page_ids,feishu_confirmation_id,created_at,sent_at")
+      .single();
+
+    if (error) {
+      return isMissingTableError(error.message)
+        ? { ...governanceNotConfigured(), requestId: input.requestId }
+        : { status: "failed", warning: error.message, requestId: input.requestId };
+    }
+
+    const notification = mapNotification(data as Record<string, unknown>);
+    created.push(notification);
+    await supabase.from("knowledge_lifecycle_events").insert({
+      page_id: `subscription:${notification.subscriptionId || reminder.id}`,
+      event_type: notificationStatus === "queued" ? "subscription_notification_queued" : "subscription_notification_sent",
+      actor_id: input.user?.id ?? null,
+      actor_name: actorName(input.user),
+      event_status: notificationStatus === "failed" ? "failed" : "succeeded",
+      review_note: `${reminder.notificationChannel}提醒已${notificationStatus === "draft" ? "生成草稿" : notificationStatus === "failed" ? "生成失败" : "进入发送队列"}：${reminder.title}`,
+      request_id: input.requestId,
+      metadata: {
+        notification_id: notification.id,
+        reminder_id: reminder.id,
+        feishu_confirmation_id: feishuConfirmationId,
+      },
+    });
+  }
+
+  return {
+    status: "succeeded",
+    queuedNotifications: created.length,
+    feishuConfirmations,
+    notifications: created,
+    requestId: input.requestId,
+  };
+}
+
+export async function persistKnowledgeChangeReport(input: {
+  dashboard: KnowledgeOperationDashboard;
+  user: AppUser | null;
+  requestId: string;
+}): Promise<KnowledgeChangeReportPersistResult> {
+  if (!hasEnvironment()) return { ...governanceNotConfigured(), requestId: input.requestId };
+  const supabase = getAuthSupabase();
+  const governance = await loadKnowledgeGovernanceWorkbench({ dashboard: input.dashboard, user: input.user, limit: 80 });
+  if (governance.status !== "succeeded") {
+    return "migration" in governance
+      ? { ...governanceNotConfigured(), warning: governance.warning, requestId: input.requestId }
+      : { status: "failed", warning: governance.warning, requestId: input.requestId };
+  }
+
+  const report = governance.changeReportPreview;
+  const { data, error } = await supabase
+    .from("knowledge_change_reports")
+    .insert({
+      report_period: report.reportPeriod,
+      title: report.title,
+      markdown: report.markdown,
+      summary: report.summary,
+      generated_by: input.user?.id ?? null,
+      generated_by_name: actorName(input.user),
+      request_id: input.requestId,
+    })
+    .select("id,report_period,title,markdown,summary,created_at")
+    .single();
+
+  if (error) {
+    return isMissingTableError(error.message)
+      ? { ...governanceNotConfigured(), requestId: input.requestId }
+      : { status: "failed", warning: error.message, requestId: input.requestId };
+  }
+
+  const persisted = mapChangeReport(data as Record<string, unknown>);
+  await supabase.from("knowledge_lifecycle_events").insert({
+    page_id: `report:${persisted.id}`,
+    event_type: "change_report_generated",
+    actor_id: input.user?.id ?? null,
+    actor_name: actorName(input.user),
+    event_status: "succeeded",
+    review_note: `知识变更报告已生成：${persisted.title}`,
+    request_id: input.requestId,
+    metadata: { report_id: persisted.id, report_period: persisted.reportPeriod },
+  });
+
+  return { status: "succeeded", report: persisted, requestId: input.requestId };
 }
 
 export async function syncKnowledgeLifecycleFromDashboard(input: {
