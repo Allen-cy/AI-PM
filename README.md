@@ -67,6 +67,10 @@ npm run build
 - 飞书端已建立8张业务表；公开项目记录API会等用户登录和授权模型完成后再开放。
 - 全仓历史 ESLint 基线仍有旧问题；V4新增/改动文件执行独立零错误门禁。
 
+## AI-PMO System V5.3.53
+
+V5.3.53 将 P16 知识运营从“持久化第一版”推进到“变更控制闭环”：`GET /api/knowledge/operations` 新增 `changeControl`，会对比当前 RAG 快照与 Supabase 中上一持久化版本，形成新增、更新、撤出和无变化统计；基于 `knowledge_subscriptions` 生成订阅提醒草稿；从 `knowledge_impact_reviews` 中提取 P0/P1 复核任务作为行动项候选。`POST /api/knowledge/operations` 新增 `action=create_action_items`，必须 `confirm=true` 且用户登录后才会把 P0/P1 知识影响复核转为 `unified_action_items`，并写入操作审计和知识生命周期事件；已存在行动项会被跳过，避免重复创建。`/knowledge/operations` 页面新增“知识版本差异与订阅提醒”面板，展示版本差异、订阅提醒、行动候选和“生成统一行动项”按钮。本版本不新增 SQL，继续依赖 `supabase-v5352-knowledge-lifecycle.sql`；如要生成统一行动项，还需要已执行既有 `supabase-v530-issue-change-action-chain.sql`。
+
 ## AI-PMO System V5.3.52
 
 V5.3.52 将 V5.3.51 的运行时知识运营视图推进到 Supabase 持久化第一版：新增 `supabase-v5352-knowledge-lifecycle.sql`，创建 `knowledge_items`、`knowledge_item_versions`、`knowledge_lifecycle_events`、`knowledge_impact_reviews`、`knowledge_subscriptions` 五张表，用于保存知识条目、版本摘要、生命周期事件、影响模块复核和订阅关系；新增 `src/features/knowledge/lifecycle-repository.ts`，支持把当前 RAG 快照同步到知识生命周期表，并关闭/标记无需处理影响复核；`GET /api/knowledge/operations` 返回持久化状态，`POST /api/knowledge/operations` 在 `confirm=true` 后同步当前快照，`PATCH /api/knowledge/operations` 更新影响复核状态；`/knowledge/operations` 页面新增“知识生命周期持久化”面板，可提示 SQL 未执行、同步当前快照、填写复核结论并关闭影响复核。本版本需要在 Supabase SQL Editor 执行 `supabase-v5352-knowledge-lifecycle.sql` 后启用持久化能力；未执行时页面仍保留运行时知识运营视图。
