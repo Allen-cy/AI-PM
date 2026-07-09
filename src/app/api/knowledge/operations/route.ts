@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/features/auth/server";
 import {
+  createKnowledgeImpactReviewActionItems,
+  loadKnowledgeChangeControl,
   loadKnowledgeLifecyclePersistence,
   syncKnowledgeLifecycleFromDashboard,
   transitionKnowledgeImpactReview,
@@ -36,7 +38,10 @@ export async function GET() {
   const persistence = user
     ? await loadKnowledgeLifecyclePersistence(30)
     : { status: "unauthorized", warning: "登录后可查看知识生命周期持久化状态和影响复核记录。", impactReviews: [], latestEvents: [] };
-  return json({ request_id: requestId, ...dashboard, persistence }, 200, requestId);
+  const changeControl = user
+    ? await loadKnowledgeChangeControl({ dashboard, limit: 40 })
+    : { status: "unauthorized", warning: "登录后可查看知识版本差异、订阅提醒和行动项候选。", versionDiffs: [], subscriptionReminders: [], actionCandidates: [] };
+  return json({ request_id: requestId, ...dashboard, persistence, changeControl }, 200, requestId);
 }
 
 export async function POST(request: Request) {
@@ -44,13 +49,36 @@ export async function POST(request: Request) {
   const user = await getCurrentUser();
   if (!user) return json({ error: "UNAUTHORIZED", request_id: requestId }, 401, requestId);
 
-  const body = await request.json().catch(() => ({})) as { confirm?: boolean };
+  const body = await request.json().catch(() => ({})) as { action?: string; confirm?: boolean; reviewIds?: string[] };
   if (body.confirm !== true) {
     return json({
       error: "CONFIRM_REQUIRED",
-      warning: "同步知识生命周期持久化表前必须显式 confirm=true。",
+      warning: "执行知识生命周期写入动作前必须显式 confirm=true。",
       request_id: requestId,
     }, 400, requestId);
+  }
+
+  if (body.action === "create_action_items") {
+    const result = await createKnowledgeImpactReviewActionItems({
+      reviewIds: Array.isArray(body.reviewIds) ? body.reviewIds : undefined,
+      user,
+      requestId,
+    });
+    await writeOperationAudit({
+      user,
+      action: "knowledge_impact_review_create_action_items",
+      resourceType: "knowledge_impact_review",
+      status: result.status === "succeeded" ? "succeeded" : "failed",
+      severity: result.status === "succeeded" ? "low" : "medium",
+      summary: result.status === "succeeded"
+        ? `知识影响复核已生成 ${result.createdActions} 条统一行动项，跳过 ${result.skippedExisting} 条已存在行动项。`
+        : result.warning,
+      detail: result.status === "succeeded"
+        ? { created_actions: result.createdActions, skipped_existing: result.skippedExisting, action_item_ids: result.actionItems.map(item => item.id) }
+        : { migration: "migration" in result ? result.migration : undefined },
+      requestId,
+    });
+    return json({ request_id: requestId, ...result }, statusCode(result.status), requestId);
   }
 
   const dashboard = buildKnowledgeOperationDashboard();

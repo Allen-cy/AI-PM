@@ -2,12 +2,15 @@ import { createHash } from "node:crypto";
 import { getAuthSupabase, isAuthStorageConfigured, type AppUser } from "../auth/server.ts";
 import type {
   KnowledgeImpactModule,
+  KnowledgeImpactPriority,
   KnowledgeLifecycleAction,
   KnowledgeOperationDashboard,
   KnowledgeOperationItem,
 } from "./operations.ts";
 
 const SQL_FILE = "supabase-v5352-knowledge-lifecycle.sql";
+const ACTION_SQL_FILE = "supabase-v530-issue-change-action-chain.sql";
+const KNOWLEDGE_ACTION_SOURCE_PREFIX = "knowledge-impact-review:";
 
 export interface KnowledgeImpactReviewRecord {
   id: string;
@@ -54,6 +57,94 @@ export type KnowledgeImpactReviewTransitionResult =
   | { status: "succeeded"; review: KnowledgeImpactReviewRecord; requestId: string }
   | { status: "not_configured"; warning: string; migration: string; requestId: string }
   | { status: "not_found"; warning: string; requestId: string }
+  | { status: "failed"; warning: string; requestId: string };
+
+export type KnowledgeVersionChangeType = "新增" | "已更新" | "已删除" | "无变化";
+
+export interface KnowledgeVersionDiffRecord {
+  pageId: string;
+  title: string;
+  changeType: KnowledgeVersionChangeType;
+  priority: KnowledgeImpactPriority;
+  ownerName: string;
+  previousVersionLabel?: string | null;
+  currentVersionLabel?: string | null;
+  previousSnapshotVersion?: string | null;
+  currentSnapshotVersion?: string | null;
+  impactedModules: string[];
+  linkedTemplates: string[];
+  sourceRefs: string[];
+  dueDate: string;
+  changeSummary: string;
+  reviewOutput: string;
+}
+
+export interface KnowledgeSubscriptionReminderDraft {
+  id: string;
+  subscriberName: string;
+  moduleName: string;
+  domain?: string | null;
+  notificationChannel: "in_app" | "feishu" | "email";
+  priority: KnowledgeImpactPriority;
+  relatedPageIds: string[];
+  title: string;
+  message: string;
+  dueDate: string;
+  actionRequired: string;
+}
+
+export interface KnowledgeImpactReviewActionCandidate {
+  reviewId: string;
+  sourceId: string;
+  pageId: string;
+  title: string;
+  moduleName: string;
+  priority: "P0" | "P1";
+  status: "待复核" | "处理中";
+  ownerName: string;
+  dueDate: string;
+  reviewOutput: string;
+}
+
+export type KnowledgeChangeControlResult =
+  | {
+      status: "succeeded";
+      summary: {
+        comparedItems: number;
+        additions: number;
+        modifications: number;
+        removals: number;
+        unchanged: number;
+        activeSubscriptions: number;
+        reminderDrafts: number;
+        p0p1ActionCandidates: number;
+      };
+      versionDiffs: KnowledgeVersionDiffRecord[];
+      subscriptionReminders: KnowledgeSubscriptionReminderDraft[];
+      actionCandidates: KnowledgeImpactReviewActionCandidate[];
+    }
+  | { status: "not_configured"; warning: string; migration: string; versionDiffs: []; subscriptionReminders: []; actionCandidates: [] }
+  | { status: "failed"; warning: string; versionDiffs: []; subscriptionReminders: []; actionCandidates: [] };
+
+export interface KnowledgeUnifiedActionRecord {
+  id: string;
+  sourceId: string | null;
+  title: string;
+  owner: string | null;
+  dueDate: string | null;
+  status: string;
+  priority: KnowledgeImpactPriority;
+}
+
+export type KnowledgeImpactReviewActionCreationResult =
+  | {
+      status: "succeeded";
+      createdActions: number;
+      skippedExisting: number;
+      actionItems: KnowledgeUnifiedActionRecord[];
+      requestId: string;
+    }
+  | { status: "not_configured"; warning: string; migration: string; requestId: string }
   | { status: "failed"; warning: string; requestId: string };
 
 function isMissingTableError(message?: string): boolean {
@@ -176,6 +267,224 @@ export async function loadKnowledgeLifecyclePersistence(limit = 20): Promise<Kno
       actorName: typeof row.actor_name === "string" ? row.actor_name : null,
       createdAt: String(row.created_at || ""),
     })),
+  };
+}
+
+function isMissingActionTableError(message?: string): boolean {
+  return Boolean(
+    message?.includes("unified_action_items")
+    || message?.includes("issue_change_events")
+    || message?.includes("relation")
+    || message?.includes("does not exist"),
+  );
+}
+
+function actionNotConfigured(requestId: string) {
+  return {
+    status: "not_configured" as const,
+    warning: "Supabase 尚未创建统一行动项表，无法把知识影响复核转为行动项。",
+    migration: ACTION_SQL_FILE,
+    requestId,
+  };
+}
+
+function toStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function metadataObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function priorityForChange(item: KnowledgeOperationItem, changeType: KnowledgeVersionChangeType): KnowledgeImpactPriority {
+  if (changeType === "已删除") return "P0";
+  if (item.lifecycleHealth === "已过期" || item.impactedModules.includes("PMO治理中心")) return "P0";
+  if (changeType === "已更新" || item.lifecycleHealth === "即将过期" || item.linkedTemplates.length > 0 || item.impactedModules.length >= 3) return "P1";
+  return "P2";
+}
+
+function actionSourceId(reviewId: string): string {
+  return `${KNOWLEDGE_ACTION_SOURCE_PREFIX}${reviewId}`;
+}
+
+function mapUnifiedAction(row: Record<string, unknown>): KnowledgeUnifiedActionRecord {
+  return {
+    id: String(row.id),
+    sourceId: typeof row.source_id === "string" ? row.source_id : null,
+    title: String(row.title || ""),
+    owner: typeof row.owner === "string" ? row.owner : null,
+    dueDate: typeof row.due_date === "string" ? row.due_date : null,
+    status: String(row.status || "open"),
+    priority: String(row.priority || "P1") as KnowledgeImpactPriority,
+  };
+}
+
+export async function loadKnowledgeChangeControl(input: {
+  dashboard: KnowledgeOperationDashboard;
+  limit?: number;
+}): Promise<KnowledgeChangeControlResult> {
+  if (!hasEnvironment()) return { ...notConfigured(), versionDiffs: [], subscriptionReminders: [], actionCandidates: [] };
+  const supabase = getAuthSupabase();
+  const limit = input.limit ?? 50;
+
+  const [items, versions, subscriptions, reviews] = await Promise.all([
+    supabase
+      .from("knowledge_items")
+      .select("id,page_id,title,status,owner_name,current_version_label,lifecycle_health,domains,tags,source_refs,metadata,updated_at")
+      .order("updated_at", { ascending: false })
+      .limit(500),
+    supabase
+      .from("knowledge_item_versions")
+      .select("id,knowledge_item_id,page_id,version_label,snapshot_index_version,content_sha256,change_summary,source_refs,metadata,created_at")
+      .order("created_at", { ascending: false })
+      .limit(800),
+    supabase
+      .from("knowledge_subscriptions")
+      .select("id,subscriber_name,module_name,domain,notification_channel,status")
+      .eq("status", "active")
+      .limit(200),
+    supabase
+      .from("knowledge_impact_reviews")
+      .select("id,module_name,priority,status,owner_name,due_date,review_output,knowledge_items(page_id,title)")
+      .in("status", ["待复核", "处理中"])
+      .in("priority", ["P0", "P1"])
+      .order("due_date", { ascending: true })
+      .limit(50),
+  ]);
+
+  const firstError = items.error || versions.error || subscriptions.error || reviews.error;
+  if (firstError) {
+    return isMissingTableError(firstError.message)
+      ? { ...notConfigured(), versionDiffs: [], subscriptionReminders: [], actionCandidates: [] }
+      : { status: "failed", warning: firstError.message, versionDiffs: [], subscriptionReminders: [], actionCandidates: [] };
+  }
+
+  const persistedItems = new Map<string, Record<string, unknown>>();
+  for (const row of items.data ?? []) {
+    const record = row as Record<string, unknown>;
+    persistedItems.set(String(record.page_id || ""), record);
+  }
+
+  const latestVersionByPageId = new Map<string, Record<string, unknown>>();
+  for (const row of versions.data ?? []) {
+    const record = row as Record<string, unknown>;
+    const pageId = String(record.page_id || "");
+    if (pageId && !latestVersionByPageId.has(pageId)) latestVersionByPageId.set(pageId, record);
+  }
+
+  const currentPageIds = new Set(input.dashboard.items.map(item => item.pageId));
+  const versionDiffs: KnowledgeVersionDiffRecord[] = input.dashboard.items.map(item => {
+    const previous = latestVersionByPageId.get(item.pageId);
+    const previousHash = typeof previous?.content_sha256 === "string" ? previous.content_sha256 : null;
+    const changeType: KnowledgeVersionChangeType = !previous
+      ? "新增"
+      : previousHash !== hashItem(item)
+        ? "已更新"
+        : "无变化";
+    return {
+      pageId: item.pageId,
+      title: item.title,
+      changeType,
+      priority: priorityForChange(item, changeType),
+      ownerName: item.owner,
+      previousVersionLabel: typeof previous?.version_label === "string" ? previous.version_label : null,
+      currentVersionLabel: item.version,
+      previousSnapshotVersion: typeof previous?.snapshot_index_version === "string" ? previous.snapshot_index_version : null,
+      currentSnapshotVersion: input.dashboard.indexVersion,
+      impactedModules: item.impactedModules,
+      linkedTemplates: item.linkedTemplates,
+      sourceRefs: item.sourceRefs,
+      dueDate: item.lifecycleHealth === "已过期" ? datePlus(3) : datePlus(14),
+      changeSummary: changeType === "无变化" ? "当前快照与上一持久化版本一致。" : item.changeSummary,
+      reviewOutput: item.reviewOutput,
+    };
+  });
+
+  for (const item of persistedItems.values()) {
+    const pageId = String(item.page_id || "");
+    if (!pageId || currentPageIds.has(pageId)) continue;
+    const metadata = metadataObject(item.metadata);
+    versionDiffs.push({
+      pageId,
+      title: String(item.title || pageId),
+      changeType: "已删除",
+      priority: "P0",
+      ownerName: String(item.owner_name || "知识库管理员"),
+      previousVersionLabel: typeof item.current_version_label === "string" ? item.current_version_label : null,
+      currentVersionLabel: null,
+      previousSnapshotVersion: null,
+      currentSnapshotVersion: input.dashboard.indexVersion,
+      impactedModules: toStringArray(metadata.impacted_modules),
+      linkedTemplates: toStringArray(metadata.linked_templates),
+      sourceRefs: toStringArray(item.source_refs),
+      dueDate: datePlus(3),
+      changeSummary: "该知识条目存在于持久化表，但已不在当前 RAG 快照中，需要确认是归档、撤回还是索引缺失。",
+      reviewOutput: "确认该知识是否应归档；如果仍有效，需要补回 RAG 索引并说明原因。",
+    });
+  }
+
+  const actionableDiffs = versionDiffs
+    .filter(diff => diff.changeType !== "无变化")
+    .sort((a, b) => a.priority.localeCompare(b.priority) || a.dueDate.localeCompare(b.dueDate));
+
+  const activeSubscriptions = (subscriptions.data ?? []).map(row => row as Record<string, unknown>);
+  const subscriptionReminders = activeSubscriptions.flatMap(subscription => {
+    const moduleName = String(subscription.module_name || "");
+    const domain = typeof subscription.domain === "string" ? subscription.domain : null;
+    const channel = String(subscription.notification_channel || "in_app") as KnowledgeSubscriptionReminderDraft["notificationChannel"];
+    const matched = actionableDiffs.filter(diff => {
+      const moduleMatched = moduleName ? diff.impactedModules.includes(moduleName) || moduleName === "全部模块" : false;
+      const domainMatched = domain ? diff.sourceRefs.join(" ").includes(domain) || diff.linkedTemplates.includes(domain) : false;
+      return moduleMatched || domainMatched;
+    });
+    if (matched.length === 0) return [];
+    const topPriority = matched.some(item => item.priority === "P0") ? "P0" : matched.some(item => item.priority === "P1") ? "P1" : "P2";
+    return [{
+      id: `knowledge-subscription-reminder-${String(subscription.id)}`,
+      subscriberName: String(subscription.subscriber_name || "订阅人"),
+      moduleName,
+      domain,
+      notificationChannel: channel,
+      priority: topPriority,
+      relatedPageIds: matched.slice(0, 8).map(item => item.pageId),
+      title: `${moduleName || domain || "知识订阅"} 知识变更提醒`,
+      message: `检测到 ${matched.length} 条知识发生新增、更新或撤出，请复核相关模块输出口径。`,
+      dueDate: topPriority === "P0" ? datePlus(3) : datePlus(7),
+      actionRequired: "确认订阅模块是否需要更新报告模板、AI提示词、治理流程或业务看板说明。",
+    } satisfies KnowledgeSubscriptionReminderDraft];
+  });
+
+  const actionCandidates: KnowledgeImpactReviewActionCandidate[] = (reviews.data ?? [])
+    .map(row => mapImpactReview(row as Record<string, unknown>))
+    .filter(review => (review.priority === "P0" || review.priority === "P1") && (review.status === "待复核" || review.status === "处理中"))
+    .map(review => ({
+      reviewId: review.id,
+      sourceId: actionSourceId(review.id),
+      pageId: review.pageId,
+      title: `复核知识影响：${review.moduleName} · ${review.title || review.pageId}`,
+      moduleName: review.moduleName,
+      priority: review.priority as "P0" | "P1",
+      status: review.status as "待复核" | "处理中",
+      ownerName: review.ownerName,
+      dueDate: review.dueDate,
+      reviewOutput: review.reviewOutput,
+    }));
+
+  return {
+    status: "succeeded",
+    summary: {
+      comparedItems: versionDiffs.length,
+      additions: versionDiffs.filter(diff => diff.changeType === "新增").length,
+      modifications: versionDiffs.filter(diff => diff.changeType === "已更新").length,
+      removals: versionDiffs.filter(diff => diff.changeType === "已删除").length,
+      unchanged: versionDiffs.filter(diff => diff.changeType === "无变化").length,
+      activeSubscriptions: activeSubscriptions.length,
+      reminderDrafts: subscriptionReminders.length,
+      p0p1ActionCandidates: actionCandidates.length,
+    },
+    versionDiffs: actionableDiffs.slice(0, limit),
+    subscriptionReminders: subscriptionReminders.slice(0, limit),
+    actionCandidates: actionCandidates.slice(0, limit),
   };
 }
 
@@ -350,4 +659,119 @@ export async function transitionKnowledgeImpactReview(input: {
   });
 
   return { status: "succeeded", review: mapImpactReview(row), requestId: input.requestId };
+}
+
+export async function createKnowledgeImpactReviewActionItems(input: {
+  reviewIds?: string[];
+  user: AppUser | null;
+  requestId: string;
+  limit?: number;
+}): Promise<KnowledgeImpactReviewActionCreationResult> {
+  if (!hasEnvironment()) return actionNotConfigured(input.requestId);
+  const supabase = getAuthSupabase();
+  const requestedIds = (input.reviewIds ?? []).filter(Boolean);
+  const limit = input.limit ?? 20;
+
+  let reviewQuery = supabase
+    .from("knowledge_impact_reviews")
+    .select("id,module_name,priority,status,owner_name,due_date,review_output,knowledge_item_id,knowledge_items(page_id,title)")
+    .in("status", ["待复核", "处理中"])
+    .in("priority", ["P0", "P1"])
+    .order("due_date", { ascending: true })
+    .limit(limit);
+
+  if (requestedIds.length > 0) {
+    reviewQuery = reviewQuery.in("id", requestedIds);
+  }
+
+  const { data: reviewData, error: reviewError } = await reviewQuery;
+  if (reviewError) {
+    return isMissingTableError(reviewError.message)
+      ? { ...notConfigured(), requestId: input.requestId }
+      : { status: "failed", warning: reviewError.message, requestId: input.requestId };
+  }
+
+  const reviews = (reviewData ?? [])
+    .map(row => mapImpactReview(row as Record<string, unknown>))
+    .filter(review => review.priority === "P0" || review.priority === "P1");
+  if (reviews.length === 0) {
+    return { status: "succeeded", createdActions: 0, skippedExisting: 0, actionItems: [], requestId: input.requestId };
+  }
+
+  const sourceIds = reviews.map(review => actionSourceId(review.id));
+  const { data: existingData, error: existingError } = await supabase
+    .from("unified_action_items")
+    .select("id,source_id,title,owner,due_date,status,priority")
+    .eq("source_type", "governance")
+    .in("source_id", sourceIds);
+
+  if (existingError) {
+    return isMissingActionTableError(existingError.message)
+      ? actionNotConfigured(input.requestId)
+      : { status: "failed", warning: existingError.message, requestId: input.requestId };
+  }
+
+  const existingSourceIds = new Set((existingData ?? []).map(row => String((row as Record<string, unknown>).source_id || "")));
+  const rowsToInsert = reviews
+    .filter(review => !existingSourceIds.has(actionSourceId(review.id)))
+    .map(review => ({
+      source_type: "governance",
+      source_id: actionSourceId(review.id),
+      project_name: null,
+      title: `复核知识影响：${review.moduleName} · ${review.title || review.pageId}`,
+      owner: review.ownerName,
+      due_date: review.dueDate || datePlus(7),
+      status: "open",
+      priority: review.priority,
+      created_by: input.user?.id ?? null,
+      created_by_name: actorName(input.user),
+      metadata: {
+        source: "knowledge_lifecycle",
+        review_id: review.id,
+        page_id: review.pageId,
+        module_name: review.moduleName,
+        review_output: review.reviewOutput,
+      },
+    }));
+
+  let createdActions: KnowledgeUnifiedActionRecord[] = [];
+  if (rowsToInsert.length > 0) {
+    const { data: insertedData, error: insertError } = await supabase
+      .from("unified_action_items")
+      .insert(rowsToInsert)
+      .select("id,source_id,title,owner,due_date,status,priority");
+
+    if (insertError) {
+      return isMissingActionTableError(insertError.message)
+        ? actionNotConfigured(input.requestId)
+        : { status: "failed", warning: insertError.message, requestId: input.requestId };
+    }
+
+    createdActions = (insertedData ?? []).map(row => mapUnifiedAction(row as Record<string, unknown>));
+
+    await supabase.from("knowledge_lifecycle_events").insert(createdActions.map(action => ({
+      page_id: rowsToInsert.find(row => row.source_id === action.sourceId)?.metadata.page_id ?? "",
+      event_type: "review_submitted",
+      actor_id: input.user?.id ?? null,
+      actor_name: actorName(input.user),
+      event_status: "succeeded",
+      review_note: `知识影响复核已转为统一行动项：${action.title}`,
+      request_id: input.requestId,
+      metadata: {
+        unified_action_id: action.id,
+        source_id: action.sourceId,
+      },
+    })));
+  }
+
+  return {
+    status: "succeeded",
+    createdActions: createdActions.length,
+    skippedExisting: existingSourceIds.size,
+    actionItems: [
+      ...(existingData ?? []).map(row => mapUnifiedAction(row as Record<string, unknown>)),
+      ...createdActions,
+    ],
+    requestId: input.requestId,
+  };
 }
