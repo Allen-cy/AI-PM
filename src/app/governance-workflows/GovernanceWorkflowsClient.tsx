@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FeishuActionDraftLauncherClient } from "@/components/FeishuActionDraftLauncherClient";
 
 type Workflow = {
   id: string;
@@ -107,6 +108,17 @@ type GovernanceResponse = {
       pendingConfirmation: number;
       highSeverity: number;
     };
+  };
+  governance_writeback_confirmation?: {
+    summary: {
+      totalPackages: number;
+      confirmationRequired: number;
+      highSeverity: number;
+      projectUpdates: number;
+      riskUpdates: number;
+      reportFacts: number;
+    };
+    boundary: string;
   };
   governance_knowledge_operation?: {
     summary: {
@@ -822,6 +834,43 @@ export default function GovernanceWorkflowsClient() {
                 ))}
               </div>
             </section>
+
+            <section className="card" style={{ marginBottom: 18, borderColor: "rgba(14,165,233,0.24)" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap", marginBottom: 12 }}>
+                <div>
+                  <div className="section-title">🧾 治理反写确认包</div>
+                  <p style={{ color: "var(--text2)", lineHeight: 1.6, fontSize: "0.84rem" }}>
+                    将治理联动建议整理成可复核的确认包，明确人工输入、输出成果和飞书待确认材料，避免治理结果停留在页面展示。
+                  </p>
+                </div>
+                <a href="/api/governance/writeback-confirmations" className="btn-secondary" style={{ textDecoration: "none" }}>查看接口数据</a>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10 }}>
+                {[
+                  ["确认包", data.governance_writeback_confirmation?.summary.totalPackages ?? 0, "可复核材料"],
+                  ["需人工确认", data.governance_writeback_confirmation?.summary.confirmationRequired ?? 0, "写回前确认"],
+                  ["高优先级", data.governance_writeback_confirmation?.summary.highSeverity ?? 0, "PMO关注"],
+                  ["项目更新", data.governance_writeback_confirmation?.summary.projectUpdates ?? 0, "台账字段"],
+                  ["风险更新", data.governance_writeback_confirmation?.summary.riskUpdates ?? 0, "风险登记册"],
+                  ["报告事实", data.governance_writeback_confirmation?.summary.reportFacts ?? 0, "报告工厂"],
+                ].map(([label, value, hint]) => (
+                  <div key={label} style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 10, padding: 12 }}>
+                    <div style={{ color: "var(--text2)", fontSize: "0.74rem" }}>{label}</div>
+                    <strong>{value}</strong>
+                    <p style={{ color: "var(--text2)", fontSize: "0.72rem", marginTop: 4 }}>{hint}</p>
+                  </div>
+                ))}
+              </div>
+              <p style={{ color: "var(--text2)", fontSize: "0.76rem", lineHeight: 1.6, marginTop: 10 }}>{data.governance_writeback_confirmation?.boundary}</p>
+            </section>
+
+            <FeishuActionDraftLauncherClient
+              moduleName="治理流程"
+              sourcePage="/governance-workflows"
+              defaultTitle="治理流程反写确认纪要"
+              defaultSummary="请复核治理流程输出、项目台账/风险登记册写回建议、责任人和deadline，确认后再执行飞书写入。"
+              defaultBullets={["治理流程输出摘要", "项目/风险写回字段", "责任人与deadline", "报告工厂可引用事实"]}
+            />
 
             <section className="card" style={{ marginBottom: 18 }}>
               <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap", marginBottom: 12 }}>

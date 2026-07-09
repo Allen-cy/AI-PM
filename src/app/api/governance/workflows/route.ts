@@ -2,6 +2,7 @@ import { getCurrentUser } from "@/features/auth/server";
 import { syncGovernanceEventToFeishu } from "@/features/governance/feishu-sync";
 import { buildGovernanceImpactDashboard, buildGovernanceImpactPackage } from "@/features/governance/impact";
 import { listGovernanceStrategyCatalog } from "@/features/governance/strategy";
+import { buildGovernanceWritebackConfirmationPackage } from "@/features/governance/writeback-confirmation";
 import {
   createGovernanceInstance,
   listGovernanceInstances,
@@ -33,6 +34,7 @@ export async function GET(): Promise<Response> {
   const operationHistory = await listRiskRetrospectiveGovernanceOperationHistory({ snapshotLimit: 8, reminderLimit: 80 });
   const governance_workbench = buildGovernanceSlaDashboard(result.instances, user);
   const governance_impact = buildGovernanceImpactDashboard(result.instances);
+  const governance_writeback_confirmation = buildGovernanceWritebackConfirmationPackage(governance_impact);
   const governance_strategy = listGovernanceStrategyCatalog();
   const governance_knowledge_operation = buildRiskRetrospectiveGovernanceOperationHistorySummary({
     snapshots: operationHistory.snapshots,
@@ -49,6 +51,7 @@ export async function GET(): Promise<Response> {
     instances: result.instances.map(instance => ({ ...instance, sla: deriveGovernanceSla(instance), businessImpact: buildGovernanceImpactPackage({ instance }) })),
     governance_workbench,
     governance_impact,
+    governance_writeback_confirmation,
     governance_strategy,
     governance_knowledge_operation: {
       ...governance_knowledge_operation,

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { FeishuActionDraftLauncherClient } from "@/components/FeishuActionDraftLauncherClient";
 import {
   buildMigrationBatchComparison,
   type MigrationBatchComparison,
@@ -28,6 +29,7 @@ import {
   migrationStages,
   type MigrationAreaId,
 } from "@/features/migration/readiness";
+import { buildMigrationScaleReadinessDashboard } from "@/features/migration/scale-readiness";
 
 const levelColor = {
   "not-ready": "var(--red)",
@@ -162,6 +164,16 @@ export default function MigrationCenterPage() {
       manualChecks: manualCutoverChecks,
     }),
     [objectName, result, selectedAreaIds, batchComparison, selectedMappingProfile, persistedActions, manualCutoverChecks],
+  );
+  const scaleReadiness = useMemo(
+    () => buildMigrationScaleReadinessDashboard({
+      objectName,
+      batchComparison,
+      cutoverDecisionPackage,
+      fieldMappingProfiles: mappingProfiles,
+      remediationActions: persistedActions,
+    }),
+    [objectName, batchComparison, cutoverDecisionPackage, mappingProfiles, persistedActions],
   );
 
   useEffect(() => {
@@ -654,6 +666,58 @@ export default function MigrationCenterPage() {
             </div>
           </div>
         </section>
+
+        <section className="card" style={{ marginBottom: 18, borderColor: scaleReadiness.summary.blockers > 0 ? "rgba(239,68,68,0.32)" : "rgba(16,185,129,0.26)" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap", marginBottom: 12 }}>
+            <div>
+              <div className="section-title">🚚 迁移规模化准备度</div>
+              <p style={{ color: "var(--text2)", lineHeight: 1.6, fontSize: "0.84rem" }}>
+                把字段映射、试迁移批次、整改闭环、飞书同步和 Go/No-Go 决策合成一张规模化迁移门禁表，避免只完成单次样例导入。
+              </p>
+            </div>
+            <span className={scaleReadiness.readinessLevel === "scale_ready" ? "tag tag-green" : scaleReadiness.readinessLevel === "blocked" ? "tag tag-red" : "tag tag-amber"}>
+              {scaleReadiness.readinessLabel}
+            </span>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(135px, 1fr))", gap: 10, marginBottom: 12 }}>
+            {[
+              ["批次", scaleReadiness.summary.batchCount],
+              ["最新覆盖率", `${scaleReadiness.summary.latestCoverageRate}%`],
+              ["高优先级问题", scaleReadiness.summary.latestHighIssues],
+              ["整改关闭率", `${scaleReadiness.summary.remediationClosureRate}%`],
+              ["未关闭整改", scaleReadiness.summary.openRemediation],
+              ["字段方案", scaleReadiness.summary.fieldMappingProfiles],
+              ["飞书同步", scaleReadiness.summary.feishuSyncedActions],
+              ["阻断/待补充", `${scaleReadiness.summary.blockers}/${scaleReadiness.summary.warnings}`],
+            ].map(([label, value]) => (
+              <div key={label} style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 10, padding: 12 }}>
+                <div style={{ color: "var(--text2)", fontSize: "0.74rem" }}>{label}</div>
+                <strong>{value}</strong>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 10 }}>
+            {scaleReadiness.gates.map(gate => (
+              <article key={gate.id} style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 10, padding: 12 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+                  <strong style={{ fontSize: "0.84rem" }}>{gate.title}</strong>
+                  <span className={gate.status === "通过" ? "tag tag-green" : gate.status === "待补充" ? "tag tag-amber" : "tag tag-red"}>{gate.status}</span>
+                </div>
+                <p style={{ color: "var(--text2)", lineHeight: 1.55, fontSize: "0.76rem", marginTop: 6 }}>{gate.owner} · {gate.evidence}</p>
+                <p style={{ color: "var(--accent2)", lineHeight: 1.55, fontSize: "0.76rem", marginTop: 6 }}>{gate.nextAction}</p>
+              </article>
+            ))}
+          </div>
+          <p style={{ color: "var(--text2)", fontSize: "0.76rem", lineHeight: 1.6, marginTop: 10 }}>{scaleReadiness.boundary}</p>
+        </section>
+
+        <FeishuActionDraftLauncherClient
+          moduleName="迁移与数据接入"
+          sourcePage="/migration-center"
+          defaultTitle={`${objectName}迁移评审确认纪要`}
+          defaultSummary="请复核字段映射、试迁移趋势、整改关闭率、飞书同步证据和正式切换 Go/No-Go 结论，确认后再执行飞书写入。"
+          defaultBullets={scaleReadiness.reportFacts}
+        />
 
         <section className="card" style={{ marginBottom: 18 }}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", marginBottom: 14 }}>

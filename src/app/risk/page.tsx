@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { FeishuActionDraftLauncherClient } from "@/components/FeishuActionDraftLauncherClient";
 import { FeishuConfirmationInlinePanelClient } from "@/components/FeishuConfirmationInlinePanelClient";
 import { IntegrationStatusPanelClient } from "@/components/IntegrationStatusPanelClient";
 import type { AiEvidence, AiSuggestedAction } from "@/features/ai/evidence";
@@ -119,6 +120,37 @@ type RiskIntegration = {
     writebackMode: string;
   }>;
   reportFacts: string[];
+  boundary: string;
+};
+
+type RiskOrganizationalGovernance = {
+  summary: {
+    totalRisks: number;
+    openRisks: number;
+    highRisks: number;
+    overdueRisks: number;
+    missingOwnerOrDeadline: number;
+    governanceEscalations: number;
+    evidenceGaps: number;
+    reportFacts: number;
+  };
+  ownerStats: Array<{
+    owner: string;
+    openRisks: number;
+    highRisks: number;
+    overdueRisks: number;
+    missingEvidence: number;
+    governanceEscalations: number;
+  }>;
+  rules: Array<{
+    id: string;
+    title: string;
+    status: "通过" | "待补充" | "阻断";
+    owner: string;
+    evidence: string;
+    nextAction: string;
+  }>;
+  nextActions: string[];
   boundary: string;
 };
 
@@ -422,6 +454,7 @@ export default function RiskPage() {
   const [loadingFeishu, setLoadingFeishu] = useState(false);
   const [lastRiskEvidence, setLastRiskEvidence] = useState<AiEvidence | null>(null);
   const [riskIntegration, setRiskIntegration] = useState<RiskIntegration | null>(null);
+  const [riskOrganizationalGovernance, setRiskOrganizationalGovernance] = useState<RiskOrganizationalGovernance | null>(null);
   const [riskEscalation, setRiskEscalation] = useState<RiskEscalationDraftDashboard | null>(null);
   const [riskClosure, setRiskClosure] = useState<RiskClosureDashboard | null>(null);
   const [riskRetrospective, setRiskRetrospective] = useState<RiskRetrospectiveDashboard | null>(null);
@@ -487,8 +520,9 @@ export default function RiskPage() {
         const response = await fetch("/api/risk", { cache: "no-store" });
         const data = await response.json() as { risks?: Risk[]; events?: RiskWorkflowEvent[]; warning?: string; error?: string; migrationHint?: string };
         if (!response.ok) throw new Error([data.error, data.migrationHint].filter(Boolean).join("；") || "风险登记册读取失败");
-        const [integrationResponse, escalationResponse, closureResponse, retrospectiveResponse, retrospectiveAssetsResponse, retrospectiveRecommendationsResponse, retrospectiveExportResponse, retrospectiveQualityResponse, retrospectiveGovernanceResponse, retrospectiveFollowupsResponse, retrospectiveOperationHistoryResponse] = await Promise.all([
+        const [integrationResponse, organizationalGovernanceResponse, escalationResponse, closureResponse, retrospectiveResponse, retrospectiveAssetsResponse, retrospectiveRecommendationsResponse, retrospectiveExportResponse, retrospectiveQualityResponse, retrospectiveGovernanceResponse, retrospectiveFollowupsResponse, retrospectiveOperationHistoryResponse] = await Promise.all([
           fetch("/api/risk/integration", { cache: "no-store" }),
+          fetch("/api/risk/organizational-governance", { cache: "no-store" }),
           fetch("/api/risk/escalation-drafts", { cache: "no-store" }),
           fetch("/api/risk/closure", { cache: "no-store" }),
           fetch("/api/risk/retrospective", { cache: "no-store" }),
@@ -501,6 +535,7 @@ export default function RiskPage() {
           fetch("/api/risk/retrospective/assets/governance/followups/operation-history", { cache: "no-store" }),
         ]);
         const integrationData = await integrationResponse.json().catch(() => ({})) as { risk_integration?: RiskIntegration };
+        const organizationalGovernanceData = await organizationalGovernanceResponse.json().catch(() => ({})) as { risk_organizational_governance?: RiskOrganizationalGovernance };
         const escalationData = await escalationResponse.json().catch(() => ({})) as { risk_escalation?: RiskEscalationDraftDashboard };
         const closureData = await closureResponse.json().catch(() => ({})) as { risk_closure?: RiskClosureDashboard };
         const retrospectiveData = await retrospectiveResponse.json().catch(() => ({})) as { risk_retrospective?: RiskRetrospectiveDashboard };
@@ -527,6 +562,7 @@ export default function RiskPage() {
         setRisks(Array.isArray(data.risks) ? data.risks : []);
         setWorkflowEvents(Array.isArray(data.events) ? data.events : []);
         setRiskIntegration(integrationData.risk_integration ?? null);
+        setRiskOrganizationalGovernance(organizationalGovernanceData.risk_organizational_governance ?? null);
         setRiskEscalation(escalationData.risk_escalation ?? null);
         setRiskClosure(closureData.risk_closure ?? null);
         setRiskRetrospective(retrospectiveData.risk_retrospective ?? null);
@@ -1523,6 +1559,54 @@ export default function RiskPage() {
       <main style={{ flex: 1, padding: "32px", maxWidth: 1440, margin: "0 auto", width: "100%" }}>
         <IntegrationStatusPanelClient moduleName="风险管理" />
         <FeishuConfirmationInlinePanelClient moduleName="风险管理" />
+        {riskOrganizationalGovernance && (
+          <section className="card" style={{ marginBottom: 18, borderColor: "rgba(245,158,11,0.32)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap", marginBottom: 12 }}>
+              <div>
+                <div className="section-title">🏢 组织级风险治理</div>
+                <p style={{ color: "var(--text2)", lineHeight: 1.6, fontSize: "0.84rem" }}>
+                  汇总开放风险、逾期、证据缺口、责任人压力和治理升级候选，让风险管理从单条登记册升级为 PMO 组织级闭环。
+                </p>
+              </div>
+              <a href="/api/risk/organizational-governance" className="btn-secondary" style={{ textDecoration: "none" }}>查看接口数据</a>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(135px, 1fr))", gap: 10, marginBottom: 12 }}>
+              {[
+                ["开放风险", riskOrganizationalGovernance.summary.openRisks],
+                ["高风险", riskOrganizationalGovernance.summary.highRisks],
+                ["逾期", riskOrganizationalGovernance.summary.overdueRisks],
+                ["责任/期限缺口", riskOrganizationalGovernance.summary.missingOwnerOrDeadline],
+                ["治理升级", riskOrganizationalGovernance.summary.governanceEscalations],
+                ["证据缺口", riskOrganizationalGovernance.summary.evidenceGaps],
+              ].map(([label, value]) => (
+                <div key={label} style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 10, padding: 12 }}>
+                  <div style={{ color: "var(--text2)", fontSize: "0.74rem" }}>{label}</div>
+                  <strong style={{ fontSize: "1.05rem" }}>{value}</strong>
+                </div>
+              ))}
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 10 }}>
+              {riskOrganizationalGovernance.rules.map(rule => (
+                <div key={rule.id} style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 10, padding: 12 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+                    <strong style={{ fontSize: "0.84rem" }}>{rule.title}</strong>
+                    <span className={rule.status === "通过" ? "tag tag-green" : rule.status === "待补充" ? "tag tag-amber" : "tag tag-red"}>{rule.status}</span>
+                  </div>
+                  <p style={{ color: "var(--text2)", lineHeight: 1.55, fontSize: "0.76rem", marginTop: 6 }}>{rule.owner} · {rule.evidence}</p>
+                  <p style={{ color: "var(--accent2)", lineHeight: 1.55, fontSize: "0.76rem", marginTop: 6 }}>下一步：{rule.nextAction}</p>
+                </div>
+              ))}
+            </div>
+            <p style={{ color: "var(--text2)", fontSize: "0.76rem", lineHeight: 1.6, marginTop: 10 }}>{riskOrganizationalGovernance.boundary}</p>
+          </section>
+        )}
+        <FeishuActionDraftLauncherClient
+          moduleName="风险管理"
+          sourcePage="/risk"
+          defaultTitle="风险治理确认纪要"
+          defaultSummary="请复核高风险、逾期风险、证据缺口、治理升级候选和责任人deadline，确认后再执行飞书写入。"
+          defaultBullets={["高风险与逾期风险清单", "责任人和deadline", "应对进展与关闭证据", "治理升级或报告工厂事实"]}
+        />
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 16, marginBottom: 24 }}>
           <StatCard label="风险总数" value={classified.total} sub="登记册总量" />

@@ -67,6 +67,10 @@ npm run build
 - 飞书端已建立8张业务表；公开项目记录API会等用户登录和授权模型完成后再开放。
 - 全仓历史 ESLint 基线仍有旧问题；V4新增/改动文件执行独立零错误门禁。
 
+## AI-PMO System V5.3.60
+
+V5.3.60 将前一阶段剩余的“深层闭环”补齐为可验收入口：P16 新增 `/api/knowledge/deep-references` 和知识运营页“深层输出引用链”，把治理、风险、规划、迁移、飞书确认和报告输出统一纳入 `knowledge_output_references` 候选与人工确认写入；P13 新增治理反写确认包，治理流程结果不会静默写回业务表，而是生成可确认的飞书待办文档；P14 新增组织级风险治理视图，将风险责任人、deadline、证据缺口、升级规则和报告事实聚合到风险管理页；P12 新增迁移规模化准备度，把字段映射、试迁移批次、整改行动项和 Go/No-Go 决策合并为生产迁移门禁；P15-T3 新增通用业务表单飞书确认入口，治理、风险和迁移页面可直接创建待确认飞书记录。本版本不新增 SQL，继续依赖已存在的 `supabase-v5355-v5358-knowledge-reference-template-audit.sql`、`supabase-v5349-feishu-action-confirmations.sql` 和迁移中心历史 SQL。
+
 ## AI-PMO System V5.3.59
 
 V5.3.59 将 P15-T3 飞书写入确认队列补齐到“生产可控的批量处理体验”：`GET /api/integrations/feishu/actions/confirmations` 会为每条待确认写入返回 `riskReview`，并返回队列 `summary`、高风险/逾期待处理/二次确认统计和提醒草稿；新增 `POST /api/integrations/feishu/actions/confirmations/batch-review`，用于批量确认前只读风险复核，不执行飞书写入；`/confirm` 对高风险、逾期或失败重试记录要求传入 `riskAcknowledged=true` 后才允许执行。集成中心新增批量确认、批量确认前复核、风险清单和待处理提醒草稿；项目组合看板、风险管理、PMO治理中心、报告工厂、PM/PMO每日工作台、知识库问答新增“飞书写入确认提醒”内联入口。本版本不新增 SQL，继续依赖 `supabase-v5349-feishu-action-confirmations.sql`。

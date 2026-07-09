@@ -27,6 +27,7 @@ import {
   validateFeishuActionBody,
 } from '../src/features/feishu/action-payload.ts';
 import { buildKnowledgeOperationDashboard } from '../src/features/knowledge/operations.ts';
+import { buildDeepKnowledgeReferencePlan } from '../src/features/knowledge/deep-output-references.ts';
 import {
   buildFeishuConfirmationBatchRiskReview,
   buildFeishuConfirmationQueueSummary,
@@ -70,6 +71,7 @@ import {
   buildGovernanceImpactDashboard,
   buildGovernanceImpactPackage,
 } from '../src/features/governance/impact.ts';
+import { buildGovernanceWritebackConfirmationPackage } from '../src/features/governance/writeback-confirmation.ts';
 import {
   evaluateGovernanceStrategy,
   GOVERNANCE_STRATEGY_VERSION,
@@ -90,6 +92,7 @@ import {
 import { buildFinanceCockpit } from '../src/features/finance/cockpit.ts';
 import { buildRiskEscalationDraftDashboard } from '../src/features/risk/escalation.ts';
 import { buildRiskIntegrationDashboard } from '../src/features/risk/integration.ts';
+import { buildRiskOrganizationalGovernanceDashboard } from '../src/features/risk/organizational-governance.ts';
 import { buildRiskSensitivityImpactDashboard } from '../src/features/risk/sensitivity-impact.ts';
 import {
   buildRiskClosureDashboard,
@@ -155,11 +158,13 @@ import {
   buildMigrationCutoverDecisionReport,
   defaultMigrationCutoverManualChecks,
 } from '../src/features/migration/cutover-decision.ts';
+import { buildMigrationScaleReadinessDashboard } from '../src/features/migration/scale-readiness.ts';
 import { POST as analyzeMigrationPackage } from '../src/app/api/migration/analyze/route.ts';
 import { POST as downloadMigrationBatchComparisonReport } from '../src/app/api/migration/batch-comparison/report/route.ts';
 import { POST as downloadMigrationCutoverDecisionReport } from '../src/app/api/migration/cutover-decision/report/route.ts';
 import { POST as downloadMigrationReport } from '../src/app/api/migration/report/route.ts';
 import { GET as downloadMigrationTemplate } from '../src/app/api/migration/template/route.ts';
+import { initialRisks } from '../src/lib/risk.ts';
 import type { Risk } from '../src/lib/risk.ts';
 import type { DashboardData } from '../src/features/dashboard/types.ts';
 
@@ -3598,4 +3603,203 @@ test('issue change chain report includes issues changes actions and audit trail'
   assert.match(markdown, /调整资源投入/);
   assert.match(markdown, /同步资源调整计划/);
   assert.match(markdown, /analyzing → change-required/);
+});
+
+test('v5.3.60 deep knowledge references cover governance risk planning migration feishu and reports', () => {
+  const dashboard = buildKnowledgeOperationDashboard(new Date('2026-07-09T00:00:00.000Z'));
+  const plan = buildDeepKnowledgeReferencePlan(dashboard, new Date('2026-07-09T00:00:00.000Z'));
+  const knowledgePageSource = readFileSync(new URL('../src/app/knowledge/operations/page.tsx', import.meta.url), 'utf8');
+  const deepRouteSource = readFileSync(new URL('../src/app/api/knowledge/deep-references/route.ts', import.meta.url), 'utf8');
+
+  assert.equal(plan.summary.candidates >= 6, true);
+  assert.equal(plan.candidates.some(item => item.source === 'governance_workflow' && item.outputType === 'governance'), true);
+  assert.equal(plan.candidates.some(item => item.source === 'risk_management' && item.outputType === 'risk'), true);
+  assert.equal(plan.candidates.some(item => item.source === 'planning_workflow'), true);
+  assert.equal(plan.candidates.some(item => item.source === 'migration_cutover'), true);
+  assert.equal(plan.candidates.some(item => item.source === 'feishu_confirmation'), true);
+  assert.equal(plan.candidates.every(item => item.pageId && item.citationText.includes('深层输出')), true);
+  assert.match(knowledgePageSource, /KnowledgeDeepReferenceClient/);
+  assert.match(deepRouteSource, /persistDeepKnowledgeOutputReferences/);
+});
+
+test('v5.3.60 governance writeback confirmation package creates confirmable Feishu document payloads', () => {
+  const impact = buildGovernanceImpactDashboard([{
+    id: 'gov-v5360-1',
+    workflowId: 'stage-gate-review',
+    workflowName: '阶段门评审',
+    stage: '执行',
+    projectName: '治理反写项目',
+    title: '阶段门有条件通过',
+    triggerSummary: '阶段门评审',
+    inputSummary: '阶段成果和整改项',
+    outputSummary: '有条件通过',
+    owner: '项目经理',
+    approver: 'PMO',
+    state: '有条件通过',
+    priority: 'high',
+    deadline: '2026-07-10',
+    createdByName: 'PMO',
+    updatedAt: '2026-07-09T00:00:00.000Z',
+  } as never]);
+  const pack = buildGovernanceWritebackConfirmationPackage(impact, new Date('2026-07-09T00:00:00.000Z'));
+  const routeSource = readFileSync(new URL('../src/app/api/governance/writeback-confirmations/route.ts', import.meta.url), 'utf8');
+  const pageSource = readFileSync(new URL('../src/app/governance-workflows/GovernanceWorkflowsClient.tsx', import.meta.url), 'utf8');
+
+  assert.equal(pack.summary.confirmationRequired, 1);
+  assert.equal(pack.summary.projectUpdates >= 1, true);
+  assert.equal(pack.items[0].feishuDocumentPayload.type, 'document');
+  assert.equal(Array.isArray(pack.items[0].feishuDocumentPayload.bullets), true);
+  assert.match(routeSource, /createFeishuActionConfirmation/);
+  assert.match(pageSource, /治理反写确认包/);
+  assert.match(pageSource, /FeishuActionDraftLauncherClient/);
+});
+
+test('v5.3.60 risk organizational governance summarizes owner gaps escalation and report facts', () => {
+  const integration = buildRiskIntegrationDashboard({ risks: initialRisks, dashboard: null });
+  const governance = buildRiskOrganizationalGovernanceDashboard({
+    risks: initialRisks,
+    integration,
+    now: new Date('2026-07-09T00:00:00.000Z'),
+  });
+  const routeSource = readFileSync(new URL('../src/app/api/risk/organizational-governance/route.ts', import.meta.url), 'utf8');
+  const riskPageSource = readFileSync(new URL('../src/app/risk/page.tsx', import.meta.url), 'utf8');
+
+  assert.equal(governance.summary.totalRisks, initialRisks.length);
+  assert.equal(governance.rules.some(rule => rule.id === 'risk-owner-deadline'), true);
+  assert.equal(governance.rules.some(rule => rule.id === 'risk-report-linkage'), true);
+  assert.equal(governance.reportFacts.length > 0, true);
+  assert.match(governance.boundary, /不会自动关闭风险/);
+  assert.match(routeSource, /buildRiskOrganizationalGovernanceDashboard/);
+  assert.match(riskPageSource, /组织级风险治理/);
+});
+
+test('v5.3.60 migration scale readiness combines batches mapping remediation and cutover gates', () => {
+  const batches = [
+    {
+      id: 'scale-batch-1',
+      batchName: '项目台账第一轮',
+      objectName: '项目台账',
+      fileName: 'round1.csv',
+      totalRows: 20,
+      fieldCoverageRate: 90,
+      missingRequiredFields: 1,
+      qualityIssueCount: 4,
+      highIssueCount: 1,
+      canTrialImport: false,
+      analysis: {} as never,
+      nextActions: [],
+      createdByName: 'PMO',
+      createdAt: '2026-07-07T00:00:00.000Z',
+      updatedAt: '2026-07-07T00:00:00.000Z',
+    },
+    {
+      id: 'scale-batch-2',
+      batchName: '项目台账第二轮',
+      objectName: '项目台账',
+      fileName: 'round2.csv',
+      totalRows: 20,
+      fieldCoverageRate: 100,
+      missingRequiredFields: 0,
+      qualityIssueCount: 0,
+      highIssueCount: 0,
+      canTrialImport: true,
+      analysis: {} as never,
+      nextActions: [],
+      createdByName: 'PMO',
+      createdAt: '2026-07-08T00:00:00.000Z',
+      updatedAt: '2026-07-08T00:00:00.000Z',
+    },
+  ];
+  const actions = [{
+    id: 'scale-action-1',
+    batchId: 'scale-batch-2',
+    batchName: '项目台账第二轮',
+    objectName: '项目台账',
+    title: '关闭字段问题',
+    priority: 'P1',
+    ownerRole: '项目经理',
+    dueDate: '2026-07-09',
+    status: '已关闭',
+    sourceIssue: '字段缺失',
+    sampleRefs: [],
+    recommendation: '补齐字段',
+    acceptanceCriteria: '重新上传样本',
+    actionKey: 'scale-action-1',
+    ownerName: '项目经理',
+    closureNote: '已复检',
+    reviewResult: '通过',
+    feishuSyncStatus: '已同步',
+    feishuTaskGuid: null,
+    feishuTaskUrl: null,
+    feishuSyncError: null,
+    feishuSyncedAt: '2026-07-09T00:00:00.000Z',
+    feishuSyncRequestId: 'req-scale',
+    createdByName: 'PMO',
+    createdAt: '2026-07-08T00:00:00.000Z',
+    updatedAt: '2026-07-09T00:00:00.000Z',
+    closedAt: '2026-07-09T00:00:00.000Z',
+  }] as never;
+  const comparison = buildMigrationBatchComparison({
+    objectName: '项目台账',
+    batches,
+    remediationActions: actions,
+    now: new Date('2026-07-09T00:00:00.000Z'),
+  });
+  const manualChecks = Object.fromEntries(Object.keys(defaultMigrationCutoverManualChecks).map(key => [key, true])) as typeof defaultMigrationCutoverManualChecks;
+  const cutover = buildMigrationCutoverDecision({
+    objectName: '项目台账',
+    readinessResult: assessMigrationReadiness(migrationReadinessAreas.map(area => area.id)),
+    selectedAreaIds: migrationReadinessAreas.map(area => area.id),
+    batchComparison: comparison,
+    fieldMappingProfile: {
+      id: 'scale-profile',
+      profileName: '项目台账冻结字段映射',
+      objectName: '项目台账',
+      mappings: [],
+      sourceFields: ['项目编号', '项目名称'],
+      requiredFields: ['项目编号', '项目名称'],
+      fieldCoverageRate: 100,
+      matchedFieldCount: 2,
+      missingFieldCount: 0,
+      notes: null,
+      createdByName: 'PMO',
+      createdAt: '2026-07-08T00:00:00.000Z',
+      updatedAt: '2026-07-08T00:00:00.000Z',
+    },
+    remediationActions: actions,
+    manualChecks,
+    now: new Date('2026-07-09T00:00:00.000Z'),
+  });
+  const scale = buildMigrationScaleReadinessDashboard({
+    objectName: '项目台账',
+    batchComparison: comparison,
+    cutoverDecisionPackage: cutover,
+    fieldMappingProfiles: [cutover as never].map(() => ({
+      id: 'scale-profile',
+      profileName: '项目台账冻结字段映射',
+      objectName: '项目台账',
+      mappings: [],
+      sourceFields: ['项目编号', '项目名称'],
+      requiredFields: ['项目编号', '项目名称'],
+      fieldCoverageRate: 100,
+      matchedFieldCount: 2,
+      missingFieldCount: 0,
+      notes: null,
+      createdByName: 'PMO',
+      createdAt: '2026-07-08T00:00:00.000Z',
+      updatedAt: '2026-07-08T00:00:00.000Z',
+    })),
+    remediationActions: actions,
+    now: new Date('2026-07-09T00:00:00.000Z'),
+  });
+  const routeSource = readFileSync(new URL('../src/app/api/migration/scale-readiness/route.ts', import.meta.url), 'utf8');
+  const pageSource = readFileSync(new URL('../src/app/migration-center/page.tsx', import.meta.url), 'utf8');
+
+  assert.equal(scale.readinessLevel, 'scale_ready');
+  assert.equal(scale.summary.batchCount, 2);
+  assert.equal(scale.gates.every(gate => gate.status === '通过'), true);
+  assert.match(scale.boundary, /不会直接导入全量数据/);
+  assert.match(routeSource, /buildMigrationScaleReadinessDashboard/);
+  assert.match(pageSource, /迁移规模化准备度/);
+  assert.match(pageSource, /FeishuActionDraftLauncherClient/);
 });

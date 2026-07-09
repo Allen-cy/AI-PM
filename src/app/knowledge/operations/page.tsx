@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { KnowledgeDeepReferenceClient } from "@/components/KnowledgeDeepReferenceClient";
 import { KnowledgeGovernanceOperationsClient } from "@/components/KnowledgeGovernanceOperationsClient";
 import { KnowledgeLifecyclePersistenceClient } from "@/components/KnowledgeLifecyclePersistenceClient";
 import { KnowledgeReferenceAuditClient } from "@/components/KnowledgeReferenceAuditClient";
@@ -62,6 +63,7 @@ export default function KnowledgeOperationsPage() {
 
         <KnowledgeLifecyclePersistenceClient />
         <KnowledgeGovernanceOperationsClient />
+        <KnowledgeDeepReferenceClient />
         <KnowledgeReferenceAuditClient />
 
         <section className="card" style={{ marginBottom: 18, borderColor: "rgba(59,130,246,0.25)" }}>
