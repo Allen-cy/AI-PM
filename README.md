@@ -67,6 +67,10 @@ npm run build
 - 飞书端已建立8张业务表；公开项目记录API会等用户登录和授权模型完成后再开放。
 - 全仓历史 ESLint 基线仍有旧问题；V4新增/改动文件执行独立零错误门禁。
 
+## AI-PMO System V5.3.59
+
+V5.3.59 将 P15-T3 飞书写入确认队列补齐到“生产可控的批量处理体验”：`GET /api/integrations/feishu/actions/confirmations` 会为每条待确认写入返回 `riskReview`，并返回队列 `summary`、高风险/逾期待处理/二次确认统计和提醒草稿；新增 `POST /api/integrations/feishu/actions/confirmations/batch-review`，用于批量确认前只读风险复核，不执行飞书写入；`/confirm` 对高风险、逾期或失败重试记录要求传入 `riskAcknowledged=true` 后才允许执行。集成中心新增批量确认、批量确认前复核、风险清单和待处理提醒草稿；项目组合看板、风险管理、PMO治理中心、报告工厂、PM/PMO每日工作台、知识库问答新增“飞书写入确认提醒”内联入口。本版本不新增 SQL，继续依赖 `supabase-v5349-feishu-action-confirmations.sql`。
+
 ## AI-PMO System V5.3.58
 
 V5.3.58 将 P16 知识运营补齐为“可下载审计包”：新增 `/api/knowledge/change-reports/[id]/download` 与 `/api/knowledge/audit-packages/[id]/download`，知识变更报告和 PMO 知识运营审计包均可下载 Markdown 归档。`POST /api/knowledge/operations` 新增 `generate_knowledge_audit_package`，会汇总知识版本引用链、模板/最佳实践目录、模板使用事件、订阅投递回执和知识变更报告，保存到 `knowledge_audit_packages`，并写入生命周期事件和操作审计。`/knowledge/operations` 新增“PMO知识运营审计包预览/生成/下载”区域。
