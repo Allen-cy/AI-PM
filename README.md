@@ -67,6 +67,10 @@ npm run build
 - 飞书端已建立8张业务表；公开项目记录API会等用户登录和授权模型完成后再开放。
 - 全仓历史 ESLint 基线仍有旧问题；V4新增/改动文件执行独立零错误门禁。
 
+## AI-PMO System V5.3.52
+
+V5.3.52 将 V5.3.51 的运行时知识运营视图推进到 Supabase 持久化第一版：新增 `supabase-v5352-knowledge-lifecycle.sql`，创建 `knowledge_items`、`knowledge_item_versions`、`knowledge_lifecycle_events`、`knowledge_impact_reviews`、`knowledge_subscriptions` 五张表，用于保存知识条目、版本摘要、生命周期事件、影响模块复核和订阅关系；新增 `src/features/knowledge/lifecycle-repository.ts`，支持把当前 RAG 快照同步到知识生命周期表，并关闭/标记无需处理影响复核；`GET /api/knowledge/operations` 返回持久化状态，`POST /api/knowledge/operations` 在 `confirm=true` 后同步当前快照，`PATCH /api/knowledge/operations` 更新影响复核状态；`/knowledge/operations` 页面新增“知识生命周期持久化”面板，可提示 SQL 未执行、同步当前快照、填写复核结论并关闭影响复核。本版本需要在 Supabase SQL Editor 执行 `supabase-v5352-knowledge-lifecycle.sql` 后启用持久化能力；未执行时页面仍保留运行时知识运营视图。
+
 ## AI-PMO System V5.3.51
 
 V5.3.51 启动 P16 知识运营：新增 `src/features/knowledge/operations.ts`，基于现有 RAG 快照和模板目录生成知识生命周期运营看板，包含知识状态统计、责任人、版本、有效期、过期/复核健康状态、影响模块、关联模板和候选复核动作；新增 `GET /api/knowledge/operations` 对外输出同一结构；新增 `/knowledge/operations` 子页面“知识生命周期运营”，从知识问答页提供入口，可查看知识变更影响到的 PMO治理中心、风险管理、报告工厂、模板中心等模块。本版本不新增 SQL，当前为运行时派生视图，不会自动修改知识条目、模板或业务数据。
