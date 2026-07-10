@@ -150,9 +150,8 @@ export async function listBusinessRoleAssignments(userId: string): Promise<Persi
   if (!isAuthStorageConfigured()) return { status: "not_configured", warning: "AUTH_STORAGE_NOT_CONFIGURED" };
   const { data, error } = await getAuthSupabase()
     .from("user_business_roles")
-    .select("id,user_id,business_role,org_id,subject_scope,subject_id,status,valid_from,valid_until,delegated_from_user_id")
-    .eq("user_id", userId)
-    .order("updated_at", { ascending: false });
+    .select("*")
+    .eq("user_id", userId);
   if (error) {
     return {
       status: missing(error.message) ? "not_configured" : "failed",
