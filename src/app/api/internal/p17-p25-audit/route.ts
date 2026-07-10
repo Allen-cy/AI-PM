@@ -147,6 +147,74 @@ async function checkFeishu() {
   };
 }
 
+async function checkLoginRoundtrip(request: Request) {
+  const account = process.env.ADMIN_PHONE || process.env.ADMIN_EMAIL || "";
+  const password = process.env.ADMIN_PASSWORD || "";
+  if (!account || !password) {
+    return {
+      ok: false,
+      loginStatus: 0,
+      hasCookie: false,
+      meStatus: 0,
+      meCode: "ADMIN_ENV_MISSING",
+      endpointStatuses: [] as Array<{ endpoint: string; status: number; code: string | null }>,
+    };
+  }
+
+  const origin = new URL(request.url).origin;
+  const login = await fetch(`${origin}/api/auth/login`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ account, password }),
+  });
+  const cookie = login.headers.get("set-cookie")?.split(";")[0] || "";
+  let meStatus = 0;
+  let meCode: string | null = null;
+  const endpointStatuses: Array<{ endpoint: string; status: number; code: string | null }> = [];
+  if (cookie) {
+    const me = await fetch(`${origin}/api/auth/me`, { headers: { cookie } });
+    meStatus = me.status;
+    try {
+      const body = await me.json();
+      meCode = body?.user ? "USER_OK" : body?.error || null;
+    } catch {
+      meCode = "NON_JSON";
+    }
+    for (const endpoint of [
+      "/api/context/current",
+      "/api/business-assistant",
+      "/api/pmo/control-center",
+      "/api/decisions",
+      "/api/business-finance",
+      "/api/role-assistant",
+      "/api/operations-center",
+      "/api/operations-center/golden-chains",
+      "/api/user/ai-settings",
+      "/api/user/feishu-connection",
+    ]) {
+      const response = await fetch(`${origin}${endpoint}`, { headers: { cookie } });
+      let code: string | null = null;
+      try {
+        const body = await response.json();
+        code = body?.error || body?.status || (body ? "JSON" : null);
+      } catch {
+        code = "NON_JSON";
+      }
+      endpointStatuses.push({ endpoint, status: response.status, code });
+    }
+    await fetch(`${origin}/api/auth/logout`, { method: "POST", headers: { cookie } }).catch(() => null);
+  }
+
+  return {
+    ok: login.status === 200 && Boolean(cookie) && meStatus === 200 && meCode === "USER_OK",
+    loginStatus: login.status,
+    hasCookie: Boolean(cookie),
+    meStatus,
+    meCode,
+    endpointStatuses,
+  };
+}
+
 export async function GET(request: Request): Promise<Response> {
   const requestId = crypto.randomUUID();
   const headers = { "Cache-Control": "no-store", "X-Request-Id": requestId };
@@ -154,10 +222,11 @@ export async function GET(request: Request): Promise<Response> {
     return Response.json({ error: "AUDIT_UNAUTHORIZED", request_id: requestId }, { status: 401, headers });
   }
 
-  const [tables, admin, feishu] = await Promise.all([
+  const [tables, admin, feishu, loginRoundtrip] = await Promise.all([
     checkTables(),
     checkAdmin(),
     checkFeishu(),
+    checkLoginRoundtrip(request),
   ]);
   const environment = {
     authStorageConfigured: isAuthStorageConfigured(),
@@ -167,7 +236,7 @@ export async function GET(request: Request): Promise<Response> {
     minimaxConfigured: Boolean(process.env.MINIMAX_API_KEY),
     minimaxModel: process.env.MINIMAX_MODEL || null,
   };
-  const ok = tables.ok && admin.ok && environment.authStorageConfigured && environment.authRequired;
+  const ok = tables.ok && admin.ok && loginRoundtrip.ok && environment.authStorageConfigured && environment.authRequired;
   return Response.json({
     ok,
     status: ok ? "passed" : "needs_attention",
@@ -175,6 +244,7 @@ export async function GET(request: Request): Promise<Response> {
     environment,
     tables,
     admin,
+    loginRoundtrip,
     feishu,
     functions: {
       checked: false,
