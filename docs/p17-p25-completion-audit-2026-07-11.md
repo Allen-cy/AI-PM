@@ -141,6 +141,57 @@ from required_functions
 order by object_type, name;
 ```
 
+## 5. 2026-07-11 v6.0.6 追加生产审计
+
+v6.0.6 已完成发布与生产部署：
+
+- Release：`https://github.com/Allen-cy/AI-PM/releases/tag/v6.0.6`
+- Production 部署：`dpl_A1B6HegpKmmSCqnK7zkLiTV3cz9M`
+- 域名：`https://pmai.chunyu2026.qzz.io`
+
+本地验证：
+
+```text
+npm run lint -- --quiet：通过
+npx tsc --noEmit --pretty false：通过
+npx --yes tsx --test --test-concurrency=1 tests/*.test.ts：294/294 通过
+npm run build：通过，生成 175 个路由
+```
+
+受保护生产审计接口：
+
+```text
+GET /api/internal/p17-p25-audit
+```
+
+当前返回 `207 needs_attention`，不是通过。已验证通过项：
+
+- `AUTH_REQUIRED=true`
+- Supabase auth storage 已配置
+- MiniMax-M3 已配置
+- 凭据加密环境变量已配置
+- 41 张 P17-P25 关键表探测通过
+- 管理员存在、active，密码校验通过
+- 全局飞书配置健康检查为 `ok`
+- `/api/user/ai-settings` 返回 200
+- `/api/user/feishu-connection` 经 v6.0.6 legacy 兼容后返回 200
+
+仍未完成项：
+
+- `/api/context/current` 返回 503：`P17_STORAGE_NOT_CONFIGURED`
+- 具体错误：`Could not find the table 'public.user_business_roles' in the schema cache`
+- `user_feishu_connections` 当前生产表仍缺当前版本要求的加密/通知字段，严格审计继续标红。
+
+必须执行的修复 SQL：
+
+```text
+supabase/migrations/20260711102000_p17_p25_production_repair.sql
+```
+
+该脚本会补齐 P25 用户飞书加密字段、P21 飞书通知字段，补默认管理员组织级业务角色和 PM/运营 -> PMO -> CEO 汇报关系，并执行 `notify pgrst, 'reload schema';` 刷新 Supabase schema cache。
+
+执行该 SQL 后，必须重新跑 `/api/internal/p17-p25-audit`；只有审计返回 `200 passed`，才能把 P17-P25 判定为生产闭环完成。
+
 验收标准：所有 `exists` 都必须为 `true`。如果有 `false`，先补执行对应 SQL，再做登录态验收。
 
 ## 5. 登录态线上冒烟清单

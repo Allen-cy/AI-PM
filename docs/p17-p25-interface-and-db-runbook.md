@@ -261,3 +261,57 @@ SQL干跑
 - Supabase Production 表/函数实际落库状态。Supabase MCP 当前无权限，Vercel CLI 不能把敏感 Production 变量提供给本地子进程做 Service Role 只读验证。
 - 真实管理员登录态业务冒烟。
 - 真实飞书写回与真实业务数据闭环。
+
+## 9. 2026-07-11 v6.0.6 生产审计与必执行修复 SQL
+
+已发布：
+
+- GitHub Release：`https://github.com/Allen-cy/AI-PM/releases/tag/v6.0.6`
+- Vercel Production：`dpl_A1B6HegpKmmSCqnK7zkLiTV3cz9M`
+- 生产域名：`https://pmai.chunyu2026.qzz.io`
+
+本地验证：
+
+```text
+npm run lint -- --quiet：通过
+npx tsc --noEmit --pretty false：通过
+npx --yes tsx --test --test-concurrency=1 tests/*.test.ts：294/294 通过
+npm run build：通过，生成 175 个路由
+```
+
+线上严格审计：
+
+- 基础环境：通过，`AUTH_REQUIRED=true`，MiniMax-M3 已配置，凭据加密变量已配置。
+- 关键表探测：41/41 通过。
+- 管理员账号：存在、active、密码校验通过。
+- 飞书全局配置：健康检查 `ok`。
+- 用户飞书配置读取：v6.0.6 已兼容 legacy 表结构，`GET /api/user/feishu-connection` 返回 200。
+- 剩余问题：`GET /api/context/current` 仍返回 `P17_STORAGE_NOT_CONFIGURED`，具体为 Supabase PostgREST schema cache 中找不到 `public.user_business_roles`。
+
+需要在 Supabase SQL Editor 执行：
+
+```text
+supabase/migrations/20260711102000_p17_p25_production_repair.sql
+```
+
+该脚本是幂等修复脚本，会：
+
+1. 补齐 `user_feishu_connections` 的 P25 加密字段。
+2. 补齐 `user_feishu_connections` 的 P21 飞书通知接收字段。
+3. 为 active admin 用户补默认组织级 `pm`、`operations`、`pmo`、`ceo` 业务角色。
+4. 建立默认组织级 `PM/运营 -> PMO -> CEO` 汇报关系。
+5. 执行 `notify pgrst, 'reload schema';`，刷新 Supabase PostgREST schema cache。
+
+执行后重新访问：
+
+```text
+GET https://pmai.chunyu2026.qzz.io/api/internal/p17-p25-audit
+Header: x-audit-token: <P17P25_AUDIT_TOKEN>
+```
+
+期望：
+
+- `/api/context/current` 返回 200。
+- `/api/user/feishu-connection` 返回 200。
+- `storageCompatibility.user_feishu_connections_base_columns` 通过。
+- 如通知字段已补齐，`storageCompatibility.user_feishu_connections_notification_columns` 也通过。

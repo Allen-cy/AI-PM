@@ -181,3 +181,7 @@ from admin_users
 cross join default_org
 cross join links
 on conflict do nothing;
+
+-- Supabase PostgREST 有时会在 DDL 后继续使用旧 schema cache；
+-- 这会导致应用侧报 “Could not find the table ... in the schema cache”。
+notify pgrst, 'reload schema';
