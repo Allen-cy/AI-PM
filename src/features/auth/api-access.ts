@@ -11,6 +11,7 @@ const PUBLIC_REQUEST_PATHS: readonly string[] = [
   "/api/cron/evidence-expiry",
   "/api/cron/operating-calendar",
   "/api/cron/decision-sla",
+  "/api/internal/p17-p25-audit",
   "/api/rag/health",
 ];
 
