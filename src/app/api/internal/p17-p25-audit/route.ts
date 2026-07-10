@@ -118,12 +118,29 @@ async function checkAdmin() {
     .eq("role", "admin")
     .maybeSingle();
   const passwordMatches = Boolean(data?.password_hash && verifyPassword(password, data.password_hash));
+  let businessRoleCount: number | null = null;
+  let businessRoleError: { code: string | null; message: string } | null = null;
+  if (data?.id) {
+    const roleCheck = await getAuthSupabase()
+      .from("user_business_roles")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", data.id);
+    businessRoleCount = roleCheck.count ?? null;
+    if (roleCheck.error) {
+      businessRoleError = {
+        code: roleCheck.error.code || null,
+        message: roleCheck.error.message,
+      };
+    }
+  }
   return {
     ok: !error && Boolean(data) && data?.status === "active" && passwordMatches,
     envValid,
     adminExists: Boolean(data),
     active: data?.status === "active",
     passwordMatches,
+    businessRoleCount,
+    businessRoleError,
     errorCode: error?.code || null,
   };
 }
@@ -147,6 +164,56 @@ async function checkFeishu() {
   };
 }
 
+async function checkStorageCompatibility() {
+  if (!isAuthStorageConfigured()) {
+    return {
+      ok: false,
+      checks: [{ key: "auth_storage", ok: false, code: "AUTH_STORAGE_NOT_CONFIGURED", message: "Supabase service role storage is not configured." }],
+    };
+  }
+  const supabase = getAuthSupabase();
+  const checks = [
+    {
+      key: "user_business_roles_required_columns",
+      table: "user_business_roles",
+      select: "id,user_id,business_role,org_id,subject_scope,subject_id,status,valid_from,valid_until,delegated_from_user_id",
+      required: true,
+    },
+    {
+      key: "user_feishu_connections_base_columns",
+      table: "user_feishu_connections",
+      select: "app_id,app_secret,app_secret_encrypted,app_secret_last4,base_token,base_token_encrypted,base_token_last4,table_mapping,status",
+      required: true,
+    },
+    {
+      key: "user_feishu_connections_notification_columns",
+      table: "user_feishu_connections",
+      select: "notification_receive_id_type,notification_receive_id",
+      required: false,
+    },
+  ] as const;
+  const results = [];
+  for (const item of checks) {
+    const { error, status } = await supabase
+      .from(item.table)
+      .select(item.select, { head: true })
+      .limit(1);
+    results.push({
+      key: item.key,
+      table: item.table,
+      required: item.required,
+      ok: !error,
+      status: status ?? (error ? 500 : 200),
+      code: error?.code || null,
+      message: error?.message || null,
+    });
+  }
+  return {
+    ok: results.filter(item => item.required).every(item => item.ok),
+    checks: results,
+  };
+}
+
 async function checkLoginRoundtrip(request: Request) {
   const account = process.env.ADMIN_PHONE || process.env.ADMIN_EMAIL || "";
   const password = process.env.ADMIN_PASSWORD || "";
@@ -157,7 +224,7 @@ async function checkLoginRoundtrip(request: Request) {
       hasCookie: false,
       meStatus: 0,
       meCode: "ADMIN_ENV_MISSING",
-      endpointStatuses: [] as Array<{ endpoint: string; status: number; code: string | null }>,
+      endpointStatuses: [] as Array<{ endpoint: string; status: number; code: string | null; detail: string | null; setupRequired: boolean | null }>,
     };
   }
 
@@ -170,7 +237,7 @@ async function checkLoginRoundtrip(request: Request) {
   const cookie = login.headers.get("set-cookie")?.split(";")[0] || "";
   let meStatus = 0;
   let meCode: string | null = null;
-  const endpointStatuses: Array<{ endpoint: string; status: number; code: string | null }> = [];
+  const endpointStatuses: Array<{ endpoint: string; status: number; code: string | null; detail: string | null; setupRequired: boolean | null }> = [];
   if (cookie) {
     const me = await fetch(`${origin}/api/auth/me`, { headers: { cookie } });
     meStatus = me.status;
@@ -194,23 +261,36 @@ async function checkLoginRoundtrip(request: Request) {
     ]) {
       const response = await fetch(`${origin}${endpoint}`, { headers: { cookie } });
       let code: string | null = null;
+      let detail: string | null = null;
+      let setupRequired: boolean | null = null;
       try {
         const body = await response.json();
         code = body?.error || body?.status || (body ? "JSON" : null);
+        setupRequired = typeof body?.setup_required === "boolean" ? body.setup_required : null;
+        const rawDetail = body?.detail || body?.warning || body?.message;
+        detail = typeof rawDetail === "string" ? rawDetail.slice(0, 500) : null;
       } catch {
         code = "NON_JSON";
       }
-      endpointStatuses.push({ endpoint, status: response.status, code });
+      endpointStatuses.push({ endpoint, status: response.status, code, detail, setupRequired });
     }
     await fetch(`${origin}/api/auth/logout`, { method: "POST", headers: { cookie } }).catch(() => null);
   }
 
+  const requiredEndpointStatuses = new Map(endpointStatuses.map(item => [item.endpoint, item.status]));
+  const criticalEndpointsOk = (
+    requiredEndpointStatuses.get("/api/context/current") === 200
+    && requiredEndpointStatuses.get("/api/user/ai-settings") === 200
+    && requiredEndpointStatuses.get("/api/user/feishu-connection") === 200
+  );
+
   return {
-    ok: login.status === 200 && Boolean(cookie) && meStatus === 200 && meCode === "USER_OK",
+    ok: login.status === 200 && Boolean(cookie) && meStatus === 200 && meCode === "USER_OK" && criticalEndpointsOk,
     loginStatus: login.status,
     hasCookie: Boolean(cookie),
     meStatus,
     meCode,
+    criticalEndpointsOk,
     endpointStatuses,
   };
 }
@@ -222,10 +302,11 @@ export async function GET(request: Request): Promise<Response> {
     return Response.json({ error: "AUDIT_UNAUTHORIZED", request_id: requestId }, { status: 401, headers });
   }
 
-  const [tables, admin, feishu, loginRoundtrip] = await Promise.all([
+  const [tables, admin, feishu, storageCompatibility, loginRoundtrip] = await Promise.all([
     checkTables(),
     checkAdmin(),
     checkFeishu(),
+    checkStorageCompatibility(),
     checkLoginRoundtrip(request),
   ]);
   const environment = {
@@ -236,13 +317,14 @@ export async function GET(request: Request): Promise<Response> {
     minimaxConfigured: Boolean(process.env.MINIMAX_API_KEY),
     minimaxModel: process.env.MINIMAX_MODEL || null,
   };
-  const ok = tables.ok && admin.ok && loginRoundtrip.ok && environment.authStorageConfigured && environment.authRequired;
+  const ok = tables.ok && admin.ok && storageCompatibility.ok && loginRoundtrip.ok && environment.authStorageConfigured && environment.authRequired;
   return Response.json({
     ok,
     status: ok ? "passed" : "needs_attention",
     scope: "p17-p25-production-audit",
     environment,
     tables,
+    storageCompatibility,
     admin,
     loginRoundtrip,
     feishu,

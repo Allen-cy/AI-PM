@@ -25,6 +25,13 @@ const tableLabels: Record<FeishuTableKey, string> = {
   syncLedger: "同步流水表ID",
 };
 
+const baseConnectionSelect = "app_id,app_secret,app_secret_encrypted,app_secret_last4,base_token,base_token_encrypted,base_token_last4,table_mapping,status";
+const connectionSelectWithNotification = `${baseConnectionSelect},notification_receive_id_type,notification_receive_id`;
+
+function isNotificationColumnMissing(message: string | undefined): boolean {
+  return /notification_receive_id|schema cache|Could not find.*column/i.test(message || "");
+}
+
 function normalizeMapping(value: unknown): Partial<Record<FeishuTableKey, string>> {
   const input = typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {};
   const output: Partial<Record<FeishuTableKey, string>> = {};
@@ -47,7 +54,7 @@ function safeConnection(row: {
   notification_receive_id_type?: string | null;
   notification_receive_id?: string | null;
   status?: string | null;
-} | null) {
+} | null, notificationStorageAvailable = true) {
   const tableMapping = normalizeMapping(row?.table_mapping);
   const appSecretLast4 = row?.app_secret_last4 || row?.app_secret?.slice(-4) || "";
   const baseTokenLast4 = row?.base_token_last4 || row?.base_token?.slice(-4) || "";
@@ -65,12 +72,37 @@ function safeConnection(row: {
     tableMapping,
     notificationReceiveIdType: row?.notification_receive_id_type || "",
     notificationReceiveId: row?.notification_receive_id || "",
+    notificationStorageAvailable,
     status: row?.status || "not_configured",
     configured: Boolean(row?.app_id && appSecretConfigured && baseTokenConfigured),
     tableLabels,
     setupHint: feishuSetupHint,
     larkCliHint,
   };
+}
+
+async function readConnection(supabase: ReturnType<typeof getAuthSupabase>, userId: string) {
+  const preferred = await supabase
+    .from("user_feishu_connections")
+    .select(connectionSelectWithNotification)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (!preferred.error) return { data: preferred.data, error: null, notificationStorageAvailable: true };
+  if (!isNotificationColumnMissing(preferred.error.message)) return { data: null, error: preferred.error, notificationStorageAvailable: true };
+  const fallback = await supabase
+    .from("user_feishu_connections")
+    .select(baseConnectionSelect)
+    .eq("user_id", userId)
+    .maybeSingle();
+  return { data: fallback.data, error: fallback.error, notificationStorageAvailable: false };
+}
+
+async function notificationColumnsAvailable(supabase: ReturnType<typeof getAuthSupabase>): Promise<boolean> {
+  const { error } = await supabase
+    .from("user_feishu_connections")
+    .select("notification_receive_id_type,notification_receive_id", { head: true })
+    .limit(1);
+  return !error;
 }
 
 export async function GET() {
@@ -82,14 +114,10 @@ export async function GET() {
   if (!user) return NextResponse.json({ error: "请先登录" }, { status: 401 });
 
   const supabase = getAuthSupabase();
-  const { data, error } = await supabase
-    .from("user_feishu_connections")
-    .select("app_id,app_secret,app_secret_encrypted,app_secret_last4,base_token,base_token_encrypted,base_token_last4,table_mapping,notification_receive_id_type,notification_receive_id,status")
-    .eq("user_id", user.id)
-    .maybeSingle();
+  const { data, error, notificationStorageAvailable } = await readConnection(supabase, user.id);
 
   if (error) return NextResponse.json({ error: "FEISHU_SETTINGS_STORAGE_FAILED" }, { status: 500 });
-  return NextResponse.json({ connection: safeConnection(data) });
+  return NextResponse.json({ connection: safeConnection(data, notificationStorageAvailable) });
 }
 
 export async function PUT(request: Request) {
@@ -122,6 +150,10 @@ export async function PUT(request: Request) {
   }
 
   const supabase = getAuthSupabase();
+  const canStoreNotification = await notificationColumnsAvailable(supabase);
+  if (!canStoreNotification && (notificationReceiveIdType || notificationReceiveId)) {
+    return NextResponse.json({ error: "FEISHU_NOTIFICATION_STORAGE_NOT_CONFIGURED", detail: "请先执行 P21 决策治理迁移，补齐 user_feishu_connections 的通知接收字段。" }, { status: 503 });
+  }
   const { data: existing, error: existingError } = await supabase
     .from("user_feishu_connections")
     .select("app_secret,app_secret_encrypted,base_token,base_token_encrypted")
@@ -157,29 +189,35 @@ export async function PUT(request: Request) {
     return NextResponse.json({ error: "CREDENTIAL_ENCRYPTION_UNAVAILABLE" }, { status: 503 });
   }
 
+  const payload: Record<string, unknown> = {
+    user_id: user.id,
+    app_id: appId,
+    app_secret: null,
+    app_secret_encrypted: encryptedSecret.encrypted,
+    app_secret_last4: secret.slice(-4),
+    app_secret_key_version: encryptedSecret.keyVersion,
+    base_token: null,
+    base_token_encrypted: encryptedToken.encrypted,
+    base_token_last4: token.slice(-4),
+    base_token_key_version: encryptedToken.keyVersion,
+    table_mapping: tableMapping,
+    connection_mode: "web_app",
+    status: "configured",
+    updated_at: new Date().toISOString(),
+  };
+  if (canStoreNotification) {
+    payload.notification_receive_id_type = notificationReceiveIdType || null;
+    payload.notification_receive_id = notificationReceiveId || null;
+  }
+
   const { data, error } = await supabase
     .from("user_feishu_connections")
-    .upsert({
-      user_id: user.id,
-      app_id: appId,
-      app_secret: null,
-      app_secret_encrypted: encryptedSecret.encrypted,
-      app_secret_last4: secret.slice(-4),
-      app_secret_key_version: encryptedSecret.keyVersion,
-      base_token: null,
-      base_token_encrypted: encryptedToken.encrypted,
-      base_token_last4: token.slice(-4),
-      base_token_key_version: encryptedToken.keyVersion,
-      table_mapping: tableMapping,
-      notification_receive_id_type: notificationReceiveIdType || null,
-      notification_receive_id: notificationReceiveId || null,
-      connection_mode: "web_app",
-      status: "configured",
-      updated_at: new Date().toISOString(),
-    }, { onConflict: "user_id" })
-    .select("app_id,app_secret_encrypted,app_secret_last4,base_token_encrypted,base_token_last4,table_mapping,notification_receive_id_type,notification_receive_id,status")
+    .upsert(payload, { onConflict: "user_id" })
+    .select(canStoreNotification
+      ? "app_id,app_secret_encrypted,app_secret_last4,base_token_encrypted,base_token_last4,table_mapping,notification_receive_id_type,notification_receive_id,status"
+      : "app_id,app_secret_encrypted,app_secret_last4,base_token_encrypted,base_token_last4,table_mapping,status")
     .single();
 
   if (error) return NextResponse.json({ error: "FEISHU_SETTINGS_STORAGE_FAILED" }, { status: 500 });
-  return NextResponse.json({ connection: safeConnection(data) });
+  return NextResponse.json({ connection: safeConnection(data as Parameters<typeof safeConnection>[0], canStoreNotification) });
 }
