@@ -4,7 +4,7 @@
 
 当前代码版本：6.0.0
 
-状态：本地质量门已通过；生产完成仍依赖 Supabase 执行 SQL、Vercel 环境变量确认、部署和线上飞书/真实业务数据联调。
+状态：本地质量门已通过；Vercel Production 环境变量补齐、部署、Git Tag 和 GitHub Release 已完成。生产完成仍依赖 Supabase Production 执行/确认 SQL，以及使用真实管理员账号完成线上飞书/真实业务数据冒烟。
 
 ## 1. 阶段范围
 
@@ -208,15 +208,27 @@ SQL干跑
 说明：PGlite 本地干跑对 pgcrypto/uuid/vector 使用 stub；生产 Supabase 使用原生扩展。
 ```
 
-## 7. 生产发布待办
+## 7. 生产发布状态与剩余待办
 
-在声明 P17-P25 完成前，还必须完成：
+已完成：
 
-1. Vercel Production 确认/补齐环境变量，尤其是 `CRON_SECRET`、`CREDENTIAL_ENCRYPTION_KEY`、`CREDENTIAL_ENCRYPTION_KEY_VERSION`。
-2. Supabase Production 按第 4 节顺序执行未执行 SQL。
-3. 以 `6.0.0` 发布新版本。
-4. 部署到 Vercel Production。
-5. 使用真实管理员账号完成冒烟验收：
+1. Vercel Production 已补齐关键环境变量：`CRON_SECRET`、`CREDENTIAL_ENCRYPTION_KEY`、`CREDENTIAL_ENCRYPTION_KEY_VERSION`。
+2. 代码版本已发布为 `6.0.0`。
+3. Git Tag 已推送：`v6.0.0`。
+4. GitHub Release 已创建：`https://github.com/Allen-cy/AI-PM/releases/tag/v6.0.0`。
+5. Vercel Production 已部署：
+   - 生产域名：`https://pmai.chunyu2026.qzz.io`
+   - 部署 URL：`https://ai-pm-system-akn712ec8-chongzhengchais-projects.vercel.app`
+   - 部署 ID：`dpl_487W8e15yLu1wbw2gFu2zAwRumaT`
+6. 线上匿名冒烟已验证：
+   - 首页按预期跳转登录页。
+   - `/auth/login` 返回 200。
+   - `/api/auth/me` 未登录返回 `UNAUTHORIZED`。
+
+剩余待办：
+
+1. Supabase Production 按第 4 节顺序执行/确认未执行 SQL。本会话内直接 SQL 执行被 Supabase MCP 权限拒绝，因此不能替代人工确认。
+2. 使用真实管理员账号完成冒烟验收：
    - 登录后看到用户中心而非登录按钮。
    - 用户 AI/飞书配置可保存和测试。
    - 项目台账从飞书拉取真实数据，不用样例伪装。
@@ -224,4 +236,4 @@ SQL干跑
    - PMO控制中心能显示真实例外/数据质量/治理动作。
    - 决策中心能创建/推进决策包，SLA cron 不直接发送飞书，只生成确认队列。
    - 运营中心黄金链能创建验收 run，并按步骤推进。
-6. 飞书写入动作必须全部经过待确认队列；不得静默写入业务表。
+3. 飞书写入动作必须全部经过待确认队列；不得静默写入业务表。
