@@ -254,9 +254,10 @@ SQL干跑
 - 生产匿名访问：`/` 跳转登录页，`/auth/login` 返回 200，`/api/auth/me` 返回 401。
 - P17-P25 关键 API 未登录均返回 401。
 - Cron 路由使用 GET 且未授权均返回 401。
+- `POST /api/auth/bootstrap-admin` 返回 `admin_exists`，说明生产认证存储可用且管理员已存在。
 
 仍未被本会话证明：
 
-- Supabase Production 表/函数实际落库状态。Supabase MCP 当前无权限，本地和临时拉取环境没有可用密钥值。
+- Supabase Production 表/函数实际落库状态。Supabase MCP 当前无权限，Vercel CLI 不能把敏感 Production 变量提供给本地子进程做 Service Role 只读验证。
 - 真实管理员登录态业务冒烟。
 - 真实飞书写回与真实业务数据闭环。

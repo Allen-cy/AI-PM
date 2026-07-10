@@ -22,6 +22,7 @@
 | P17-P25 关键 API 未登录保护 | `GET /api/context/current` 等关键 API | 全部 401 |
 | Cron 未授权保护 | `GET /api/cron/decision-sla`、`/api/cron/evidence-expiry`、`/api/cron/operating-calendar` | 全部 401 |
 | Vercel Production 环境变量名 | `vercel env ls production` | 关键变量名存在 |
+| 管理员初始化 | `POST /api/auth/bootstrap-admin` | 返回 `{"ok":true,"status":"admin_exists"}`，说明生产认证存储可用且管理员已存在 |
 
 ## 2. P17-P25 阶段审计
 
@@ -41,10 +42,12 @@
 
 1. Supabase Production 实际表和函数是否全部存在。
    - Supabase MCP 当前返回无权限：`MCP error -32600: You do not have permission to perform this action`。
-   - 本地 `.env.local` 中 Supabase 值为空占位；`vercel env pull` 在本会话未能拉到可用值。
+   - 本地 `.env.local` 中 Supabase 值为空占位。
+   - `vercel env pull` 与 `vercel env run -e production` 在本会话不能把敏感 Production 变量提供给本地子进程，因此不能用 Service Role 做只读表/函数检查。
 2. 管理员登录态线上冒烟。
    - 本地无可用管理员账号值。
    - 为避免敏感信息外露，本会话未把历史对话中的敏感账号密码写入命令。
+   - `POST /api/auth/bootstrap-admin` 已确认管理员存在，但没有返回、也不应返回登录凭据。
 3. 真实飞书写回闭环。
    - 匿名侧只能证明 API 被保护，不能证明个人飞书/全局飞书写回成功。
 4. 真实业务数据闭环。
