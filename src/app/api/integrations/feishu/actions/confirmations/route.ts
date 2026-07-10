@@ -82,7 +82,10 @@ export async function POST(request: Request): Promise<Response> {
     ? body.payload
     : body) as FeishuActionBody;
   try {
-    validateFeishuActionBody(payload);
+    const validated = validateFeishuActionBody(payload);
+    if (validated.actionType === "base_record_update") {
+      return json({ request_id: requestId, status: "forbidden", warning: "Base记录更新必须从业务助理变化草稿发起，并与草稿在同一数据库事务中入队。" }, 403, requestId);
+    }
   } catch {
     return json({ request_id: requestId, status: "failed", warning: "飞书动作参数不合法。" }, 422, requestId);
   }

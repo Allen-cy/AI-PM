@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { FeishuConfirmationInlinePanelClient } from "@/components/FeishuConfirmationInlinePanelClient";
 import { IntegrationStatusPanelClient } from "@/components/IntegrationStatusPanelClient";
-import { buildDashboardData, DEFAULT_DASHBOARD_DATA, normalizeProjectRows } from "@/features/dashboard/normalizer";
+import { buildDashboardData, normalizeProjectRows } from "@/features/dashboard/normalizer";
 import type { DashboardData } from "@/features/dashboard/types";
 import { feishuTableUrl } from "@/features/feishu/links";
 import {
@@ -15,6 +15,11 @@ import {
 
 const DASHBOARD_CACHE_KEY = "ai-pmo-dashboard-data-v3";
 const LEGACY_DASHBOARD_CACHE_KEYS = ["ai-pmo-dashboard-data", "ai-pmo-dashboard-data-v2"];
+const EMPTY_DASHBOARD_DATA = buildDashboardData([], {
+  type: "file",
+  name: "未加载真实数据",
+  note: "请从飞书项目台账拉取，或通过模板文件导入项目数据。",
+}, { useTemplateFallback: false });
 
 function isDashboardData(data: unknown): data is DashboardData {
   if (!data || typeof data !== "object") return false;
@@ -442,7 +447,7 @@ function KeyProjectProgressBoard({ data }: { data: DashboardData["keyProjects"] 
 
 export default function DashboardPage() {
   const [riskFilter, setRiskFilter] = useState("全部");
-  const [dashboardData, setDashboardData] = useState<DashboardData>(DEFAULT_DASHBOARD_DATA);
+  const [dashboardData, setDashboardData] = useState<DashboardData>(EMPTY_DASHBOARD_DATA);
   const riskSensitivityImpact = useMemo(() => buildRiskSensitivityImpactDashboard(dashboardData), [dashboardData]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -516,8 +521,8 @@ export default function DashboardPage() {
   const resetData = () => {
     LEGACY_DASHBOARD_CACHE_KEYS.forEach(key => localStorage.removeItem(key));
     localStorage.removeItem(DASHBOARD_CACHE_KEY);
-    setDashboardData(DEFAULT_DASHBOARD_DATA);
-    setMessage("已切回作业帮项目样例数据源。");
+    setDashboardData(EMPTY_DASHBOARD_DATA);
+    setMessage("已清空本地缓存，请从飞书项目台账拉取或导入文件。");
   };
 
   const kpi = dashboardData.kpi;
@@ -572,7 +577,7 @@ export default function DashboardPage() {
             从飞书智能表拉取
           </button>
           <button className="btn-secondary" disabled={loading} onClick={resetData}>
-            重置示例
+            清空缓存
           </button>
         </div>
 

@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { BusinessContextBar } from "@/components/BusinessContextBar";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -13,7 +14,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="zh-CN">
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        <BusinessContextBar />
+        {children}
+      </body>
     </html>
   );
 }

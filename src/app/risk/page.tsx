@@ -37,7 +37,6 @@ import {
   getRiskLevel,
   getWorkflowStepForStatus,
   impactAreaLabels,
-  initialRisks,
   nextRiskStatus,
   responseStrategyGuidance,
   riskChecklistItems,
@@ -584,8 +583,8 @@ export default function RiskPage() {
         setMessage(data.warning || "");
       } catch (e: unknown) {
         if (cancelled) return;
-        setRisks(initialRisks);
-        setError(`风险登记册读取失败，已展示本地样例：${e instanceof Error ? e.message : String(e)}`);
+        setRisks([]);
+        setError(`风险登记册读取失败，未使用样例数据：${e instanceof Error ? e.message : String(e)}`);
       } finally {
         if (!cancelled) setLoadingRisks(false);
       }

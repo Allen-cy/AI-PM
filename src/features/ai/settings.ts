@@ -16,6 +16,8 @@ type UserAiSettingsRow = {
   provider?: string | null;
   model?: string | null;
   api_key?: string | null;
+  api_key_encrypted?: string | null;
+  api_key_last4?: string | null;
   enabled?: boolean | null;
 };
 
@@ -76,7 +78,8 @@ export function getGlobalAiModelSummary(environment: Environment = process.env):
 }
 
 export function getUserAiModelSummary(row: UserAiSettingsRow | null | undefined): AiModelSummary | null {
-  if (!row || row.enabled === false || !row.api_key?.trim()) return null;
+  const configured = Boolean(row?.api_key_last4?.trim() || row?.api_key_encrypted?.trim() || row?.api_key?.trim());
+  if (!row || row.enabled === false || !configured) return null;
   const provider = providerFrom(row.provider);
   if (!provider) return null;
   const model = row.model?.trim() || (provider === "openai-compatible" ? "自定义模型" : defaultModels[provider]);
@@ -91,7 +94,7 @@ export async function getEffectiveAiModelSummary(userId?: string | null): Promis
         const supabase = auth.getAuthSupabase();
         const { data, error } = await supabase
           .from("user_ai_settings")
-          .select("provider,model,api_key,enabled")
+          .select("provider,model,api_key_last4,enabled")
           .eq("user_id", userId)
           .maybeSingle();
         if (!error) {

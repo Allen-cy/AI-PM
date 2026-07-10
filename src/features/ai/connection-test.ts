@@ -98,16 +98,20 @@ export function aiConnectionFailureActions(category: AiConnectionFailureCategory
   return ["检查模型名称、Base URL、API Key 和供应商是否匹配。"];
 }
 
-function sanitizeErrorText(value: string): string {
-  return value
+function sanitizeErrorText(value: string, secrets: Array<string | null | undefined> = []): string {
+  const exactRedacted = secrets.reduce<string>(
+    (text, secret) => secret?.trim() ? text.replaceAll(secret.trim(), "[redacted]") : text,
+    value,
+  );
+  return exactRedacted
     .replace(/sk-[A-Za-z0-9_-]{8,}/g, "[redacted]")
     .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, "Bearer [redacted]")
     .slice(0, 240);
 }
 
-async function readTextSafely(response: Response): Promise<string> {
+async function readTextSafely(response: Response, secrets: Array<string | null | undefined> = []): Promise<string> {
   try {
-    return sanitizeErrorText(await response.text());
+    return sanitizeErrorText(await response.text(), secrets);
   } catch {
     return "";
   }
@@ -182,7 +186,7 @@ export async function testAiConnection(input: AiConnectionTestInput, fetcher: Fe
     const latencyMs = Date.now() - startedAt;
     if (!response.ok) {
       const category = classifyAiConnectionHttpFailure(response.status);
-      const detail = await readTextSafely(response);
+      const detail = await readTextSafely(response, [input.apiKey]);
       return {
         ...failureResult(input, category, `${providerLabels[input.provider]} 测试失败：HTTP ${response.status}${detail ? ` / ${detail}` : ""}`, aiConnectionFailureActions(category)),
         latencyMs,
@@ -212,7 +216,7 @@ export async function testAiConnection(input: AiConnectionTestInput, fetcher: Fe
     return failureResult(
       input,
       "network_error",
-      `模型测试请求失败：${sanitizeErrorText(error instanceof Error ? error.message : String(error))}`,
+      `模型测试请求失败：${sanitizeErrorText(error instanceof Error ? error.message : String(error), [input.apiKey])}`,
       aiConnectionFailureActions("network_error"),
     );
   }

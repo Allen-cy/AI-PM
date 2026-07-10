@@ -1,99 +1,20 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import type { DashboardData } from "@/features/dashboard/types";
+import { readStoredDataClass } from "@/features/operating-model/client-context";
 
-// ─── Mock Data ───────────────────────────────────────────────────────────────
-
-const HEALTH_OVERVIEW = {
-  overall: "yellow" as "green" | "yellow" | "red",
-  schedule: "yellow",
-  cost: "green",
-  quality: "green",
-  scope: "red",
-  risk: "yellow",
-};
-
-const EVM_DATA = {
-  pv: 480,
-  ev: 450,
-  ac: 460,
-  bac: 800,
-  spi: 0.938,
-  cpi: 0.978,
-  sv: -30,
-  cv: -10,
-  eac: 818,
-  vac: -18,
-};
-
-const SCHEDULE_DATA = {
-  planned: 65,
-  actual: 58,
-  criticalPathStatus: "at-risk",
-  criticalPathTasks: 12,
-  delayedTasks: 3,
-  variance: -7,
-};
-
-const COST_DATA = {
-  budget: 800,
-  actual: 460,
-  committed: 280,
-  forecast: 818,
-  variance: -18,
-};
-
-const SCOPE_DATA = {
-  verifiedDeliverables: 18,
-  totalDeliverables: 24,
-  acceptanceRate: 75,
-  scopeCreepCount: 2,
-  pendingAcceptances: 4,
-  rejectedItems: 1,
-};
-
-const QUALITY_DATA = {
-  defectDensity: 3.2,
-  defectTrend: "down",
-  inspectionPassRate: 92,
-  qualityIndex: 87,
-  openDefects: 5,
-  resolvedDefects: 23,
-};
-
-const RISK_WATCH_LIST = [
-  { id: "R1", description: "第三方接口不稳定", probability: "H", impact: "H", trigger: "已触发", owner: "李工" },
-  { id: "R2", description: "需求变更频繁", probability: "M", impact: "H", trigger: "监控中", owner: "张经理" },
-  { id: "R3", description: "核心人员离职风险", probability: "P", impact: "M", trigger: "未触发", owner: "王总" },
-];
-
-const CHANGE_CONTROL = {
-  open: 5,
-  inProgress: 3,
-  approved: 12,
-  rejected: 2,
-  implemented: 10,
-  pending: 3,
-};
-
-const PERFORMANCE_DATA = {
-  pc: 56.3,
-  status: "behind",
-  trend: ["+2%", "-1%", "-3%", "-5%", "-7%"],
-  forecast: "项目预计超支 ¥18万，进度落后约7天",
-};
-
-const DELIVERABLES = [
-  { id: "D1", name: "需求规格说明书", status: "accepted", date: "2026-03-15" },
-  { id: "D2", name: "系统设计文档", status: "accepted", date: "2026-03-28" },
-  { id: "D3", name: "核心模块开发", status: "accepted", date: "2026-04-20" },
-  { id: "D4", name: "接口联调报告", status: "pending", date: "-" },
-  { id: "D5", name: "UAT测试报告", status: "rejected", date: "-" },
-  { id: "D6", name: "用户手册初稿", status: "in_progress", date: "-" },
-];
-
-type HealthStatus = "green" | "yellow" | "red";
+type HealthStatus = "green" | "yellow" | "red" | "unknown";
+type EvmData = { pv: number; ev: number; ac: number; bac: number; spi: number; cpi: number; sv: number; cv: number; eac: number; vac: number };
+type ScheduleData = { planned: number; actual: number; criticalPathStatus: string; criticalPathTasks: number; delayedTasks: number; variance: number };
+type CostData = { budget: number; actual: number; committed: number; forecast: number; variance: number };
+type ScopeData = { verifiedDeliverables: number; totalDeliverables: number; acceptanceRate: number; scopeCreepCount: number; pendingAcceptances: number; rejectedItems: number };
+type QualityData = { defectDensity: number; defectTrend: string; inspectionPassRate: number; qualityIndex: number; openDefects: number; resolvedDefects: number };
+type RiskWatch = { id: string; description: string; probability: string; impact: string; trigger: string; owner: string };
+type ChangeData = { open: number; inProgress: number; approved: number; rejected: number; implemented: number; pending: number };
+type PerformanceData = { pc: number; status: string; trend: string[]; forecast: string };
+type DeliverableData = { id: string; name: string; status: string; date: string };
 
 interface MonitoringData {
   source: {
@@ -110,15 +31,16 @@ interface MonitoringData {
     scope: HealthStatus;
     risk: HealthStatus;
   };
-  evm: typeof EVM_DATA;
-  schedule: typeof SCHEDULE_DATA;
-  cost: typeof COST_DATA;
-  scope: typeof SCOPE_DATA;
-  quality: typeof QUALITY_DATA;
-  risks: typeof RISK_WATCH_LIST;
-  changes: typeof CHANGE_CONTROL;
-  performance: typeof PERFORMANCE_DATA;
-  deliverables: typeof DELIVERABLES;
+  availability: { fullOverview: boolean; schedule: boolean; evm: boolean; cost: boolean; scope: boolean; quality: boolean; risk: boolean; change: boolean; report: boolean; missing: string[] };
+  evm: EvmData;
+  schedule: ScheduleData;
+  cost: CostData;
+  scope: ScopeData;
+  quality: QualityData;
+  risks: RiskWatch[];
+  changes: ChangeData;
+  performance: PerformanceData;
+  deliverables: DeliverableData[];
 }
 
 function healthByThreshold(value: number, yellowAt: number, redAt: number): HealthStatus {
@@ -137,6 +59,18 @@ function toSafeNumber(value: number | undefined, fallback = 0) {
   return Number.isFinite(value) ? Number(value) : fallback;
 }
 
+function finiteValues(values: Array<number | undefined>): number[] {
+  return values.filter((value): value is number => Number.isFinite(value));
+}
+
+function average(values: number[]): number {
+  return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
+}
+
+function total(values: number[]): number {
+  return values.reduce((sum, value) => sum + value, 0);
+}
+
 function buildEmptyMonitoringData(note: string): MonitoringData {
   return {
     source: {
@@ -145,13 +79,14 @@ function buildEmptyMonitoringData(note: string): MonitoringData {
       note,
     },
     healthOverview: {
-      overall: "yellow",
-      schedule: "yellow",
-      cost: "yellow",
-      quality: "yellow",
-      scope: "yellow",
-      risk: "yellow",
+      overall: "unknown",
+      schedule: "unknown",
+      cost: "unknown",
+      quality: "unknown",
+      scope: "unknown",
+      risk: "unknown",
     },
+    availability: { fullOverview: false, schedule: false, evm: false, cost: false, scope: false, quality: false, risk: false, change: false, report: false, missing: ["飞书数据源不可用"] },
     evm: {
       pv: 0,
       ev: 0,
@@ -167,7 +102,7 @@ function buildEmptyMonitoringData(note: string): MonitoringData {
     schedule: {
       planned: 0,
       actual: 0,
-      criticalPathStatus: "at-risk",
+      criticalPathStatus: "unknown",
       criticalPathTasks: 0,
       delayedTasks: 0,
       variance: 0,
@@ -206,8 +141,8 @@ function buildEmptyMonitoringData(note: string): MonitoringData {
     },
     performance: {
       pc: 0,
-      status: "behind",
-      trend: ["0%", "0%", "0%", "0%", "0%"],
+      status: "unknown",
+      trend: [],
       forecast: "等待飞书项目台账数据。",
     },
     deliverables: [],
@@ -216,28 +151,62 @@ function buildEmptyMonitoringData(note: string): MonitoringData {
 
 function buildMonitoringFromDashboard(dashboard: DashboardData): MonitoringData {
   const records = dashboard.records;
-  const projectCount = Math.max(1, records.length);
-  const totalProgress = records.reduce((sum, item) => sum + toSafeNumber(item.当前进度), 0);
-  const actualProgress = Math.round(totalProgress / projectCount);
-  const plannedProgress = Math.min(100, Math.max(actualProgress, Math.round(actualProgress + 8)));
+  const actualProgressValues = finiteValues(records.map(item => item.当前进度));
+  const plannedProgressValues = finiteValues(records.map(item => item.计划进度));
+  const actualProgress = Math.round(average(actualProgressValues));
+  const plannedProgress = Math.round(average(plannedProgressValues));
   const scheduleVariance = actualProgress - plannedProgress;
   const highRiskCount = dashboard.riskProjects.filter(item => item.severity === "高").length;
   const mediumRiskCount = dashboard.riskProjects.filter(item => item.severity === "中").length;
-  const delayedCount = records.filter(item => toSafeNumber(item.进度偏差) < 0 || toSafeNumber(item.当前进度) < 60).length;
-  const completedCount = records.filter(item => ["已完成", "完成", "已验收", "验收完成"].includes(item.项目状态)).length;
-  const activeCount = records.filter(item => !["已完成", "完成", "已验收", "验收完成"].includes(item.项目状态)).length;
+  const delayedCount = Math.round(total(finiteValues(records.map(item => item.延期任务数))));
+  const criticalPathTasks = Math.round(total(finiteValues(records.map(item => item.关键路径任务数))));
 
-  const totalContract = dashboard.kpi.totalContract;
-  const totalCollection = dashboard.kpi.totalCollection;
-  const collectionRate = dashboard.kpi.collectionRate;
-  const receivable = dashboard.kpi.receivable;
-  const earnedValue = Number((totalContract * actualProgress / 100).toFixed(2));
-  const plannedValue = Number((totalContract * plannedProgress / 100).toFixed(2));
-  const actualCostProxy = Number(Math.max(totalCollection, earnedValue * 0.92).toFixed(2));
+  const plannedValue = total(finiteValues(records.map(item => item.计划价值)));
+  const earnedValue = total(finiteValues(records.map(item => item.挣值)));
+  const actualCost = total(finiteValues(records.map(item => item.实际成本)));
+  const bac = total(finiteValues(records.map(item => item.完工预算)));
+  const explicitEac = total(finiteValues(records.map(item => item.完工估算)));
   const spi = plannedValue > 0 ? Number((earnedValue / plannedValue).toFixed(3)) : 0;
-  const cpi = actualCostProxy > 0 ? Number((earnedValue / actualCostProxy).toFixed(3)) : 0;
-  const eac = cpi > 0 ? Number((totalContract / cpi).toFixed(2)) : totalContract;
-  const vac = Number((totalContract - eac).toFixed(2));
+  const cpi = actualCost > 0 ? Number((earnedValue / actualCost).toFixed(3)) : 0;
+  const eac = explicitEac;
+  const vac = Number((bac - eac).toFixed(2));
+
+  const budget = total(finiteValues(records.map(item => item.预算金额 ?? item.计划成本)));
+  const forecastCost = total(finiteValues(records.map(item => item.预计成本)));
+  const committedCost = total(finiteValues(records.map(item => item.已承诺成本)));
+  const totalDeliverables = Math.round(total(finiteValues(records.map(item => item.交付物总数))));
+  const acceptedDeliverables = Math.round(total(finiteValues(records.map(item => item.已验收交付物))));
+  const pendingDeliverables = Math.round(total(finiteValues(records.map(item => item.待验收交付物))));
+  const rejectedDeliverables = Math.round(total(finiteValues(records.map(item => item.验收驳回数))));
+  const scopeChanges = Math.round(total(finiteValues(records.map(item => item.范围变更数))));
+
+  const scheduleAvailable = records.length > 0 && plannedProgressValues.length > 0 && actualProgressValues.length > 0;
+  const evmAvailable = records.length > 0 && [records.map(item => item.计划价值), records.map(item => item.挣值), records.map(item => item.实际成本), records.map(item => item.完工预算)].every(values => finiteValues(values).length > 0);
+  const costAvailable = records.length > 0 && finiteValues(records.map(item => item.预算金额 ?? item.计划成本)).length > 0 && finiteValues(records.map(item => item.实际成本)).length > 0;
+  const scopeAvailable = records.length > 0 && finiteValues(records.map(item => item.交付物总数)).length > 0;
+  const qualityAvailable = records.length > 0 && finiteValues(records.map(item => item.质量指数)).length > 0;
+  const changeAvailable = records.length > 0 && records.some(item => finiteValues([item.待处理变更, item.进行中变更, item.已批准变更, item.已拒绝变更, item.已实施变更]).length > 0);
+  const riskAvailable = !String(dashboard.source.note || "").includes("风险表读取失败");
+  const collectionRate = dashboard.kpi.collectionRate;
+  const defectDensity = average(finiteValues(records.map(item => item.缺陷密度)));
+  const inspectionPassRate = average(finiteValues(records.map(item => item.质检通过率)));
+  const qualityIndex = average(finiteValues(records.map(item => item.质量指数)));
+  const openDefects = Math.round(total(finiteValues(records.map(item => item.未关闭缺陷))));
+  const resolvedDefects = Math.round(total(finiteValues(records.map(item => item.已解决缺陷))));
+  const pendingChanges = Math.round(total(finiteValues(records.map(item => item.待处理变更))));
+  const inProgressChanges = Math.round(total(finiteValues(records.map(item => item.进行中变更))));
+  const approvedChanges = Math.round(total(finiteValues(records.map(item => item.已批准变更))));
+  const rejectedChanges = Math.round(total(finiteValues(records.map(item => item.已拒绝变更))));
+  const implementedChanges = Math.round(total(finiteValues(records.map(item => item.已实施变更))));
+  const missing = [
+    !scheduleAvailable ? "计划进度/当前进度" : "",
+    !evmAvailable ? "PV/EV/AC/BAC" : "",
+    !costAvailable ? "预算金额/实际成本" : "",
+    !scopeAvailable ? "交付物总数/验收数" : "",
+    !qualityAvailable ? "质量指数/缺陷数" : "",
+    !riskAvailable ? "风险表" : "",
+    !changeAvailable ? "变更统计" : "",
+  ].filter(Boolean);
 
   const recentTrend = dashboard.monthlyTrend.slice(-5);
   const trend = recentTrend.length > 0
@@ -245,14 +214,16 @@ function buildMonitoringFromDashboard(dashboard: DashboardData): MonitoringData 
         const ratio = item.contract > 0 ? ((item.collection / item.contract) * 100 - collectionRate) : 0;
         return `${ratio >= 0 ? "+" : ""}${Math.round(ratio)}%`;
       })
-    : ["0%", "0%", "0%", "0%", "0%"];
+    : [];
 
-  const scheduleHealth = healthByThreshold(actualProgress, 80, 50);
-  const costHealth = healthByThreshold(collectionRate, 80, 50);
-  const risk = riskHealth(highRiskCount, mediumRiskCount);
-  const overall: HealthStatus = [scheduleHealth, costHealth, risk].includes("red")
+  const scheduleHealth: HealthStatus = scheduleAvailable ? healthByThreshold(100 + scheduleVariance, 100, 90) : "unknown";
+  const costVarianceRate = budget > 0 ? ((budget - (forecastCost || actualCost)) / budget) * 100 : 0;
+  const costHealth: HealthStatus = costAvailable ? healthByThreshold(100 + costVarianceRate, 100, 90) : "unknown";
+  const risk: HealthStatus = riskAvailable ? riskHealth(highRiskCount, mediumRiskCount) : "unknown";
+  const evaluated = [scheduleHealth, costHealth, risk].filter(status => status !== "unknown");
+  const overall: HealthStatus = evaluated.length === 0 ? "unknown" : evaluated.includes("red")
     ? "red"
-    : [scheduleHealth, costHealth, risk].includes("yellow")
+    : evaluated.includes("yellow")
       ? "yellow"
       : "green";
 
@@ -260,59 +231,60 @@ function buildMonitoringFromDashboard(dashboard: DashboardData): MonitoringData 
     source: {
       status: "feishu",
       label: "飞书项目台账实时数据",
-      note: dashboard.source.note || "来源：飞书项目台账；监控指标由项目进度、合同、回款、应收、风险等字段实时派生。",
+      note: dashboard.source.note || "来源：飞书项目台账。只展示已实际录入的指标；缺失字段不使用代理值或样例值补位。",
       generatedAt: dashboard.source.generatedAt,
     },
     healthOverview: {
       overall,
       schedule: scheduleHealth,
       cost: costHealth,
-      quality: risk === "red" ? "yellow" : "green",
-      scope: activeCount > completedCount ? "yellow" : "green",
+      quality: qualityAvailable ? healthByThreshold(qualityIndex, 90, 75) : "unknown",
+      scope: scopeAvailable ? healthByThreshold(totalDeliverables > 0 ? acceptedDeliverables / totalDeliverables * 100 : 0, 90, 70) : "unknown",
       risk,
     },
+    availability: { fullOverview: scheduleAvailable && costAvailable && riskAvailable, schedule: scheduleAvailable, evm: evmAvailable, cost: costAvailable, scope: scopeAvailable, quality: qualityAvailable, risk: riskAvailable, change: changeAvailable, report: evmAvailable, missing },
     evm: {
       pv: plannedValue,
       ev: earnedValue,
-      ac: actualCostProxy,
-      bac: totalContract,
+      ac: actualCost,
+      bac,
       spi,
       cpi,
       sv: Number((earnedValue - plannedValue).toFixed(2)),
-      cv: Number((earnedValue - actualCostProxy).toFixed(2)),
+      cv: Number((earnedValue - actualCost).toFixed(2)),
       eac,
       vac,
     },
     schedule: {
       planned: plannedProgress,
       actual: actualProgress,
-      criticalPathStatus: highRiskCount > 0 || delayedCount > 0 ? "at-risk" : "normal",
-      criticalPathTasks: highRiskCount + mediumRiskCount,
+      criticalPathStatus: delayedCount > 0 ? "at-risk" : scheduleAvailable ? "normal" : "unknown",
+      criticalPathTasks,
       delayedTasks: delayedCount,
       variance: scheduleVariance,
     },
     cost: {
-      budget: totalContract,
-      actual: totalCollection,
-      committed: receivable,
-      forecast: eac,
-      variance: vac,
+      budget,
+      actual: actualCost,
+      committed: committedCost,
+      forecast: forecastCost,
+      variance: Number((budget - (forecastCost || actualCost)).toFixed(2)),
     },
     scope: {
-      verifiedDeliverables: completedCount,
-      totalDeliverables: records.length,
-      acceptanceRate: records.length > 0 ? Math.round((completedCount / records.length) * 100) : 0,
-      scopeCreepCount: dashboard.riskProjects.filter(item => item.riskType.includes("范围") || item.riskType.includes("变更")).length,
-      pendingAcceptances: activeCount,
-      rejectedItems: records.filter(item => item.项目状态.includes("暂停") || item.项目状态.includes("取消")).length,
+      verifiedDeliverables: acceptedDeliverables,
+      totalDeliverables,
+      acceptanceRate: totalDeliverables > 0 ? Math.round((acceptedDeliverables / totalDeliverables) * 100) : 0,
+      scopeCreepCount: scopeChanges,
+      pendingAcceptances: pendingDeliverables,
+      rejectedItems: rejectedDeliverables,
     },
     quality: {
-      defectDensity: Number((highRiskCount / projectCount).toFixed(2)),
-      defectTrend: highRiskCount > mediumRiskCount ? "up" : "down",
-      inspectionPassRate: Math.max(0, Math.min(100, 100 - highRiskCount * 8 - mediumRiskCount * 3)),
-      qualityIndex: Math.max(0, Math.min(100, 100 - highRiskCount * 10 - mediumRiskCount * 4)),
-      openDefects: highRiskCount + mediumRiskCount,
-      resolvedDefects: Math.max(0, dashboard.riskProjects.length - highRiskCount - mediumRiskCount),
+      defectDensity,
+      defectTrend: "unknown",
+      inspectionPassRate,
+      qualityIndex,
+      openDefects,
+      resolvedDefects,
     },
     risks: dashboard.riskProjects.slice(0, 8).map(item => ({
       id: item.id,
@@ -320,41 +292,30 @@ function buildMonitoringFromDashboard(dashboard: DashboardData): MonitoringData 
       probability: item.severity === "高" ? "H" : item.severity === "中" ? "M" : "P",
       impact: item.severity === "高" ? "H" : item.severity === "中" ? "M" : "L",
       trigger: item.status,
-      owner: "项目负责人",
+      owner: (() => { const record = records.find(project => project.项目编号 === item.id); return record?.责任人 || record?.项目负责人 || record?.项目经理 || "未录入"; })(),
     })),
     changes: {
-      open: activeCount,
-      inProgress: records.filter(item => ["进行中", "执行中", "交付中"].includes(item.项目状态)).length,
-      approved: completedCount,
-      rejected: records.filter(item => item.项目状态.includes("取消")).length,
-      implemented: completedCount,
-      pending: records.filter(item => ["未启动", "待启动", "立项中"].includes(item.项目状态)).length,
+      open: pendingChanges + inProgressChanges,
+      inProgress: inProgressChanges,
+      approved: approvedChanges,
+      rejected: rejectedChanges,
+      implemented: implementedChanges,
+      pending: pendingChanges,
     },
     performance: {
       pc: actualProgress,
-      status: actualProgress >= plannedProgress ? "on-track" : "behind",
+      status: scheduleAvailable ? actualProgress >= plannedProgress ? "on-track" : "behind" : "unknown",
       trend,
-      forecast: `飞书项目台账共 ${records.length} 个项目，合同额 ${totalContract.toFixed(2)} 万，已回款 ${totalCollection.toFixed(2)} 万，回款率 ${collectionRate.toFixed(1)}%，应收 ${receivable.toFixed(2)} 万。`,
+      forecast: `飞书项目台账共 ${records.length} 个项目，合同额 ${dashboard.kpi.totalContract.toFixed(2)} 万，已回款 ${dashboard.kpi.totalCollection.toFixed(2)} 万，回款率 ${collectionRate.toFixed(1)}%，应收 ${dashboard.kpi.receivable.toFixed(2)} 万。`,
     },
-    deliverables: records.slice(0, 10).map(item => ({
-      id: item.项目编号,
-      name: item.项目名称,
-      status: ["已完成", "完成", "已验收", "验收完成"].includes(item.项目状态)
-        ? "accepted"
-        : toSafeNumber(item.当前进度) >= 80
-          ? "ready"
-          : toSafeNumber(item.当前进度) > 0
-            ? "in_progress"
-            : "pending",
-      date: item.计划完成 || item.到期日期 || "-",
-    })),
+    deliverables: [],
   };
 }
 
 // ─── Helper Components ───────────────────────────────────────────────────────
 
-function HealthDot({ status, size = 12 }: { status: "green" | "yellow" | "red"; size?: number }) {
-  const colors = { green: "var(--green)", yellow: "var(--amber)", red: "var(--red)" };
+function HealthDot({ status, size = 12 }: { status: HealthStatus; size?: number }) {
+  const colors: Record<HealthStatus, string> = { green: "var(--green)", yellow: "var(--amber)", red: "var(--red)", unknown: "var(--text2)" };
   return (
     <span style={{
       display: "inline-block",
@@ -534,8 +495,8 @@ export default function MonitoringPage() {
   const CHANGE_CONTROL = monitoringData.changes;
   const PERFORMANCE_DATA = monitoringData.performance;
   const DELIVERABLES = monitoringData.deliverables;
-  const healthColors = { green: "var(--green)", yellow: "var(--amber)", red: "var(--red)" };
-  const healthLabels = { green: "正常", yellow: "关注", red: "危险" };
+  const healthColors: Record<HealthStatus, string> = { green: "var(--green)", yellow: "var(--amber)", red: "var(--red)", unknown: "var(--text2)" };
+  const healthLabels: Record<HealthStatus, string> = { green: "正常", yellow: "关注", red: "危险", unknown: "未评估" };
 
   return (
     <div style={{ minHeight: "100vh", background: "var(--bg)", display: "flex", flexDirection: "column" }}>
@@ -548,7 +509,7 @@ export default function MonitoringPage() {
         gap: 16,
         background: "var(--surface)",
       }}>
-        <a href="/" style={{ color: "var(--text2)", textDecoration: "none", fontSize: "0.85rem" }}>← 返回首页</a>
+        <Link href="/" style={{ color: "var(--text2)", textDecoration: "none", fontSize: "0.85rem" }}>← 返回首页</Link>
         <span style={{ color: "var(--border)" }}>|</span>
         <span style={{ fontWeight: 700 }}>📡 项目监控阶段</span>
         <span style={{
@@ -648,7 +609,7 @@ export default function MonitoringPage() {
                   { label: "质量", value: healthStatus.quality },
                   { label: "范围", value: healthStatus.scope },
                   { label: "风险", value: healthStatus.risk },
-                ] as { label: string; value: "green" | "yellow" | "red" }[]).map(item => (
+                ] as { label: string; value: HealthStatus }[]).map(item => (
                   <div key={item.label} style={{
                     background: "var(--surface2)",
                     border: `1px solid ${healthColors[item.value]}33`,
@@ -1450,7 +1411,7 @@ export default function MonitoringPage() {
                 <div style={{ fontSize: "0.82rem", color: "var(--text2)", lineHeight: 1.8 }}>
                   <p style={{ marginBottom: 12 }}>
                     <strong style={{ color: "var(--text)" }}>整体评估：</strong>
-                    项目整体健康度为<span style={{ color: "var(--amber)", fontWeight: 600 }}>"关注"</span>等级，
+                    项目整体健康度为<span style={{ color: "var(--amber)", fontWeight: 600 }}>“关注”</span>等级，
                     进度与成本均出现轻度偏差，但整体可控。
                   </p>
                   <p style={{ marginBottom: 12 }}>

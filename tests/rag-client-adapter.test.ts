@@ -21,7 +21,7 @@ test('maps RAG contract citations into knowledge chat sources', () => {
       relevance: 0.92,
     }],
     retrieval: {
-      mode: 'keyword',
+      mode: 'lexical-hybrid',
       provider: 'local-corpus',
       index_version: '2026-06-22.10',
       result_count: 1,
@@ -36,5 +36,5 @@ test('maps RAG contract citations into knowledge chat sources', () => {
   assert.equal(message.answerStatus, 'answered');
   assert.equal(message.sources?.[0]?.pageId, 'KB-0001');
   assert.deepEqual(message.sources?.[0]?.sourceIds, ['SRC-0001']);
-  assert.equal(message.retrievalMode, 'keyword');
+  assert.equal(message.retrievalMode, 'lexical-hybrid');
 });

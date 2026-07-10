@@ -33,10 +33,10 @@ function problem(status: number, title: string, detail: string, id: string): Res
   );
 }
 
-async function getOptionalCurrentUser() {
+async function requireAuthenticatedApiUser() {
   try {
     const auth = await import('../../../../features/auth/server.ts');
-    return await auth.getCurrentUser();
+    return await auth.requireAuthenticatedApiUser();
   } catch {
     return null;
   }
@@ -50,7 +50,7 @@ async function saveKnowledgeOutputReference(input: {
   pageId: string;
   citationText: string;
   confidence: number;
-  user: Awaited<ReturnType<typeof getOptionalCurrentUser>>;
+  user: Awaited<ReturnType<typeof requireAuthenticatedApiUser>>;
   requestId: string;
 }) {
   try {
@@ -63,6 +63,10 @@ async function saveKnowledgeOutputReference(input: {
 
 export async function POST(request: Request): Promise<Response> {
   const id = requestId(request);
+  const user = await requireAuthenticatedApiUser();
+  if (process.env.AUTH_REQUIRED === 'true' && !user) {
+    return problem(401, 'Unauthorized', 'Please sign in before querying internal knowledge.', id);
+  }
   let body: unknown;
 
   try {
@@ -76,7 +80,6 @@ export async function POST(request: Request): Promise<Response> {
     const dynamicDocuments = await listPublishedRiskRetrospectiveRagDocuments();
     const result = queryRagWithAdditionalDocuments(input, dynamicDocuments.documents);
     result.trace_id = id;
-    const user = await getOptionalCurrentUser();
     const usage = await recordRiskRetrospectiveRagUsage({
       query: input.query,
       citations: result.citations,

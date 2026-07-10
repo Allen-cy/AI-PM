@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import {
   type Stakeholder,
   type EngagementLevel,
@@ -150,7 +151,7 @@ export default function StakeholderPage() {
         gap: 16,
         background: "var(--surface)",
       }}>
-        <a href="/" style={{ color: "var(--text2)", textDecoration: "none", fontSize: "0.85rem" }}>← 返回首页</a>
+        <Link href="/" style={{ color: "var(--text2)", textDecoration: "none", fontSize: "0.85rem" }}>← 返回首页</Link>
         <span style={{ color: "var(--border)" }}>|</span>
         <span style={{ fontWeight: 700 }}>👥 干系人管理</span>
         <span className="tag tag-blue" style={{ fontSize: "0.7rem" }}>Power-Interest Matrix</span>

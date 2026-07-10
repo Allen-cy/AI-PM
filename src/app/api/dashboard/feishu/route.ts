@@ -2,11 +2,22 @@ import { loadDashboardFromFeishu } from '../../../../features/dashboard/feishu.t
 import { getEffectiveFeishuConfig } from '../../../../features/feishu/user-config.ts';
 import { filterDashboardByProjectAccess, projectAccessMode } from '../../../../features/security/authorization.ts';
 import { loadProjectAccessGrantsForUser, writeOperationAudit } from '../../../../features/security/repository.ts';
+import type { DashboardDataClass } from '../../../../features/dashboard/feishu.ts';
 
 export const runtime = 'nodejs';
 
-export async function GET(): Promise<Response> {
+const DATA_CLASSES = new Set<DashboardDataClass>(['production', 'sample', 'test', 'diagnostic', 'unclassified']);
+
+export async function GET(request: Request): Promise<Response> {
   const requestId = crypto.randomUUID();
+  const requestedDataClass = new URL(request.url).searchParams.get('data_class') || 'production';
+  if (!DATA_CLASSES.has(requestedDataClass as DashboardDataClass)) {
+    return Response.json({
+      status: 'rejected',
+      code: 'DATA_CLASS_INVALID',
+      request_id: requestId,
+    }, { status: 400, headers: { 'X-Request-Id': requestId, 'Cache-Control': 'no-store' } });
+  }
   const effective = await getEffectiveFeishuConfig();
   const config = effective.config;
   if (!config) {
@@ -21,7 +32,7 @@ export async function GET(): Promise<Response> {
   }
 
   try {
-    const rawData = await loadDashboardFromFeishu(config);
+    const rawData = await loadDashboardFromFeishu(config, { dataClass: requestedDataClass as DashboardDataClass });
     const grants = await loadProjectAccessGrantsForUser(effective.user);
     const data = filterDashboardByProjectAccess(rawData, effective.user, grants);
     const access = {
@@ -44,6 +55,7 @@ export async function GET(): Promise<Response> {
       data,
       access,
       source: effective.source,
+      data_class: requestedDataClass,
       request_id: requestId,
     }, { status: 200, headers: { 'X-Request-Id': requestId, 'Cache-Control': 'no-store' } });
   } catch (error) {

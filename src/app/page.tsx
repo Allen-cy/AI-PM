@@ -10,6 +10,55 @@ const PHASE_MODULES = [
     tag: "每日管理闭环",
     modules: [
       {
+        href: "/business-assistant",
+        icon: "👨‍💼",
+        title: "PM/运营业务助理",
+        desc: "交付承诺、里程碑、风险、验收、开票、应收与变化确认",
+        color: "blue",
+      },
+      {
+        href: "/pmo/control-center",
+        icon: "🏛️",
+        title: "PMO组合治理控制中心",
+        desc: "异常收件箱、组合健康、跨项目依赖、资源容量和数据治理",
+        color: "purple",
+      },
+      {
+        href: "/decision-center",
+        icon: "🧭",
+        title: "汇报与CEO决策中心",
+        desc: "PM/运营上报、PMO复核和决策包、CEO决策、下行回执与效果复核",
+        color: "amber",
+      },
+      {
+        href: "/business-finance",
+        icon: "💰",
+        title: "组合业财与收益实现",
+        desc: "合同、成本、验收、回款、现金、毛利、收益基线与定量情景分析",
+        color: "green",
+      },
+      {
+        href: "/role-assistant",
+        icon: "🤖",
+        title: "角色AI业务助理",
+        desc: "区分事实、推断、建议和待确认项，带来源引用与人工确认",
+        color: "cyan",
+      },
+      {
+        href: "/collaboration-inbox",
+        icon: "📥",
+        title: "协作待办与审批收件箱",
+        desc: "发起人、业务Owner、财务、质量等角色的待接收、待复核、待补证事项",
+        color: "cyan",
+      },
+      {
+        href: "/operations-center",
+        icon: "🛠️",
+        title: "系统运营与可靠性中心",
+        desc: "首次使用向导、接入诊断、数据新鲜度、SLA、队列积压和试点运营",
+        color: "green",
+      },
+      {
         href: "/workbench",
         icon: "✅",
         title: "PM/PMO每日工作台",
@@ -171,10 +220,10 @@ const PHASE_MODULES = [
     tag: "验收与归档",
     modules: [
       {
-        href: "/closing",
+        href: "/closure-knowledge",
         icon: "🏁",
-        title: "项目收尾",
-        desc: "验收确收、复盘总结、经验教训、文档归档",
+        title: "收尾门禁与知识复用",
+        desc: "业务、管理、财务关闭门禁，知识候选评审、影响待办和复用效果",
         color: "green",
       },
       {

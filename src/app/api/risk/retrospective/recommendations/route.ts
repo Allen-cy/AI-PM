@@ -2,7 +2,6 @@ import {
   buildRiskRetrospectiveRecommendations,
   listRiskRetrospectiveAssets,
 } from "@/features/risk/retrospective-assets";
-import { initialRisks } from "@/lib/risk";
 import { listRisks } from "@/lib/risk-repository";
 
 export const runtime = "nodejs";
@@ -18,7 +17,7 @@ export async function GET(): Promise<Response> {
   const requestId = crypto.randomUUID();
   try {
     const [riskResult, assetResult] = await Promise.all([
-      listRisks().catch(() => ({ risks: initialRisks, events: [], source: "memory" as const })),
+      listRisks(),
       listRiskRetrospectiveAssets("published", 100),
     ]);
     const recommendations = buildRiskRetrospectiveRecommendations(riskResult.risks, assetResult.assets);

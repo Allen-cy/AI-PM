@@ -1,5 +1,9 @@
 // LLM Gateway - user-configurable provider first, DeepSeek + MiniMax routing fallback
 import { SYSTEM_PROMPTS } from "./llm-prompts";
+import {
+  aiApiKeyCredentialContext,
+  resolveStoredCredential,
+} from "../features/security/credential-encryption";
 
 const DEEPSEEK_BASE = "https://api.deepseek.com/v1";
 const MINIMAX_BASE = "https://api.minimax.chat/v1";
@@ -61,8 +65,7 @@ async function callDeepSeek(
   });
 
   if (!response.ok) {
-    const errorText = await response.text().catch(() => "");
-    throw new Error(`DeepSeek API error ${response.status}: ${errorText}`);
+    throw new Error(`DeepSeek API error ${response.status}`);
   }
 
   const data = await response.json();
@@ -93,8 +96,7 @@ async function callMiniMax(
   });
 
   if (!response.ok) {
-    const errorText = await response.text().catch(() => "");
-    throw new Error(`MiniMax API error ${response.status}: ${errorText}`);
+    throw new Error(`MiniMax API error ${response.status}`);
   }
 
   const data = await response.json();
@@ -128,8 +130,7 @@ async function callOpenAICompatible(
   });
 
   if (!response.ok) {
-    const errorText = await response.text().catch(() => "");
-    throw new Error(`${provider} API error ${response.status}: ${errorText}`);
+    throw new Error(`${provider} API error ${response.status}`);
   }
 
   const data = await response.json();
@@ -169,8 +170,7 @@ async function callAnthropic(
   });
 
   if (!response.ok) {
-    const errorText = await response.text().catch(() => "");
-    throw new Error(`anthropic API error ${response.status}: ${errorText}`);
+    throw new Error(`anthropic API error ${response.status}`);
   }
 
   const data = await response.json();
@@ -210,17 +210,23 @@ async function readCurrentUserLLMSettings(): Promise<UserLLMSettings | null> {
     const supabase = auth.getAuthSupabase();
     const { data, error } = await supabase
       .from("user_ai_settings")
-      .select("provider,model,base_url,api_key,enabled")
+      .select("provider,model,base_url,api_key,api_key_encrypted,enabled")
       .eq("user_id", user.id)
       .maybeSingle();
-    if (error || !data?.api_key || data.enabled === false) return null;
+    if (error || !data || data.enabled === false) return null;
+    const apiKey = resolveStoredCredential({
+      encrypted: data.api_key_encrypted,
+      plaintext: data.api_key,
+      context: aiApiKeyCredentialContext(user.id),
+    }).value;
+    if (!apiKey) return null;
     const provider = String(data.provider || "minimax") as UserProvider;
     if (!["deepseek", "minimax", "glm", "anthropic", "openai-compatible"].includes(provider)) return null;
     return {
       provider,
       model: String(data.model || MODELS.minimax),
       baseUrl: typeof data.base_url === "string" ? data.base_url : null,
-      apiKey: String(data.api_key),
+      apiKey,
       enabled: data.enabled !== false,
     };
   } catch {
@@ -249,8 +255,8 @@ async function llmComplete(
   if (userSettings) {
     try {
       return await callUserProvider(userSettings, messages, options?.temperature);
-    } catch (userErr) {
-      console.warn(`[llmComplete] User provider ${userSettings.provider} failed:`, userErr instanceof Error ? userErr.message : String(userErr));
+    } catch {
+      console.warn(`[llmComplete] User provider ${userSettings.provider} failed without credential details`);
     }
   }
 

@@ -4,13 +4,19 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { FeishuConfirmationInlinePanelClient } from "@/components/FeishuConfirmationInlinePanelClient";
 import { IntegrationStatusPanelClient } from "@/components/IntegrationStatusPanelClient";
+import {
+  businessContextSearchParams,
+  readStoredBusinessContext,
+  readStoredDataClass,
+  writeStoredBusinessContext,
+} from "@/features/operating-model/client-context";
 
 type Workbench = {
   kpis: Array<{ label: string; value: string; hint: string; status: string }>;
   actions: Array<{ id: string; priority: string; title: string; owner: string; due: string; source: string; action: string }>;
   keyProjects: Array<{ name: string; status: string; progress: string; risk: string; next: string }>;
   aiSuggestions: Array<{ title: string; basis: string; confirmation: string; actionTitle?: string; priority?: "P0" | "P1" | "P2"; owner?: string; dueDate?: string }>;
-  myProjects: Array<{ id: string; name: string; owner: string; status: string; stage: string; progress: number; health: string; riskLevel: string; nextMilestone: string; source: string }>;
+  myProjects: Array<{ id: string; canonicalProjectId?: string; name: string; owner: string; status: string; stage: string; progress: number; health: string; riskLevel: string; nextMilestone: string; source: string }>;
   myRisks: Array<{ id: string; projectName: string; description: string; severity: string; status: string; owner: string; dueDate: string; nextAction: string; source: string }>;
   todayTodos: Array<{ id: string; type: string; title: string; projectName: string; owner: string; dueDate: string; daysLeft: number | null; status: string; priority: string; source: string; action: string }>;
   businessReminders: Array<{ id: string; projectName: string; customer: string; amount: number; dueDate: string; daysLeft: number | null; status: string; source: string; action: string }>;
@@ -113,6 +119,8 @@ type WorkbenchResponse = {
   source: string;
   detail?: string;
   generated_at?: string;
+  context?: { businessRole?: string };
+  data_class?: string;
   workbench: Workbench;
 };
 
@@ -196,13 +204,38 @@ export default function WorkbenchPage() {
   const [actionMessage, setActionMessage] = useState("");
   const [savingSuggestion, setSavingSuggestion] = useState<string | null>(null);
   const [savingGovernanceFollowup, setSavingGovernanceFollowup] = useState<string | null>(null);
+  const [contextRevision, setContextRevision] = useState(0);
+
+  useEffect(() => {
+    const reload = () => setContextRevision(value => value + 1);
+    window.addEventListener("ai-pmo:business-context-changed", reload);
+    window.addEventListener("ai-pmo:data-class-changed", reload);
+    return () => {
+      window.removeEventListener("ai-pmo:business-context-changed", reload);
+      window.removeEventListener("ai-pmo:data-class-changed", reload);
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
     async function load() {
       try {
+        const contextResponse = await fetch("/api/context/current", { cache: "no-store" });
+        const contextBody = await contextResponse.json() as {
+          active_context?: { assignmentId: string; businessRole: string; orgId: string; subjectScope: string; subjectId: string } | null;
+          available_contexts?: Array<{ id: string; businessRole: string; orgId: string; subjectScope: string; subjectId: string; status: string }>;
+          detail?: string;
+        };
+        if (!contextResponse.ok) throw new Error(contextBody.detail || "无法读取当前业务身份。");
+        const stored = readStoredBusinessContext();
+        const assignment = contextBody.available_contexts?.find(item => item.id === stored?.assignmentId && item.status === "active")
+          ?? contextBody.available_contexts?.find(item => item.id === contextBody.active_context?.assignmentId && item.status === "active");
+        if (!assignment) throw new Error("尚未分配有效业务角色，请联系管理员。");
+        const context = { assignmentId: assignment.id, businessRole: assignment.businessRole, orgId: assignment.orgId, subjectScope: assignment.subjectScope, subjectId: assignment.subjectId };
+        writeStoredBusinessContext(context);
+        const query = businessContextSearchParams(context, readStoredDataClass());
         const [response, governanceResponse] = await Promise.all([
-          fetch("/api/operating-system/workbench", { cache: "no-store" }),
+          fetch(`/api/operating-system/workbench?${query.toString()}`, { cache: "no-store" }),
           fetch("/api/governance/workflows", { cache: "no-store" }),
         ]);
         const body = await response.json();
@@ -217,7 +250,7 @@ export default function WorkbenchPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [contextRevision]);
 
   const workbench = data?.workbench;
 
@@ -587,13 +620,15 @@ export default function WorkbenchPage() {
               <div className="card">
                 <div className="section-title">📁 我的项目</div>
                 {workbench.myProjects.length === 0 ? (
-                  <p style={{ color: "var(--text2)", lineHeight: 1.7 }}>没有匹配到当前用户负责的未关闭项目。请检查飞书项目台账中的“项目经理/项目负责人/责任人”字段。</p>
+                  <p style={{ color: "var(--text2)", lineHeight: 1.7 }}>当前业务身份与数据空间下没有可用项目。请检查稳定项目身份映射、角色管理范围及数据分类；系统不会按同名项目猜测。</p>
                 ) : (
                   <div style={{ display: "grid", gap: 12 }}>
                     {workbench.myProjects.map(project => (
                       <div key={project.id} style={{ borderTop: "1px solid var(--border)", paddingTop: 12 }}>
                         <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
-                          <strong>{project.name}</strong>
+                          {project.canonicalProjectId ? (
+                            <Link href={`/projects/${project.canonicalProjectId}?role=${data?.context?.businessRole || "pm"}&data_class=${data?.data_class || "production"}`} style={{ color: "var(--text)", textDecoration: "none", fontWeight: 850 }}>{project.name} · 项目360</Link>
+                          ) : <strong>{project.name} · 待完成项目身份映射</strong>}
                           <StatusTag value={project.health} />
                         </div>
                         <p style={{ color: "var(--text2)", fontSize: "0.82rem", lineHeight: 1.6, marginTop: 8 }}>

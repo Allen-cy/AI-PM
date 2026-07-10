@@ -1,9 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { buildBusinessCaseEvidence, type AiEvidence, type AiSuggestedAction } from "@/features/ai/evidence";
 import { feishuTableUrl } from "@/features/feishu/links";
+import {
+  readStoredBusinessContext,
+  readStoredCurrentProject,
+  readStoredDataClass,
+} from "@/features/operating-model/client-context";
 
 // ============================================================================
 // Types & Interfaces
@@ -52,6 +57,7 @@ interface ProjectCharter {
 }
 
 interface StakeholderPreview {
+  id: string;
   name: string;
   role: string;
   power: "高" | "中" | "低";
@@ -61,31 +67,12 @@ interface StakeholderPreview {
 
 interface Requirement {
   id: string;
+  code: string;
   description: string;
   priority: "高" | "中" | "低";
   status: "待确认" | "已确认" | "已实现" | "已验收";
   category: string;
 }
-
-// ============================================================================
-// Mock Data
-// ============================================================================
-
-const MOCK_STAKEHOLDERS: StakeholderPreview[] = [
-  { name: "张校长", role: "项目发起人", power: "高", interest: "高", quadrant: "重点管理" },
-  { name: "李主任", role: "业务负责人", power: "高", interest: "低", quadrant: "保持满意" },
-  { name: "王老师", role: "最终用户", power: "低", interest: "高", quadrant: "随时告知" },
-  { name: "财务处", role: "采购部门", power: "中", interest: "中", quadrant: "监督" },
-];
-
-const MOCK_REQUIREMENTS: Requirement[] = [
-  { id: "REQ-001", description: "支持多角色用户登录系统", priority: "高", status: "已确认", category: "功能需求" },
-  { id: "REQ-002", description: "实现数据可视化报表功能", priority: "高", status: "已实现", category: "功能需求" },
-  { id: "REQ-003", description: "集成飞书消息通知服务", priority: "中", status: "已确认", category: "集成需求" },
-  { id: "REQ-004", description: "提供移动端适配界面", priority: "中", status: "待确认", category: "非功能需求" },
-  { id: "REQ-005", description: "支持100并发用户访问", priority: "高", status: "已验收", category: "性能需求" },
-  { id: "REQ-006", description: "实现操作日志审计功能", priority: "低", status: "已确认", category: "安全需求" },
-];
 
 const PROJECT_TYPES = ["信息化", "课程开发", "工程基建", "运营服务"] as const;
 const PROJECT_LEVELS = ["S", "A", "B"] as const;
@@ -95,6 +82,17 @@ const QUADRANT_COLORS = {
   "随时告知": { color: "#3b82f6", bg: "rgba(59,130,246,0.08)", border: "rgba(59,130,246,0.3)" },
   "监督": { color: "#6b7280", bg: "rgba(107,114,128,0.08)", border: "rgba(107,114,128,0.3)" },
 };
+
+function levelLabel(value: number): "高" | "中" | "低" {
+  return value >= 4 ? "高" : value >= 2 ? "中" : "低";
+}
+
+function stakeholderQuadrant(power: "高" | "中" | "低", interest: "高" | "中" | "低"): StakeholderPreview["quadrant"] {
+  if (power === "高" && interest === "高") return "重点管理";
+  if (power === "高") return "保持满意";
+  if (interest === "高") return "随时告知";
+  return "监督";
+}
 
 // ============================================================================
 // Helper Components
@@ -241,6 +239,11 @@ export default function InitiationPage() {
   const [businessEvidence, setBusinessEvidence] = useState<AiEvidence | null>(null);
   const [businessEvidenceActionMessage, setBusinessEvidenceActionMessage] = useState("");
   const [savingBusinessEvidenceAction, setSavingBusinessEvidenceAction] = useState<string | null>(null);
+  const [stakeholders, setStakeholders] = useState<StakeholderPreview[]>([]);
+  const [currentProjectId, setCurrentProjectId] = useState("");
+  const [currentProjectName, setCurrentProjectName] = useState("");
+  const [sourceState, setSourceState] = useState<{ status: "loading" | "ready" | "unavailable"; detail: string }>({ status: "loading", detail: "正在读取当前项目的Supabase立项数据。" });
+  const [requirementSaving, setRequirementSaving] = useState(false);
 
   // Project Registration State
   const [projectInfo, setProjectInfo] = useState<ProjectInfo>({
@@ -288,7 +291,7 @@ export default function InitiationPage() {
   });
 
   // Requirements State
-  const [requirements, setRequirements] = useState<Requirement[]>(MOCK_REQUIREMENTS);
+  const [requirements, setRequirements] = useState<Requirement[]>([]);
   const [showReqForm, setShowReqForm] = useState(false);
   const [editingReq, setEditingReq] = useState<Requirement | null>(null);
   const [reqForm, setReqForm] = useState<Partial<Requirement>>({
@@ -299,6 +302,56 @@ export default function InitiationPage() {
 
   // AI Loading States
   const [aiLoading, setAiLoading] = useState<string | null>(null);
+
+  const loadInitiationData = useCallback(async () => {
+    const context = readStoredBusinessContext();
+    const projectId = readStoredCurrentProject();
+    const dataClass = readStoredDataClass();
+    setCurrentProjectId(projectId);
+    if (!context?.businessRole || !projectId) {
+      setStakeholders([]); setRequirements([]); setCurrentProjectName("");
+      setSourceState({ status: "unavailable", detail: "请先在顶部业务上下文中选择已授权的项目。" });
+      return;
+    }
+    setSourceState({ status: "loading", detail: "正在读取当前项目的干系人和需求记录。" });
+    const params = new URLSearchParams({ project_id: projectId, business_role: context.businessRole, data_class: dataClass });
+    try {
+      const response = await fetch(`/api/initiation?${params.toString()}`, { cache: "no-store" });
+      const payload = await response.json() as {
+        project?: { name?: string };
+        stakeholders?: Array<{ id: string; name: string; role: string; power: number; interest: number }>;
+        requirements?: Requirement[];
+        detail?: string;
+        error?: string;
+      };
+      if (!response.ok) throw new Error(payload.detail || payload.error || "立项数据读取失败");
+      setCurrentProjectName(payload.project?.name || "当前项目");
+      setStakeholders((payload.stakeholders || []).map(item => {
+        const power = levelLabel(item.power);
+        const interest = levelLabel(item.interest);
+        return { id: item.id, name: item.name, role: item.role, power, interest, quadrant: stakeholderQuadrant(power, interest) };
+      }));
+      setRequirements(Array.isArray(payload.requirements) ? payload.requirements : []);
+      setSourceState({ status: "ready", detail: `已连接Supabase正式数据：${payload.project?.name || "当前项目"}。` });
+    } catch (error) {
+      setStakeholders([]); setRequirements([]); setCurrentProjectName("");
+      setSourceState({ status: "unavailable", detail: error instanceof Error ? error.message : "立项数据源不可用。" });
+    }
+  }, []);
+
+  useEffect(() => {
+    const initialLoad = window.setTimeout(() => void loadInitiationData(), 0);
+    const reload = () => void loadInitiationData();
+    window.addEventListener("ai-pmo:project-context-changed", reload);
+    window.addEventListener("ai-pmo:business-context-changed", reload);
+    window.addEventListener("ai-pmo:data-class-changed", reload);
+    return () => {
+      window.clearTimeout(initialLoad);
+      window.removeEventListener("ai-pmo:project-context-changed", reload);
+      window.removeEventListener("ai-pmo:business-context-changed", reload);
+      window.removeEventListener("ai-pmo:data-class-changed", reload);
+    };
+  }, [loadInitiationData]);
 
   const handleSaveProjectToFeishu = async () => {
     setFeishuSaveResult(null);
@@ -341,38 +394,26 @@ export default function InitiationPage() {
   // ============================================================================
 
   const handleAIGenerateBusinessCase = async () => {
+    setBusinessEvidenceActionMessage("");
+    if (!projectInfo.name.trim() || !projectInfo.sponsor.trim() || !projectInfo.businessJustification.trim()) {
+      setBusinessEvidenceActionMessage("请先填写项目名称、发起人和业务立项理由。");
+      return;
+    }
     setAiLoading("business");
-    // Simulate AI generation delay
-    await new Promise(resolve => setTimeout(resolve, 1500));
-    const generatedCase: BusinessCase = {
-      marketOpportunity: "随着教育信息化2.0行动的推进，学校急需构建统一的数字化管理平台，以提升教学管理效率和家校沟通质量。预计市场规模年增长15%，政策支持力度持续加大。",
-      costBenefit: {
-        investment: "80万元",
-        expectedReturn: "年节省人力成本约20万元，提升管理效率30%，预计3年内实现ROI 75%",
-        roi: "75%",
-        paybackPeriod: "2.5年",
-      },
-      riskAssessment: "主要风险包括：需求变更风险（中等）、技术选型风险（低）、实施团队能力风险（中等）。建议采用敏捷迭代方式分阶段交付，制定详细的需求变更流程。",
-      recommendation: "批准",
-    };
-    setBusinessCase(generatedCase);
-
-    const evidence = buildBusinessCaseEvidence({
-      projectName: projectInfo.name,
-      projectType: projectInfo.type,
-      projectLevel: projectInfo.level,
-      sponsor: projectInfo.sponsor,
-      businessJustification: projectInfo.businessJustification,
-      recommendation: generatedCase.recommendation,
-    });
-    setBusinessEvidence(evidence);
     try {
-      const response = await fetch("/api/ai/evidence", {
+      const generatedResponse = await fetch("/api/initiation", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ evidence }),
+        body: JSON.stringify({ operation: "generate_business_case", project_name: projectInfo.name, project_type: projectInfo.type, project_level: projectInfo.level, sponsor: projectInfo.sponsor, business_justification: projectInfo.businessJustification }),
       });
-      const payload = await response.json().catch(() => ({})) as {
+      const generatedPayload = await generatedResponse.json() as { result?: BusinessCase; detail?: string; error?: string; model?: string };
+      if (!generatedResponse.ok || !generatedPayload.result) throw new Error(generatedPayload.detail || generatedPayload.error || "AI商业论证生成失败");
+      const generatedCase = generatedPayload.result;
+      setBusinessCase(generatedCase);
+      const evidence = buildBusinessCaseEvidence({ projectName: projectInfo.name, projectType: projectInfo.type, projectLevel: projectInfo.level, sponsor: projectInfo.sponsor, businessJustification: projectInfo.businessJustification, recommendation: generatedCase.recommendation });
+      setBusinessEvidence(evidence);
+      const auditResponse = await fetch("/api/ai/evidence", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ evidence }) });
+      const payload = await auditResponse.json().catch(() => ({})) as {
         status?: AiEvidence["auditStatus"];
         audit_id?: string;
         warning?: string;
@@ -384,38 +425,29 @@ export default function InitiationPage() {
         auditWarning: payload.warning,
       });
     } catch (error) {
-      setBusinessEvidence({
-        ...evidence,
-        auditStatus: "failed",
-        auditWarning: error instanceof Error ? error.message : "AI依据审计写入失败。",
-      });
+      setBusinessEvidenceActionMessage(`AI商业论证不可用：${error instanceof Error ? error.message : "未知错误"}`);
+    } finally {
+      setAiLoading(null);
     }
-    setAiLoading(null);
   };
 
   const handleAIGenerateCharter = async () => {
+    setBusinessEvidenceActionMessage("");
+    if (!projectInfo.name.trim() || !projectInfo.sponsor.trim() || !projectInfo.businessJustification.trim()) {
+      setBusinessEvidenceActionMessage("请先填写项目名称、发起人和业务立项理由。");
+      return;
+    }
     setAiLoading("charter");
-    await new Promise(resolve => setTimeout(resolve, 1500));
-    setProjectCharter({
-      objectives: "构建统一的智慧教育管理平台，实现教学、管理、沟通全流程数字化，提升教育服务质量和管理效率。",
-      scope: "一期覆盖教学管理、家校互通、数据分析三大模块；二期扩展至校园物联网集成。",
-      deliverables: "1. 智慧作业平台 2. 家校互通系统 3. 数据分析Dashboard 4. 移动端APP 5. API集成文档",
-      milestones: "Q1: 需求调研与方案设计 | Q2: 核心功能开发 | Q3: 系统集成测试 | Q4: 试运行与验收",
-      budget: "项目总预算80万元，分四阶段支付（30%+25%+25%+20%）",
-      organization: {
-        pm: "待指定",
-        solution: "解决方案总监",
-        delivery: "交付经理",
-      },
-      constraints: "预算限额100万元；需兼容现有飞书生态；必须通过等保三级认证",
-      assumptions: "项目团队配置8人+；获得校方高层支持；第三方系统接口可用",
-      signoff: {
-        initiator: "",
-        date: "",
-        status: "pending",
-      },
-    });
-    setAiLoading(null);
+    try {
+      const response = await fetch("/api/initiation", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ operation: "generate_charter", project_name: projectInfo.name, project_type: projectInfo.type, project_level: projectInfo.level, sponsor: projectInfo.sponsor, business_justification: projectInfo.businessJustification }) });
+      const payload = await response.json() as { result?: Omit<ProjectCharter, "signoff">; detail?: string; error?: string };
+      if (!response.ok || !payload.result) throw new Error(payload.detail || payload.error || "AI项目章程生成失败");
+      setProjectCharter(previous => ({ ...previous, ...payload.result!, signoff: previous.signoff }));
+    } catch (error) {
+      setBusinessEvidenceActionMessage(`AI项目章程不可用：${error instanceof Error ? error.message : "未知错误"}`);
+    } finally {
+      setAiLoading(null);
+    }
   };
 
   const convertBusinessEvidenceAction = async (action: AiSuggestedAction, index: number) => {
@@ -467,16 +499,44 @@ export default function InitiationPage() {
   // Requirement Handlers
   // ============================================================================
 
-  const handleSaveRequirement = () => {
-    if (!reqForm.description) return;
-    if (editingReq) {
-      setRequirements(prev => prev.map(r => r.id === editingReq.id ? { ...r, ...reqForm } as Requirement : r));
-    } else {
-      setRequirements(prev => [...prev, { id: `REQ-${String(prev.length + 1).padStart(3, "0")}`, ...reqForm } as Requirement]);
+  const requirementContext = () => {
+    const context = readStoredBusinessContext();
+    return context?.businessRole && currentProjectId
+      ? { project_id: currentProjectId, business_role: context.businessRole, data_class: readStoredDataClass() }
+      : null;
+  };
+
+  const handleSaveRequirement = async () => {
+    if (!reqForm.description?.trim()) return;
+    const context = requirementContext();
+    if (!context) { setBusinessEvidenceActionMessage("请先选择已授权的当前项目。"); return; }
+    setRequirementSaving(true);
+    try {
+      const response = await fetch("/api/initiation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          operation: editingReq ? "update_requirement" : "create_requirement",
+          ...context,
+          id: editingReq?.id,
+          description: reqForm.description.trim(),
+          priority: reqForm.priority || "中",
+          status: reqForm.status || "待确认",
+          category: reqForm.category || "功能需求",
+        }),
+      });
+      const payload = await response.json() as { detail?: string; error?: string };
+      if (!response.ok) throw new Error(payload.detail || payload.error || "需求保存失败");
+      setReqForm({ priority: "中", status: "待确认", category: "功能需求" });
+      setEditingReq(null);
+      setShowReqForm(false);
+      setBusinessEvidenceActionMessage("需求已保存到Supabase。");
+      await loadInitiationData();
+    } catch (error) {
+      setBusinessEvidenceActionMessage(`需求保存失败：${error instanceof Error ? error.message : "数据源不可用"}`);
+    } finally {
+      setRequirementSaving(false);
     }
-    setReqForm({ priority: "中", status: "待确认", category: "功能需求" });
-    setEditingReq(null);
-    setShowReqForm(false);
   };
 
   const handleEditRequirement = (req: Requirement) => {
@@ -485,10 +545,20 @@ export default function InitiationPage() {
     setShowReqForm(true);
   };
 
-  const handleDeleteRequirement = (id: string) => {
-    if (confirm("确认删除该需求？")) {
-      setRequirements(prev => prev.filter(r => r.id !== id));
-    }
+  const handleDeleteRequirement = async (id: string) => {
+    if (!confirm("确认删除该需求？")) return;
+    const context = requirementContext();
+    if (!context) { setBusinessEvidenceActionMessage("请先选择已授权的当前项目。"); return; }
+    setRequirementSaving(true);
+    try {
+      const response = await fetch("/api/initiation", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ operation: "delete_requirement", ...context, id }) });
+      const payload = await response.json() as { detail?: string; error?: string };
+      if (!response.ok) throw new Error(payload.detail || payload.error || "需求删除失败");
+      setBusinessEvidenceActionMessage("需求已从Supabase删除。");
+      await loadInitiationData();
+    } catch (error) {
+      setBusinessEvidenceActionMessage(`需求删除失败：${error instanceof Error ? error.message : "数据源不可用"}`);
+    } finally { setRequirementSaving(false); }
   };
 
   // ============================================================================
@@ -525,6 +595,20 @@ export default function InitiationPage() {
       </header>
 
       <main style={{ flex: 1, padding: "24px 32px" }}>
+        <div style={{
+          maxWidth: 1000,
+          margin: "0 auto 18px",
+          padding: "10px 14px",
+          borderRadius: 8,
+          background: sourceState.status === "ready" ? "rgba(16,185,129,0.08)" : sourceState.status === "loading" ? "rgba(59,130,246,0.08)" : "rgba(245,158,11,0.1)",
+          border: `1px solid ${sourceState.status === "ready" ? "rgba(16,185,129,0.25)" : sourceState.status === "loading" ? "rgba(59,130,246,0.25)" : "rgba(245,158,11,0.3)"}`,
+          color: sourceState.status === "ready" ? "var(--green)" : sourceState.status === "loading" ? "var(--accent)" : "var(--amber)",
+          fontSize: "0.82rem",
+        }}>
+          <strong>{currentProjectName ? `${currentProjectName} · ` : ""}{sourceState.status === "ready" ? "真实立项数据已连接" : sourceState.status === "loading" ? "数据读取中" : "数据源不可用"}</strong>
+          <span style={{ marginLeft: 8 }}>{sourceState.detail}</span>
+        </div>
+        {businessEvidenceActionMessage && <div style={{ maxWidth: 1000, margin: "0 auto 18px", color: /\u5931\u8d25|\u4e0d\u53ef\u7528/.test(businessEvidenceActionMessage) ? "var(--red)" : "var(--green)", fontSize: "0.82rem" }}>{businessEvidenceActionMessage}</div>}
         {/* Tab Navigation */}
         <div style={{
           display: "flex",
@@ -1020,10 +1104,8 @@ export default function InitiationPage() {
               </div>
               <div style={{ display: "flex", gap: 12, marginTop: 16 }}>
                 <button
-                  onClick={() => setProjectCharter(prev => ({
-                    ...prev,
-                    signoff: { ...prev.signoff, status: "approved" }
-                  }))}
+                  disabled
+                  title="章程审批流尚未接入持久化和正式审批权限，不得在本地假装批准。"
                   style={{
                     flex: 1,
                     padding: "10px 16px",
@@ -1032,16 +1114,15 @@ export default function InitiationPage() {
                     background: "rgba(34,197,94,0.15)",
                     color: "var(--green)",
                     fontWeight: 600,
-                    cursor: "pointer",
+                    cursor: "not-allowed",
+                    opacity: 0.55,
                   }}
                 >
                   ✅ 批准
                 </button>
                 <button
-                  onClick={() => setProjectCharter(prev => ({
-                    ...prev,
-                    signoff: { ...prev.signoff, status: "rejected" }
-                  }))}
+                  disabled
+                  title="章程审批流尚未接入持久化和正式审批权限，不得在本地假装拒绝。"
                   style={{
                     flex: 1,
                     padding: "10px 16px",
@@ -1050,11 +1131,15 @@ export default function InitiationPage() {
                     background: "rgba(239,68,68,0.15)",
                     color: "var(--red)",
                     fontWeight: 600,
-                    cursor: "pointer",
+                    cursor: "not-allowed",
+                    opacity: 0.55,
                   }}
                 >
                   ❌ 拒绝
                 </button>
+              </div>
+              <div style={{ marginTop: 10, color: "var(--amber)", fontSize: "0.75rem", textAlign: "center" }}>
+                审批操作已关闭：项目章程需接入正式审批流、审批人权限和Supabase审计记录后才可启用。
               </div>
             </SectionCard>
           </div>
@@ -1098,7 +1183,7 @@ export default function InitiationPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {MOCK_STAKEHOLDERS.map(s => {
+                    {stakeholders.map(s => {
                       const qConfig = QUADRANT_COLORS[s.quadrant];
                       return (
                         <tr key={s.name} style={{ borderBottom: "1px solid var(--border)" }}>
@@ -1130,6 +1215,7 @@ export default function InitiationPage() {
                         </tr>
                       );
                     })}
+                    {stakeholders.length === 0 && <tr><td colSpan={5} style={{ padding: 24, textAlign: "center", color: "var(--text2)" }}>当前项目未录入干系人，或Supabase数据源不可用。</td></tr>}
                   </tbody>
                 </table>
               </div>
@@ -1158,7 +1244,7 @@ export default function InitiationPage() {
                   { key: "bottomLeft", quadrant: "监督" as const, isTop: false, isRight: false },
                 ] as const).map(({ key, quadrant, isTop, isRight }) => {
                   const config = QUADRANT_COLORS[quadrant];
-                  const items = MOCK_STAKEHOLDERS.filter(s => s.quadrant === quadrant);
+                  const items = stakeholders.filter(s => s.quadrant === quadrant);
                   return (
                     <div
                       key={key}
@@ -1265,7 +1351,7 @@ export default function InitiationPage() {
                 <h2 style={{ fontSize: "1.1rem", fontWeight: 700, marginBottom: 4 }}>📐 需求管理</h2>
                 <p style={{ fontSize: "0.8rem", color: "var(--text2)" }}>管理项目需求清单与追溯矩阵</p>
               </div>
-              <button className="btn-primary" onClick={() => { setEditingReq(null); setReqForm({ priority: "中", status: "待确认", category: "功能需求" }); setShowReqForm(true); }}>
+              <button className="btn-primary" disabled={sourceState.status !== "ready" || requirementSaving} onClick={() => { setEditingReq(null); setReqForm({ priority: "中", status: "待确认", category: "功能需求" }); setShowReqForm(true); }}>
                 + 添加需求
               </button>
             </div>
@@ -1285,7 +1371,7 @@ export default function InitiationPage() {
                   <tbody>
                     {requirements.map(req => (
                       <tr key={req.id} style={{ borderBottom: "1px solid var(--border)" }}>
-                        <td style={{ padding: "10px 14px", fontWeight: 600, fontSize: "0.8rem", color: "var(--accent)" }}>{req.id}</td>
+                        <td style={{ padding: "10px 14px", fontWeight: 600, fontSize: "0.8rem", color: "var(--accent)" }}>{req.code}</td>
                         <td style={{ padding: "10px 14px", fontSize: "0.85rem" }}>{req.description}</td>
                         <td style={{ padding: "10px 14px", fontSize: "0.8rem", color: "var(--text2)" }}>{req.category}</td>
                         <td style={{ padding: "10px 14px" }}>
@@ -1303,11 +1389,12 @@ export default function InitiationPage() {
                           </span>
                         </td>
                         <td style={{ padding: "10px 14px" }}>
-                          <button onClick={() => handleEditRequirement(req)} style={{ background: "none", border: "none", color: "var(--accent)", cursor: "pointer", fontSize: "0.8rem", marginRight: 12 }}>编辑</button>
-                          <button onClick={() => handleDeleteRequirement(req.id)} style={{ background: "none", border: "none", color: "var(--red)", cursor: "pointer", fontSize: "0.8rem" }}>删除</button>
+                          <button disabled={requirementSaving} onClick={() => handleEditRequirement(req)} style={{ background: "none", border: "none", color: "var(--accent)", cursor: "pointer", fontSize: "0.8rem", marginRight: 12 }}>编辑</button>
+                          <button disabled={requirementSaving} onClick={() => void handleDeleteRequirement(req.id)} style={{ background: "none", border: "none", color: "var(--red)", cursor: "pointer", fontSize: "0.8rem" }}>删除</button>
                         </td>
                       </tr>
                     ))}
+                    {requirements.length === 0 && <tr><td colSpan={6} style={{ padding: 24, textAlign: "center", color: "var(--text2)" }}>当前项目暂无需求记录。新增后将保存到Supabase，刷新不丢失。</td></tr>}
                   </tbody>
                 </table>
               </div>
@@ -1327,7 +1414,7 @@ export default function InitiationPage() {
                   <tbody>
                     {requirements.slice(0, 4).map(req => (
                       <tr key={req.id} style={{ borderBottom: "1px solid var(--border)" }}>
-                        <td style={{ padding: "8px 12px", fontWeight: 600, color: "var(--accent)" }}>{req.id}</td>
+                        <td style={{ padding: "8px 12px", fontWeight: 600, color: "var(--accent)" }}>{req.code}</td>
                         {["业务需求文档", "系统设计", "代码实现", "测试用例", "用户验收"].map((col, i) => (
                           <td key={i} style={{ padding: "8px 12px", textAlign: "center" }}>
                             <span style={{
@@ -1444,7 +1531,7 @@ export default function InitiationPage() {
               />
 
               <div style={{ display: "flex", gap: 12, marginTop: 24 }}>
-                <button className="btn-primary" onClick={handleSaveRequirement} style={{ flex: 1 }}>保存</button>
+                <button className="btn-primary" disabled={requirementSaving} onClick={() => void handleSaveRequirement()} style={{ flex: 1 }}>{requirementSaving ? "保存中…" : "保存"}</button>
                 <button className="btn-secondary" onClick={() => setShowReqForm(false)} style={{ flex: 1 }}>取消</button>
               </div>
             </div>

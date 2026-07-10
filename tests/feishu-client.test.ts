@@ -139,6 +139,60 @@ test('creates a project ledger record with initiation fields', async () => {
   assert.match(body.fields.project_id, /^AI-PM-\d+$/);
 });
 
+test('updates one stable Base record with Chinese business fields', async () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const fakeFetch: typeof fetch = async (input, init) => {
+    const url = String(input);
+    calls.push({ url, init });
+    if (url.includes('/auth/')) return Response.json({ code: 0, tenant_access_token: 'tenant-token', expire: 7200 });
+    return Response.json({ code: 0, data: { record: { record_id: 'rec-milestone-1' } } });
+  };
+  const config = readFeishuConfig({
+    FEISHU_APP_ID: 'cli_test',
+    FEISHU_APP_SECRET: 'secret-value',
+    FEISHU_BASE_TOKEN: 'base-token',
+    FEISHU_MILESTONE_TABLE_ID: 'tbl-milestone',
+  });
+  assert.ok(config);
+
+  const result = await new FeishuBaseClient(config, fakeFetch).updateRecord('milestone', 'rec-milestone-1', {
+    '预测日期': 1788537600000,
+    '影响验收': true,
+  });
+
+  assert.deepEqual(result, { recordId: 'rec-milestone-1' });
+  const update = calls.find(call => call.url.endsWith('/tables/tbl-milestone/records/rec-milestone-1'));
+  assert.ok(update);
+  assert.equal(update.init?.method, 'PUT');
+  assert.deepEqual(JSON.parse(String(update.init?.body)), { fields: { '预测日期': 1788537600000, '影响验收': true } });
+});
+
+test('keeps explicit null and empty values when clearing Base fields', async () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const fakeFetch: typeof fetch = async (input, init) => {
+    const url = String(input);
+    calls.push({ url, init });
+    if (url.includes('/auth/')) return Response.json({ code: 0, tenant_access_token: 'tenant-token', expire: 7200 });
+    return Response.json({ code: 0, data: { record: { record_id: 'rec-risk-1' } } });
+  };
+  const config = readFeishuConfig({
+    FEISHU_APP_ID: 'cli_test',
+    FEISHU_APP_SECRET: 'secret-value',
+    FEISHU_BASE_TOKEN: 'base-token',
+    FEISHU_RISK_TABLE_ID: 'tbl-risk',
+  });
+  assert.ok(config);
+
+  await new FeishuBaseClient(config, fakeFetch).updateRecord('risk', 'rec-risk-1', {
+    '应对措施': null,
+    '风险责任人': '',
+  });
+
+  const update = calls.find(call => call.url.endsWith('/tables/tbl-risk/records/rec-risk-1'));
+  assert.ok(update);
+  assert.deepEqual(JSON.parse(String(update.init?.body)), { fields: { '应对措施': null, '风险责任人': '' } });
+});
+
 test('claims a new event in the Feishu sync ledger before processing', async () => {
   const calls: Array<{ url: string; init?: RequestInit }> = [];
   const fakeFetch: typeof fetch = async (input, init) => {
@@ -167,7 +221,7 @@ test('claims a new event in the Feishu sync ledger before processing', async () 
     occurredAt: 1_750_000_000_000,
   });
 
-  assert.deepEqual(result, { claimed: true, recordId: 'rec-event-1' });
+  assert.deepEqual(result, { claimed: true, recordId: 'rec-event-1', status: 'pending' });
   assert.equal(
     calls.some(call => call.url.includes('/open-apis/bitable/v1/apps/base-token/tables/tbl-ledger/records/search')),
     true,
@@ -190,7 +244,7 @@ test('does not claim a duplicate Feishu event', async () => {
     if (url.includes('/auth/')) {
       return Response.json({ code: 0, tenant_access_token: 'tenant-token', expire: 7200 });
     }
-    return Response.json({ code: 0, data: { items: [{ record_id: 'rec-existing' }] } });
+    return Response.json({ code: 0, data: { items: [{ record_id: 'rec-existing', fields: { '处理状态': 'succeeded' } }] } });
   };
   const config = readFeishuConfig({
     FEISHU_APP_ID: 'cli_test',
@@ -206,7 +260,7 @@ test('does not claim a duplicate Feishu event', async () => {
     payload: {},
   });
 
-  assert.deepEqual(result, { claimed: false, recordId: 'rec-existing' });
+  assert.deepEqual(result, { claimed: false, recordId: 'rec-existing', status: 'succeeded' });
   assert.equal(calls.some(url => url.endsWith('/records')), false);
 });
 
@@ -240,7 +294,7 @@ test('reclaims a failed Feishu operation for a bounded retry', async () => {
     payload: {},
   });
 
-  assert.deepEqual(result, { claimed: true, recordId: 'rec-failed' });
+  assert.deepEqual(result, { claimed: true, recordId: 'rec-failed', status: 'pending' });
   const update = calls.find(call => call.url.endsWith('/records/rec-failed'));
   assert.ok(update);
   const body = JSON.parse(String(update.init?.body));

@@ -11,7 +11,6 @@ import {
   categoryLabels,
   getWorkflowStepForStatus,
   impactAreaLabels,
-  initialRisks,
   statusLabels,
   statusToWorkflowStep,
   type LinkedModule,
@@ -114,7 +113,7 @@ function getMemoryStore() {
     __aiPmRisks?: Risk[];
     __aiPmRiskEvents?: RiskWorkflowEvent[];
   };
-  globalStore.__aiPmRisks ??= initialRisks;
+  globalStore.__aiPmRisks ??= [];
   globalStore.__aiPmRiskEvents ??= [];
   return globalStore;
 }

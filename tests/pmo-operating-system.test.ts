@@ -56,6 +56,7 @@ import {
   deriveGovernanceNextState,
   initialGovernanceState,
   parseGovernanceActionItems,
+  type GovernanceInstanceRecord,
 } from '../src/features/governance/model.ts';
 import {
   buildGovernanceSlaDashboard,
@@ -268,7 +269,7 @@ test('governance workflows define inputs outputs owners states and audit trail',
   assert.match(workbenchPageSource, /riskRetrospectiveGovernanceFollowups/);
   assert.match(pmoPageSource, /知识治理运营/);
   assert.match(pmoPageSource, /负责人 Top 追踪/);
-  assert.match(pmoPageSource, /evidenceCompletenessRate/);
+  assert.match(pmoPageSource, /正式治理证据完整率/);
 });
 
 test('governance strategy previews require classification fields before recommending workflows', () => {
@@ -2313,31 +2314,17 @@ test('risk retrospective governance operation history suppresses weekly duplicat
   assert.equal(suppression.summary.sendable, 1);
   assert.match(suppression.boundary, /同一周/);
 
-  const summary = buildRiskRetrospectiveGovernanceOperationHistorySummary({
-    snapshots: [
-      {
-        id: 'snapshot-1',
-        snapshotDate: '2026-07-05',
-        snapshotWeekStart: '2026-06-30',
-        total: 8,
-        open: 5,
-        closed: 3,
-        overdueOpen: 2,
-        dueSoonOpen: 1,
-        waitingAcceptance: 1,
-        evidenceGaps: 1,
-        reminderCount: 2,
-        p0ReminderCount: 1,
-        evidenceCompletenessRate: 66.7,
-        reportFacts: ['知识治理周运营'],
-        reportMarkdownSha256: 'hash',
-        createdByName: 'PMO',
-        requestId: 'req-snapshot',
-        createdAt: '2026-07-05T03:00:00.000Z',
-        updatedAt: '2026-07-05T03:00:00.000Z',
-      },
-    ],
-    reminderLogs,
+	const summary = buildRiskRetrospectiveGovernanceOperationHistorySummary({
+	  snapshots: [
+	    {
+	      snapshotDate: '2026-07-05',
+	      open: 5,
+	      overdueOpen: 2,
+	      reminderCount: 2,
+	      evidenceCompletenessRate: 66.7,
+	    },
+	  ],
+	  reminderLogs,
   });
   assert.equal(summary.summary.latestOpen, 5);
   assert.equal(summary.summary.sentReminderLogs, 1);
@@ -3164,6 +3151,12 @@ test('security export includes access requests audits and omits secrets', () => 
     projectAccessRequests: [
       { id: 'r-1', requesterId: 'u-1', requesterName: '张三', requesterEmail: 'zhangsan@example.com', projectName: '智慧校园一期', accessLevel: 'viewer' as const, reason: '参与验收复核', status: 'pending' as const },
     ],
+    businessRoles: [],
+    organizations: [],
+    portfolios: [],
+    projects: [],
+    managementRules: [],
+    reportingRelationships: [],
     auditLogs: [
       { id: 'a-1', actorName: '管理员', actorRole: 'admin', action: 'approve_project_access_request', resourceType: 'project_access_request', status: 'succeeded' as const, severity: 'medium' as const, summary: '批准访问', createdAt: '2026-07-02T00:00:00.000Z', requestId: 'req-1' },
     ],
@@ -3277,7 +3270,7 @@ test('governance SLA dashboard highlights overdue and my pending workflow items'
 });
 
 test('governance impact packages connect approvals to project risk and report facts', () => {
-  const stageGate = {
+  const stageGate: GovernanceInstanceRecord = {
     id: 'gov-impact-1',
     workflowId: 'stage-gate-review',
     workflowName: '阶段门评审',
@@ -3293,7 +3286,7 @@ test('governance impact packages connect approvals to project risk and report fa
     createdByName: '管理员',
     createdAt: '2026-07-01T00:00:00.000Z',
     updatedAt: '2026-07-01T00:00:00.000Z',
-  } as never;
+  };
   const riskEscalation = {
     ...stageGate,
     id: 'gov-impact-2',
@@ -3301,7 +3294,7 @@ test('governance impact packages connect approvals to project risk and report fa
     workflowName: '风险升级评审',
     title: '重点项目A风险升级',
     state: '已升级',
-  } as never;
+  };
   const gateImpact = buildGovernanceImpactPackage({ instance: stageGate });
   const riskImpact = buildGovernanceImpactPackage({ instance: riskEscalation });
   const dashboard = buildGovernanceImpactDashboard([stageGate, riskEscalation]);

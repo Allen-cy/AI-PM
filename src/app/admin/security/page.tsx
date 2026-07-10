@@ -76,6 +76,23 @@ type SystemConfiguration = {
   updatedByName?: string | null;
 };
 
+type BusinessRoleKey = "pm" | "operations" | "pmo" | "ceo" | "sponsor" | "business_owner" | "finance" | "quality";
+type SubjectScopeKey = "project" | "portfolio" | "organization" | "customer" | "contract";
+type BusinessRoleAssignment = {
+  id: string;
+  userId: string;
+  userName?: string | null;
+  userEmail?: string | null;
+  businessRole: BusinessRoleKey;
+  orgId: string;
+  subjectScope: SubjectScopeKey;
+  subjectId: string;
+  status: string;
+  validFrom: string;
+  validUntil?: string | null;
+  assignmentReason?: string | null;
+};
+
 type SecuritySnapshot = {
   permissions: {
     definitions: PermissionDefinition[];
@@ -84,6 +101,12 @@ type SecuritySnapshot = {
   users: AppUser[];
   projectAccess: ProjectAccessGrant[];
   projectAccessRequests: ProjectAccessRequest[];
+  businessRoles: BusinessRoleAssignment[];
+  organizations: Array<{ id: string; code: string; name: string; status: string }>;
+  portfolios: Array<{ id: string; orgId: string; code: string; name: string; status: string }>;
+  projects: Array<{ id: string; orgId: string; code?: string | null; name: string; dataClass: string }>;
+  managementRules: Array<{ id: string; ruleKey: string; version: string; status: string; scopeKey: string; configuration: Record<string, unknown>; approvedAt?: string | null }>;
+  reportingRelationships: Array<{ id: string; orgId: string; subjectScope: string; subjectId: string; fromUserId: string; fromUserName?: string | null; fromBusinessRole: string; toUserId: string; toUserName?: string | null; toBusinessRole: string; relationshipType: string; status: string; validFrom: string; validUntil?: string | null }>;
   auditLogs: AuditLog[];
   systemConfigurations: SystemConfiguration[];
   warnings: string[];
@@ -137,6 +160,24 @@ export default function AdminSecurityPage() {
     accessLevel: "viewer" as ProjectAccessGrant["accessLevel"],
     grantReason: "",
   });
+  const [businessRoleDraft, setBusinessRoleDraft] = useState({
+    userId: "",
+    businessRole: "pm" as BusinessRoleKey,
+    orgId: "",
+    subjectScope: "project" as SubjectScopeKey,
+    subjectId: "",
+    validFrom: new Date().toISOString().slice(0, 16),
+    validUntil: "",
+    assignmentReason: "",
+  });
+  const [revokeRoleReason, setRevokeRoleReason] = useState<Record<string, string>>({});
+  const [reportingDraft, setReportingDraft] = useState({
+    orgId: "", subjectScope: "project" as "project" | "portfolio" | "organization", subjectId: "",
+    fromUserId: "", fromBusinessRole: "pm" as BusinessRoleKey,
+    toUserId: "", toBusinessRole: "pmo" as BusinessRoleKey,
+    validFrom: new Date().toISOString().slice(0, 16), validUntil: "", relationshipType: "reports_to",
+  });
+  const [revokeReportingReason, setRevokeReportingReason] = useState<Record<string, string>>({});
   const [configDraft, setConfigDraft] = useState({
     configKey: "enterprise_security_policy",
     category: "security",
@@ -161,6 +202,20 @@ export default function AdminSecurityPage() {
       if (!grantDraft.userId && data.users?.[0]?.id) {
         setGrantDraft(prev => ({ ...prev, userId: data.users[0].id }));
       }
+      setBusinessRoleDraft(prev => {
+        const orgId = prev.orgId || data.organizations?.[0]?.id || "";
+        const project = data.projects?.find((item: { orgId: string }) => item.orgId === orgId);
+        return {
+          ...prev,
+          userId: prev.userId || data.users?.[0]?.id || "",
+          orgId,
+          subjectId: prev.subjectId || project?.id || "",
+        };
+      });
+      setReportingDraft(prev => {
+        const orgId = prev.orgId || data.organizations?.[0]?.id || "";
+        return { ...prev, orgId, fromUserId: prev.fromUserId || data.users?.[0]?.id || "", toUserId: prev.toUserId || data.users?.[1]?.id || data.users?.[0]?.id || "", subjectId: prev.subjectId || data.projects?.find((item: { orgId: string }) => item.orgId === orgId)?.id || orgId };
+      });
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "加载安全中心失败");
     } finally {
@@ -181,6 +236,27 @@ export default function AdminSecurityPage() {
     }
     return [...groups.entries()];
   }, [snapshot]);
+
+  const availableRoleSubjects = useMemo(() => {
+    if (!snapshot) return [] as Array<{ id: string; label: string }>;
+    if (businessRoleDraft.subjectScope === "organization") {
+      return snapshot.organizations.filter(item => item.id === businessRoleDraft.orgId).map(item => ({ id: item.id, label: `${item.name}（组织）` }));
+    }
+    if (businessRoleDraft.subjectScope === "portfolio") {
+      return snapshot.portfolios.filter(item => item.orgId === businessRoleDraft.orgId).map(item => ({ id: item.id, label: `${item.name}（${item.code}）` }));
+    }
+    if (businessRoleDraft.subjectScope === "project") {
+      return snapshot.projects.filter(item => item.orgId === businessRoleDraft.orgId).map(item => ({ id: item.id, label: `${item.name}${item.code ? `（${item.code}）` : ""} · ${item.dataClass}` }));
+    }
+    return [] as Array<{ id: string; label: string }>;
+  }, [businessRoleDraft.orgId, businessRoleDraft.subjectScope, snapshot]);
+
+  const reportingSubjects = useMemo(() => {
+    if (!snapshot) return [] as Array<{ id: string; label: string }>;
+    if (reportingDraft.subjectScope === "organization") return snapshot.organizations.filter(item => item.id === reportingDraft.orgId).map(item => ({ id: item.id, label: item.name }));
+    if (reportingDraft.subjectScope === "portfolio") return snapshot.portfolios.filter(item => item.orgId === reportingDraft.orgId).map(item => ({ id: item.id, label: `${item.name}（${item.code}）` }));
+    return snapshot.projects.filter(item => item.orgId === reportingDraft.orgId).map(item => ({ id: item.id, label: `${item.name}${item.code ? `（${item.code}）` : ""}` }));
+  }, [reportingDraft.orgId, reportingDraft.subjectScope, snapshot]);
 
   async function runOperation(body: Record<string, unknown>, successText: string) {
     setSaving(true);
@@ -212,6 +288,47 @@ export default function AdminSecurityPage() {
 
   async function revokeGrant(id: string) {
     await runOperation({ operation: "revoke_project_access", grantId: id }, "项目访问授权已撤销");
+  }
+
+  async function assignBusinessRole() {
+    const subjectId = businessRoleDraft.subjectScope === "organization"
+      ? businessRoleDraft.orgId
+      : businessRoleDraft.subjectId;
+    await runOperation({
+      operation: "assign_business_role",
+      ...businessRoleDraft,
+      subjectId,
+      validFrom: new Date(businessRoleDraft.validFrom).toISOString(),
+      validUntil: businessRoleDraft.validUntil ? new Date(businessRoleDraft.validUntil).toISOString() : null,
+    }, "业务角色与管理范围已分配");
+  }
+
+  async function revokeBusinessRole(id: string) {
+    const reason = revokeRoleReason[id]?.trim();
+    if (!reason) {
+      setError("撤销业务角色前必须填写原因");
+      return;
+    }
+    await runOperation({ operation: "revoke_business_role", assignmentId: id, reason }, "业务角色已撤销");
+  }
+
+  async function activateManagementRule(id: string) {
+    await runOperation({ operation: "activate_management_rule", ruleId: id, confirmation: "ACTIVATE_S1_MILESTONE_DELAY" }, "S1里程碑延期规则已批准启用");
+  }
+
+  async function assignReportingRelationship() {
+    await runOperation({
+      operation: "assign_reporting_relationship",
+      ...reportingDraft,
+      validFrom: new Date(reportingDraft.validFrom).toISOString(),
+      validUntil: reportingDraft.validUntil ? new Date(reportingDraft.validUntil).toISOString() : null,
+    }, "业务汇报关系已建立");
+  }
+
+  async function revokeReportingRelationship(id: string) {
+    const reason = revokeReportingReason[id]?.trim();
+    if (!reason) { setError("撤销汇报关系前必须填写原因"); return; }
+    await runOperation({ operation: "revoke_reporting_relationship", relationshipId: id, reason }, "业务汇报关系已撤销");
   }
 
   async function updateUser(user: AppUser, next: Partial<Pick<AppUser, "role" | "status">>) {
@@ -270,6 +387,7 @@ export default function AdminSecurityPage() {
       }}>
         <Link href="/" style={{ color: "var(--text2)", textDecoration: "none", fontSize: "0.85rem" }}>← 返回首页</Link>
         <Link href="/account" style={{ color: "var(--text2)", textDecoration: "none", fontSize: "0.85rem" }}>用户中心</Link>
+        <Link href="/admin/operating-model" style={{ color: "var(--text2)", textDecoration: "none", fontSize: "0.85rem" }}>运行模型控制台</Link>
         <span style={{ color: "var(--border)" }}>|</span>
         <strong style={{ color: "var(--purple)" }}>🛡️ 管理员安全配置中心</strong>
         <span className="tag tag-purple">P9/P10</span>
@@ -326,6 +444,148 @@ export default function AdminSecurityPage() {
                     </div>
                   </div>
                 ))}
+              </div>
+            </section>
+
+            <section style={{ ...cardStyle, gridColumn: "1 / -1" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 14, flexWrap: "wrap", marginBottom: 14 }}>
+                <div>
+                  <h2 style={{ margin: 0, fontSize: "1rem" }}>业务角色与管理范围</h2>
+                  <p style={{ color: "var(--text2)", fontSize: "0.78rem", marginTop: 6, lineHeight: 1.6 }}>
+                    系统管理员只负责配置，不自动拥有 CEO 或 PMO 业务权限。每个角色必须绑定组织和明确管理对象，并受有效期约束。
+                  </p>
+                </div>
+                <span className="tag tag-purple">PM / 运营 → PMO → CEO</span>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))", gap: 10 }}>
+                <label>
+                  <span style={labelStyle}>用户</span>
+                  <AdminSelect value={businessRoleDraft.userId} onChange={event => setBusinessRoleDraft(prev => ({ ...prev, userId: event.target.value }))}>
+                    {snapshot.users.map(user => <option key={user.id} value={user.id}>{user.name || user.email}</option>)}
+                  </AdminSelect>
+                </label>
+                <label>
+                  <span style={labelStyle}>业务角色</span>
+                  <AdminSelect value={businessRoleDraft.businessRole} onChange={event => setBusinessRoleDraft(prev => ({ ...prev, businessRole: event.target.value as BusinessRoleKey }))}>
+                    <option value="pm">项目经理</option><option value="operations">运营</option><option value="pmo">PMO</option><option value="ceo">CEO</option>
+                    <option value="sponsor">项目发起人</option><option value="business_owner">业务负责人</option><option value="finance">财务</option><option value="quality">质量</option>
+                  </AdminSelect>
+                </label>
+                <label>
+                  <span style={labelStyle}>组织</span>
+                  <AdminSelect value={businessRoleDraft.orgId} onChange={event => {
+                    const orgId = event.target.value;
+                    const nextSubject = businessRoleDraft.subjectScope === "organization"
+                      ? orgId
+                      : businessRoleDraft.subjectScope === "portfolio"
+                        ? snapshot.portfolios.find(item => item.orgId === orgId)?.id || ""
+                        : snapshot.projects.find(item => item.orgId === orgId)?.id || "";
+                    setBusinessRoleDraft(prev => ({ ...prev, orgId, subjectId: nextSubject }));
+                  }}>
+                    {snapshot.organizations.map(item => <option key={item.id} value={item.id}>{item.name}（{item.code}）</option>)}
+                  </AdminSelect>
+                </label>
+                <label>
+                  <span style={labelStyle}>管理范围</span>
+                  <AdminSelect value={businessRoleDraft.subjectScope} onChange={event => {
+                    const subjectScope = event.target.value as SubjectScopeKey;
+                    const nextSubject = subjectScope === "organization"
+                      ? businessRoleDraft.orgId
+                      : subjectScope === "portfolio"
+                        ? snapshot.portfolios.find(item => item.orgId === businessRoleDraft.orgId)?.id || ""
+                        : subjectScope === "project"
+                          ? snapshot.projects.find(item => item.orgId === businessRoleDraft.orgId)?.id || ""
+                          : "";
+                    setBusinessRoleDraft(prev => ({ ...prev, subjectScope, subjectId: nextSubject }));
+                  }}>
+                    <option value="project">项目</option><option value="portfolio">项目组合</option><option value="organization">组织</option><option value="customer">客户</option><option value="contract">合同</option>
+                  </AdminSelect>
+                </label>
+                <label style={{ gridColumn: "span 2" }}>
+                  <span style={labelStyle}>管理对象</span>
+                  {availableRoleSubjects.length > 0 ? (
+                    <AdminSelect value={businessRoleDraft.subjectScope === "organization" ? businessRoleDraft.orgId : businessRoleDraft.subjectId} onChange={event => setBusinessRoleDraft(prev => ({ ...prev, subjectId: event.target.value }))}>
+                      {availableRoleSubjects.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
+                    </AdminSelect>
+                  ) : (
+                    <AdminInput value={businessRoleDraft.subjectId} onChange={event => setBusinessRoleDraft(prev => ({ ...prev, subjectId: event.target.value }))} placeholder="客户或合同范围请输入稳定ID；不得用名称猜测" />
+                  )}
+                </label>
+                <label>
+                  <span style={labelStyle}>生效时间</span>
+                  <AdminInput type="datetime-local" value={businessRoleDraft.validFrom} onChange={event => setBusinessRoleDraft(prev => ({ ...prev, validFrom: event.target.value }))} />
+                </label>
+                <label>
+                  <span style={labelStyle}>失效时间（可选）</span>
+                  <AdminInput type="datetime-local" value={businessRoleDraft.validUntil} onChange={event => setBusinessRoleDraft(prev => ({ ...prev, validUntil: event.target.value }))} />
+                </label>
+              </div>
+              <label style={{ display: "block", marginTop: 10 }}>
+                <span style={labelStyle}>分配原因</span>
+                <AdminInput value={businessRoleDraft.assignmentReason} onChange={event => setBusinessRoleDraft(prev => ({ ...prev, assignmentReason: event.target.value }))} placeholder="例如：担任智慧校园一期项目经理；负责2026年度项目组合治理" />
+              </label>
+              <button className="btn-primary" onClick={() => void assignBusinessRole()} disabled={saving || !businessRoleDraft.userId || !businessRoleDraft.orgId || !(businessRoleDraft.subjectScope === "organization" ? businessRoleDraft.orgId : businessRoleDraft.subjectId)} style={{ marginTop: 12 }}>
+                {saving ? "处理中..." : "分配业务角色"}
+              </button>
+              <div style={{ display: "grid", gap: 8, marginTop: 16 }}>
+                {snapshot.businessRoles.length === 0 && <div style={{ color: "var(--text2)" }}>暂无业务角色分配。完成 P17 数据库迁移后，可在这里建立真实汇报与授权范围。</div>}
+                {snapshot.businessRoles.map(item => (
+                  <div key={item.id} style={{ display: "grid", gridTemplateColumns: "1fr minmax(260px,.8fr) auto", gap: 10, alignItems: "center", padding: 11, borderRadius: 10, background: "var(--surface2)" }}>
+                    <div>
+                      <div style={{ fontWeight: 850 }}>{item.userName || item.userEmail || item.userId} · {item.businessRole}</div>
+                      <div style={{ color: "var(--text2)", fontSize: "0.75rem", marginTop: 4 }}>{item.subjectScope} / {item.subjectId} · {new Date(item.validFrom).toLocaleString("zh-CN")} 至 {item.validUntil ? new Date(item.validUntil).toLocaleString("zh-CN") : "长期"}</div>
+                    </div>
+                    {item.status === "active" ? <AdminInput value={revokeRoleReason[item.id] || ""} onChange={event => setRevokeRoleReason(prev => ({ ...prev, [item.id]: event.target.value }))} placeholder="撤销原因（必填）" /> : <span style={{ color: "var(--text2)" }}>{item.assignmentReason || "-"}</span>}
+                    {item.status === "active" ? <button className="btn-secondary" onClick={() => void revokeBusinessRole(item.id)} disabled={saving}>撤销业务角色</button> : <StatusTag value={item.status} />}
+                  </div>
+                ))}
+              </div>
+              <div style={{ marginTop: 18, paddingTop: 16, borderTop: "1px solid var(--border)" }}>
+                <h3 style={{ fontSize: "0.9rem", marginBottom: 6 }}>业务汇报关系</h3>
+                <p style={{ color: "var(--text2)", fontSize: "0.76rem", lineHeight: 1.6, marginBottom: 10 }}>建立真实的 PM/运营 → PMO → CEO 上报链。升级信号找不到有效汇报关系时会停止，不会猜测接收人。</p>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))", gap: 9 }}>
+                  <label><span style={labelStyle}>组织</span><AdminSelect value={reportingDraft.orgId} onChange={event => {
+                    const orgId = event.target.value;
+                    const subjectId = reportingDraft.subjectScope === "organization" ? orgId : reportingDraft.subjectScope === "portfolio" ? snapshot.portfolios.find(item => item.orgId === orgId)?.id || "" : snapshot.projects.find(item => item.orgId === orgId)?.id || "";
+                    setReportingDraft(prev => ({ ...prev, orgId, subjectId }));
+                  }}>{snapshot.organizations.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</AdminSelect></label>
+                  <label><span style={labelStyle}>适用范围</span><AdminSelect value={reportingDraft.subjectScope} onChange={event => {
+                    const subjectScope = event.target.value as "project" | "portfolio" | "organization";
+                    const subjectId = subjectScope === "organization" ? reportingDraft.orgId : subjectScope === "portfolio" ? snapshot.portfolios.find(item => item.orgId === reportingDraft.orgId)?.id || "" : snapshot.projects.find(item => item.orgId === reportingDraft.orgId)?.id || "";
+                    setReportingDraft(prev => ({ ...prev, subjectScope, subjectId }));
+                  }}><option value="project">项目</option><option value="portfolio">项目组合</option><option value="organization">组织</option></AdminSelect></label>
+                  <label style={{ gridColumn: "span 2" }}><span style={labelStyle}>管理对象</span><AdminSelect value={reportingDraft.subjectId} onChange={event => setReportingDraft(prev => ({ ...prev, subjectId: event.target.value }))}>{reportingSubjects.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}</AdminSelect></label>
+                  <label><span style={labelStyle}>上报人</span><AdminSelect value={reportingDraft.fromUserId} onChange={event => setReportingDraft(prev => ({ ...prev, fromUserId: event.target.value }))}>{snapshot.users.map(user => <option key={user.id} value={user.id}>{user.name || user.email}</option>)}</AdminSelect></label>
+                  <label><span style={labelStyle}>上报角色</span><AdminSelect value={reportingDraft.fromBusinessRole} onChange={event => setReportingDraft(prev => ({ ...prev, fromBusinessRole: event.target.value as BusinessRoleKey }))}><option value="pm">项目经理</option><option value="operations">运营</option><option value="pmo">PMO</option></AdminSelect></label>
+                  <label><span style={labelStyle}>接收人</span><AdminSelect value={reportingDraft.toUserId} onChange={event => setReportingDraft(prev => ({ ...prev, toUserId: event.target.value }))}>{snapshot.users.map(user => <option key={user.id} value={user.id}>{user.name || user.email}</option>)}</AdminSelect></label>
+                  <label><span style={labelStyle}>接收角色</span><AdminSelect value={reportingDraft.toBusinessRole} onChange={event => setReportingDraft(prev => ({ ...prev, toBusinessRole: event.target.value as BusinessRoleKey }))}><option value="pmo">PMO</option><option value="ceo">CEO</option><option value="sponsor">项目发起人</option></AdminSelect></label>
+                  <label><span style={labelStyle}>生效时间</span><AdminInput type="datetime-local" value={reportingDraft.validFrom} onChange={event => setReportingDraft(prev => ({ ...prev, validFrom: event.target.value }))} /></label>
+                  <label><span style={labelStyle}>失效时间（可选）</span><AdminInput type="datetime-local" value={reportingDraft.validUntil} onChange={event => setReportingDraft(prev => ({ ...prev, validUntil: event.target.value }))} /></label>
+                  <label><span style={labelStyle}>关系类型</span><AdminSelect value={reportingDraft.relationshipType} onChange={event => setReportingDraft(prev => ({ ...prev, relationshipType: event.target.value }))}><option value="reports_to">正式汇报</option><option value="escalates_to">升级接收</option><option value="reviews">复核</option><option value="delegates_to">授权代理</option></AdminSelect></label>
+                  <button className="btn-primary" onClick={() => void assignReportingRelationship()} disabled={saving || !reportingDraft.subjectId || !reportingDraft.fromUserId || !reportingDraft.toUserId} style={{ alignSelf: "end", minHeight: 38 }}>建立汇报关系</button>
+                </div>
+                <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
+                  {snapshot.reportingRelationships.map(item => (
+                    <div key={item.id} style={{ display: "grid", gridTemplateColumns: "1fr minmax(220px,.65fr) auto", gap: 9, alignItems: "center", padding: 10, borderRadius: 10, background: "var(--surface2)" }}>
+                      <div><strong>{item.fromUserName || item.fromUserId}（{item.fromBusinessRole}） → {item.toUserName || item.toUserId}（{item.toBusinessRole}）</strong><div style={{ color: "var(--text2)", fontSize: "0.74rem", marginTop: 4 }}>{item.subjectScope} / {item.subjectId} · {item.relationshipType}</div></div>
+                      {item.status === "active" ? <AdminInput value={revokeReportingReason[item.id] || ""} onChange={event => setRevokeReportingReason(prev => ({ ...prev, [item.id]: event.target.value }))} placeholder="撤销原因（必填）" /> : <StatusTag value={item.status} />}
+                      {item.status === "active" ? <button className="btn-secondary" onClick={() => void revokeReportingRelationship(item.id)} disabled={saving}>撤销关系</button> : null}
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div style={{ marginTop: 18, paddingTop: 16, borderTop: "1px solid var(--border)" }}>
+                <h3 style={{ fontSize: "0.9rem", marginBottom: 6 }}>管理规则审批</h3>
+                <p style={{ color: "var(--text2)", fontSize: "0.76rem", lineHeight: 1.6, marginBottom: 10 }}>规则只有经过管理员明确批准后才会参与真实信号计算；草稿规则不会在后台悄悄执行。</p>
+                <div style={{ display: "grid", gap: 8 }}>
+                  {snapshot.managementRules.map(rule => (
+                    <div key={rule.id} style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: 10, alignItems: "center", padding: 10, borderRadius: 10, background: "var(--surface2)" }}>
+                      <div><strong>{rule.ruleKey}</strong><div style={{ color: "var(--text2)", fontSize: "0.74rem", marginTop: 4 }}>{rule.version} · {rule.scopeKey}</div></div>
+                      <StatusTag value={rule.status} />
+                      {rule.status === "draft" && rule.version === "S1-MILESTONE-DELAY-v1" ? <button className="btn-primary" onClick={() => void activateManagementRule(rule.id)} disabled={saving}>审阅并启用S1规则</button> : <span style={{ color: "var(--text2)", fontSize: "0.74rem" }}>{rule.approvedAt ? new Date(rule.approvedAt).toLocaleString("zh-CN") : "-"}</span>}
+                    </div>
+                  ))}
+                </div>
               </div>
             </section>
 

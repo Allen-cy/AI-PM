@@ -14,7 +14,7 @@ function request(body: unknown, key = 'action-api-key'): Request {
   });
 }
 
-function configure(): Record<string, string | undefined> {
+function configure(): NodeJS.ProcessEnv {
   const previous = { ...process.env };
   process.env.FEISHU_APP_ID = 'cli_test';
   process.env.FEISHU_APP_SECRET = 'secret-value';

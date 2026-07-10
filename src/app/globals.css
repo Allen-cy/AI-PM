@@ -37,6 +37,39 @@ body {
   min-height: 100vh;
 }
 
+.business-context-bar {
+  position: relative;
+  z-index: 50;
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 24px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  color: var(--text2);
+  font-size: 0.78rem;
+}
+
+.business-context-bar strong { color: var(--text); }
+.business-context-bar select,
+.business-context-bar input[type="month"] {
+  max-width: min(520px, 48vw);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface2);
+  color: var(--text);
+  padding: 5px 9px;
+}
+.business-context-bar a { margin-left: auto; color: var(--accent2); text-decoration: none; font-weight: 700; }
+.business-context-hint { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+@media (max-width: 760px) {
+  .business-context-bar { padding: 7px 12px; flex-wrap: wrap; }
+  .business-context-bar select, .business-context-bar input[type="month"] { max-width: 100%; flex: 1 1 220px; }
+  .business-context-hint { display: none; }
+}
+
 @layer components {
   .card {
     background: var(--surface);

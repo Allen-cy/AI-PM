@@ -24,6 +24,7 @@ export interface WorkbenchUser {
 
 export interface MyWorkbenchProject {
   id: string;
+  canonicalProjectId?: string;
   name: string;
   owner: string;
   status: string;
@@ -76,7 +77,7 @@ export interface MyBusinessReminder {
 export interface WorkbenchEvidence {
   source: "feishu" | "sample" | "missing";
   generatedAt: string;
-  userScope: "admin-all" | "matched-owner" | "authorized-project" | "unmatched-owner" | "anonymous";
+  userScope: "business-context" | "admin-all" | "matched-owner" | "authorized-project" | "unmatched-owner" | "anonymous";
   matchedBy: string[];
   scanned: {
     projects: number;
@@ -105,6 +106,14 @@ export interface OperationalWorkbench extends WorkbenchSummary {
 }
 
 type RawRecord = Record<string, unknown>;
+
+export interface WorkbenchBusinessScope {
+  businessRole: string;
+  canonicalProjectIds: string[];
+  sourceRecordIds: string[];
+  externalProjectCodes: string[];
+  dataClass: "production" | "sample" | "test" | "diagnostic" | "unclassified";
+}
 
 const COMPLETE_STATUS_KEYWORDS = ["已完成", "完成", "已关闭", "关闭", "已结项", "结项", "closed", "done", "completed"];
 const ACTIVE_RISK_STATUS_KEYWORDS = ["已识别", "分析", "应对", "监控", "跟踪", "升级", "identified", "analyzing", "response", "monitoring", "tracking"];
@@ -237,6 +246,17 @@ function recordMatchesGrant(record: RawRecord, grants: ProjectAccessGrant[] = []
   return recordMatchesProjectGrant(record, grants);
 }
 
+function recordProjectIdentifiers(record: RawRecord): string[] {
+  return ["__record_id", "__canonical_project_id", "项目UUID", "项目ID", "项目编号", "项目代码", "project_id", "OA单据编号"]
+    .map(key => String(record[key] ?? "").trim())
+    .filter(Boolean);
+}
+
+function recordMatchesBusinessScope(record: RawRecord, scope: WorkbenchBusinessScope): boolean {
+  const allowed = new Set([...scope.canonicalProjectIds, ...scope.sourceRecordIds, ...scope.externalProjectCodes]);
+  return recordProjectIdentifiers(record).some(identifier => allowed.has(identifier));
+}
+
 function priorityByDue(daysLeft: number | null, fallback: "P0" | "P1" | "P2" = "P2"): "P0" | "P1" | "P2" {
   if (daysLeft !== null && daysLeft < 0) return "P0";
   if (daysLeft !== null && daysLeft <= 1) return "P0";
@@ -276,6 +296,7 @@ function mapProject(record: RawRecord, index: number): MyWorkbenchProject {
   const health: HealthStatus = riskLevel === "高" || progress < 50 ? "error" : riskLevel === "中" || progress < 80 ? "warning" : "ok";
   return {
     id: text(record, ["项目编号", "project_id", "OA单据编号"], `project-${index + 1}`),
+    canonicalProjectId: text(record, ["__canonical_project_id"], "") || undefined,
     name: projectName(record, `项目${index + 1}`),
     owner: ownerText(record),
     status: text(record, ["项目状态", "当前状态", "状态"], progress >= 100 ? "已完成" : "进行中"),
@@ -569,6 +590,7 @@ function buildFallbackWorkbench(
   user?: WorkbenchUser | null,
   riskRetrospectiveGovernanceFollowups: RiskRetrospectiveGovernanceFollowupRecord[] = [],
   riskRetrospectiveGovernanceFollowupsWarning?: string,
+  businessScope?: WorkbenchBusinessScope,
 ): OperationalWorkbench {
   const base = deriveWorkbenchSummary(null);
   const followupWorkbench = buildRiskRetrospectiveGovernanceFollowupWorkbench({
@@ -630,7 +652,7 @@ function buildFallbackWorkbench(
     evidence: {
       source: "missing",
       generatedAt: new Date().toISOString(),
-      userScope: user ? "unmatched-owner" : "anonymous",
+      userScope: businessScope ? "business-context" : user ? "unmatched-owner" : "anonymous",
       matchedBy: userTokens(user),
       scanned: { projects: 0, risks: 0, tasks: 0, milestones: 0, payments: 0 },
       included: { projects: 0, risks: 0, todos: 0, businessReminders: 0 },
@@ -647,20 +669,25 @@ export function buildOperationalWorkbench(input: {
   payments: RawRecord[];
   dashboard?: DashboardData | null;
   projectAccessGrants?: ProjectAccessGrant[];
+  businessScope?: WorkbenchBusinessScope;
   riskRetrospectiveGovernanceFollowups?: RiskRetrospectiveGovernanceFollowupRecord[];
   riskRetrospectiveGovernanceFollowupsWarning?: string;
 }): OperationalWorkbench {
   const dashboard = input.dashboard ?? buildDashboardFromRecords(input.projects);
   if (!dashboard && input.projects.length === 0 && input.risks.length === 0 && input.tasks.length === 0 && input.milestones.length === 0 && input.payments.length === 0) {
-    return buildFallbackWorkbench(input.user, input.riskRetrospectiveGovernanceFollowups, input.riskRetrospectiveGovernanceFollowupsWarning);
+    return buildFallbackWorkbench(input.user, input.riskRetrospectiveGovernanceFollowups, input.riskRetrospectiveGovernanceFollowupsWarning, input.businessScope);
   }
 
-  const matchedProjects = input.user?.role === "admin"
-    ? input.projects
-    : input.projects.filter(record => recordMatchesUser(record, input.user) || recordMatchesGrant(record, input.projectAccessGrants));
-  const matchedProjectNames = new Set(matchedProjects.map(record => projectName(record)).filter(Boolean));
-  const includeByProject = (record: RawRecord) => matchedProjectNames.has(projectName(record));
-  const includeRecord = (record: RawRecord) => input.user?.role === "admin" || recordMatchesUser(record, input.user) || recordMatchesGrant(record, input.projectAccessGrants) || includeByProject(record);
+  const matchedProjects = input.businessScope
+    ? input.projects.filter(record => recordMatchesBusinessScope(record, input.businessScope as WorkbenchBusinessScope))
+    : input.user?.role === "admin"
+      ? input.projects
+      : input.projects.filter(record => recordMatchesUser(record, input.user) || recordMatchesGrant(record, input.projectAccessGrants));
+  const matchedProjectIdentifiers = new Set(matchedProjects.flatMap(recordProjectIdentifiers));
+  const includeByProject = (record: RawRecord) => recordProjectIdentifiers(record).some(identifier => matchedProjectIdentifiers.has(identifier));
+  const includeRecord = (record: RawRecord) => input.businessScope
+    ? recordMatchesBusinessScope(record, input.businessScope as WorkbenchBusinessScope) || includeByProject(record)
+    : input.user?.role === "admin" || recordMatchesUser(record, input.user) || recordMatchesGrant(record, input.projectAccessGrants) || includeByProject(record);
 
   const myProjects = matchedProjects
     .map(mapProject)
@@ -722,7 +749,9 @@ export function buildOperationalWorkbench(input: {
   const evidence: WorkbenchEvidence = {
     source: "feishu",
     generatedAt: new Date().toISOString(),
-    userScope: input.user?.role === "admin"
+    userScope: input.businessScope
+      ? "business-context"
+      : input.user?.role === "admin"
       ? "admin-all"
       : input.projectAccessGrants?.length
         ? "authorized-project"
@@ -750,7 +779,7 @@ export function buildOperationalWorkbench(input: {
   return {
     ...base,
     kpis: [
-      { label: "我的项目", value: String(myProjects.length), hint: evidence.userScope === "admin-all" ? "管理员视角显示全量未关闭项目。" : "按当前登录用户匹配项目经理/责任人字段。", status: myProjects.length > 0 ? "ok" : "unknown" },
+      { label: "我的项目", value: String(myProjects.length), hint: evidence.userScope === "business-context" ? "按当前有效业务角色与稳定项目身份过滤。" : evidence.userScope === "admin-all" ? "管理员视角显示全量未关闭项目。" : "按当前登录用户匹配项目经理/责任人字段。", status: myProjects.length > 0 ? "ok" : "unknown" },
       { label: "今日待办", value: String(todayTodos.length), hint: "来自任务、里程碑和风险复核。", status: todayTodos.some(item => item.priority === "P0") ? "error" : todayTodos.length > 0 ? "warning" : "ok" },
       { label: "重点风险", value: String(myRisks.filter(item => item.severity === "高").length), hint: "来自飞书风险登记册。", status: myRisks.some(item => item.severity === "高") ? "error" : myRisks.length > 0 ? "warning" : "ok" },
       { label: "经营提醒", value: String(businessReminders.length), hint: "来自回款表和项目台账应收字段。", status: businessReminders.some(item => item.daysLeft !== null && item.daysLeft < 0) ? "error" : businessReminders.length > 0 ? "warning" : "ok" },
@@ -783,6 +812,7 @@ export async function loadOperationalWorkbenchFromFeishu(
   projectAccessGrants: ProjectAccessGrant[] = [],
   riskRetrospectiveGovernanceFollowups: RiskRetrospectiveGovernanceFollowupRecord[] = [],
   riskRetrospectiveGovernanceFollowupsWarning?: string,
+  businessScope?: WorkbenchBusinessScope,
 ): Promise<OperationalWorkbench> {
   const client = new FeishuBaseClient(config);
   const [projects, risks, tasks, milestones, payments] = await Promise.all([
@@ -793,18 +823,24 @@ export async function loadOperationalWorkbenchFromFeishu(
     config.tables.payment ? client.listRecords("payment", 500).catch(() => []) : Promise.resolve([]),
   ]);
 
-  const projectRows = projects.map(item => normalizeWorkbenchFields(item.fields));
+  const mappingByRecord = new Map((businessScope?.sourceRecordIds ?? []).map((recordId, index) => [recordId, businessScope?.canonicalProjectIds[index]]));
+  const projectRows = projects.map(item => ({
+    ...normalizeWorkbenchFields(item.fields),
+    __record_id: item.recordId,
+    __canonical_project_id: mappingByRecord.get(item.recordId) || "",
+  }));
   return buildOperationalWorkbench({
     user,
     projects: projectRows,
-    risks: risks.map(item => normalizeWorkbenchFields(item.fields)),
-    tasks: tasks.map(item => normalizeWorkbenchFields(item.fields)),
-    milestones: milestones.map(item => normalizeWorkbenchFields(item.fields)),
-    payments: payments.map(item => normalizeWorkbenchFields(item.fields)),
+    risks: risks.map(item => ({ ...normalizeWorkbenchFields(item.fields), __record_id: item.recordId })),
+    tasks: tasks.map(item => ({ ...normalizeWorkbenchFields(item.fields), __record_id: item.recordId })),
+    milestones: milestones.map(item => ({ ...normalizeWorkbenchFields(item.fields), __record_id: item.recordId })),
+    payments: payments.map(item => ({ ...normalizeWorkbenchFields(item.fields), __record_id: item.recordId })),
     dashboard: buildDashboardFromRecords(projectRows),
     projectAccessGrants,
     riskRetrospectiveGovernanceFollowups,
     riskRetrospectiveGovernanceFollowupsWarning,
+    businessScope,
   });
 }
 

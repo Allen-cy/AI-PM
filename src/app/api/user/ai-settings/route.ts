@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
 import { getAuthSupabase, getCurrentUser, isAuthStorageConfigured } from "@/features/auth/server";
+import {
+  aiApiKeyCredentialContext,
+  encryptCredential,
+  resolveStoredCredential,
+} from "@/features/security/credential-encryption";
 
 export const runtime = "nodejs";
 
@@ -65,7 +70,12 @@ export async function PUT(request: Request) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "请先登录" }, { status: 401 });
 
-  const body = await request.json();
+  let body: Record<string, unknown>;
+  try {
+    body = await request.json() as Record<string, unknown>;
+  } catch {
+    return NextResponse.json({ error: "请求格式无效" }, { status: 400 });
+  }
   const provider = String(body.provider || "").trim();
   if (!isProvider(provider)) {
     return NextResponse.json({ error: "不支持的模型提供商" }, { status: 400 });
@@ -76,11 +86,14 @@ export async function PUT(request: Request) {
   if (!model) return NextResponse.json({ error: "请填写模型名称" }, { status: 400 });
 
   const supabase = getAuthSupabase();
-  const { data: existing } = await supabase
+  const { data: existing, error: existingError } = await supabase
     .from("user_ai_settings")
-    .select("api_key,api_key_last4")
+    .select("api_key,api_key_encrypted,api_key_last4,credential_key_version")
     .eq("user_id", user.id)
     .maybeSingle();
+  if (existingError) {
+    return NextResponse.json({ error: "AI_SETTINGS_STORAGE_FAILED" }, { status: 500 });
+  }
 
   const payload: Record<string, unknown> = {
     user_id: user.id,
@@ -88,14 +101,27 @@ export async function PUT(request: Request) {
     model,
     base_url: baseUrl || null,
     enabled: body.enabled !== false,
+    api_key: null,
+    api_key_encrypted: null,
+    credential_key_version: null,
     updated_at: new Date().toISOString(),
   };
-  if (apiKey) {
-    payload.api_key = apiKey;
-    payload.api_key_last4 = apiKey.slice(-4);
-  } else if (existing?.api_key) {
-    payload.api_key = existing.api_key;
-    payload.api_key_last4 = existing.api_key_last4;
+  try {
+    const stored = resolveStoredCredential({
+      encrypted: existing?.api_key_encrypted,
+      plaintext: existing?.api_key,
+      context: aiApiKeyCredentialContext(user.id),
+    });
+    const value = apiKey || stored.value;
+    if (value) {
+      const encrypted = encryptCredential(value, aiApiKeyCredentialContext(user.id));
+      payload.api_key_encrypted = encrypted.encrypted;
+      payload.credential_key_version = encrypted.keyVersion;
+      payload.api_key = null;
+      payload.api_key_last4 = value.slice(-4);
+    }
+  } catch {
+    return NextResponse.json({ error: "CREDENTIAL_ENCRYPTION_UNAVAILABLE" }, { status: 503 });
   }
 
   const { data, error } = await supabase
@@ -104,6 +130,6 @@ export async function PUT(request: Request) {
     .select("provider,model,base_url,api_key_last4,enabled")
     .single();
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return NextResponse.json({ error: "AI_SETTINGS_STORAGE_FAILED" }, { status: 500 });
   return NextResponse.json({ settings: safeSettings(data) });
 }

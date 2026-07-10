@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { calculateCPM, type Task } from '../src/lib/cpm.ts';
-import { buildCriticalPathNetworkLayout } from '../src/lib/cpm-network.ts';
+import { buildCriticalPathNetworkLayout, type NetworkTask } from '../src/lib/cpm-network.ts';
 
 test('calculates deterministic critical path for parallel activities', () => {
   const tasks: Task[] = [
@@ -31,7 +31,7 @@ test('critical path network layout separates dependent nodes into non-overlappin
     { id: 'F', name: '上线', duration: 1, predecessors: ['B', 'E'] },
   ];
   const result = calculateCPM(tasks);
-  const layout = buildCriticalPathNetworkLayout(result.tasks, result.criticalPath);
+  const layout = buildCriticalPathNetworkLayout(result.tasks as NetworkTask[], result.criticalPath);
 
   for (const task of result.tasks) {
     const current = layout.positions.get(task.id);

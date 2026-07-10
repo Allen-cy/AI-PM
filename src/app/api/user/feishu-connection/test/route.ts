@@ -10,6 +10,11 @@ import {
   writeCheckStep,
 } from "@/features/feishu/connection-test";
 import { evaluateFeishuFieldMappings } from "@/features/operating-system/diagnostics";
+import {
+  feishuAppSecretCredentialContext,
+  feishuBaseTokenCredentialContext,
+  resolveStoredCredential,
+} from "@/features/security/credential-encryption";
 
 export const runtime = "nodejs";
 
@@ -19,7 +24,9 @@ type UserFeishuConnectionRow = {
   user_id: string;
   app_id?: string | null;
   app_secret?: string | null;
+  app_secret_encrypted?: string | null;
   base_token?: string | null;
+  base_token_encrypted?: string | null;
   table_mapping?: Record<string, unknown> | null;
   connection_mode?: string | null;
   status?: string | null;
@@ -40,11 +47,21 @@ function normalizeMapping(value: unknown): Partial<Record<FeishuTableKey, string
 }
 
 function mergedConnection(userId: string, body: Record<string, unknown>, existing: UserFeishuConnectionRow | null): UserFeishuConnectionRow {
+  const storedSecret = resolveStoredCredential({
+    encrypted: existing?.app_secret_encrypted,
+    plaintext: existing?.app_secret,
+    context: feishuAppSecretCredentialContext(userId),
+  }).value;
+  const storedBaseToken = resolveStoredCredential({
+    encrypted: existing?.base_token_encrypted,
+    plaintext: existing?.base_token,
+    context: feishuBaseTokenCredentialContext(userId),
+  }).value;
   return {
     user_id: userId,
     app_id: text(body.appId) || existing?.app_id || "",
-    app_secret: text(body.appSecret) || existing?.app_secret || "",
-    base_token: text(body.baseToken) || existing?.base_token || "",
+    app_secret: text(body.appSecret) || storedSecret || "",
+    base_token: text(body.baseToken) || storedBaseToken || "",
     table_mapping: Object.keys(normalizeMapping(body.tableMapping)).length > 0
       ? normalizeMapping(body.tableMapping)
       : existing?.table_mapping || {},
@@ -78,12 +95,17 @@ export async function POST(request: Request) {
   const supabase = getAuthSupabase();
   const { data: existing, error } = await supabase
     .from("user_feishu_connections")
-    .select("user_id,app_id,app_secret,base_token,table_mapping,connection_mode,status")
+    .select("user_id,app_id,app_secret,app_secret_encrypted,base_token,base_token_encrypted,table_mapping,connection_mode,status")
     .eq("user_id", user.id)
     .maybeSingle();
-  if (error) return NextResponse.json({ request_id: requestId, status: "failed", warning: error.message }, { status: 500 });
+  if (error) return NextResponse.json({ request_id: requestId, status: "failed", warning: "FEISHU_SETTINGS_STORAGE_FAILED" }, { status: 500 });
 
-  const row = mergedConnection(user.id, body, existing as UserFeishuConnectionRow | null);
+  let row: UserFeishuConnectionRow;
+  try {
+    row = mergedConnection(user.id, body, existing as UserFeishuConnectionRow | null);
+  } catch {
+    return NextResponse.json({ request_id: requestId, status: "failed", warning: "CREDENTIAL_DECRYPTION_FAILED" }, { status: 503 });
+  }
   const tableMapping = normalizeMapping(row.table_mapping);
   const steps = buildFeishuConfigCompletenessSteps({
     appId: row.app_id,

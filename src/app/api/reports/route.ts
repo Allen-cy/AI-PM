@@ -1,5 +1,4 @@
 import { getCurrentUser } from "@/features/auth/server";
-import { DEFAULT_DASHBOARD_DATA } from "@/features/dashboard/normalizer";
 import { loadDashboardFromFeishu } from "@/features/dashboard/feishu";
 import { getEffectiveFeishuConfig } from "@/features/feishu/user-config";
 import { buildFinanceCockpit } from "@/features/finance/cockpit";
@@ -27,7 +26,6 @@ import {
 } from "@/features/reports/factory";
 import { llmComplete } from "@/lib/llm";
 import { REPORT_TYPE_LABELS, type ReportActionItem, type ReportRequest } from "@/lib/reports";
-import { initialRisks } from "@/lib/risk";
 import { listRisks } from "@/lib/risk-repository";
 
 export const runtime = "nodejs";
@@ -130,9 +128,36 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   const effective = await getEffectiveFeishuConfig();
-  const rawDashboard = effective.config
-    ? await loadDashboardFromFeishu(effective.config).catch(() => DEFAULT_DASHBOARD_DATA)
-    : DEFAULT_DASHBOARD_DATA;
+  if (!effective.config) {
+    return jsonResponse({
+      success: false,
+      status: "not_configured",
+      error: "REPORT_DATA_SOURCE_UNAVAILABLE",
+      detail: effective.setupHint || "请先配置飞书项目台账。",
+      request_id: requestId,
+    }, 503, requestId);
+  }
+  let rawDashboard: Awaited<ReturnType<typeof loadDashboardFromFeishu>>;
+  try {
+    rawDashboard = await loadDashboardFromFeishu(effective.config);
+  } catch {
+    return jsonResponse({
+      success: false,
+      status: "source_failed",
+      error: "REPORT_DATA_SOURCE_UNAVAILABLE",
+      detail: "飞书项目台账读取失败，本次不会使用样例数据生成正式报告。",
+      request_id: requestId,
+    }, 503, requestId);
+  }
+  if (rawDashboard.records.length === 0) {
+    return jsonResponse({
+      success: false,
+      status: "source_empty",
+      error: "REPORT_DATA_SOURCE_UNAVAILABLE",
+      detail: "飞书项目台账为空，本次不会使用样例数据生成正式报告。",
+      request_id: requestId,
+    }, 422, requestId);
+  }
   const grants = await loadProjectAccessGrantsForUser(effective.user);
   const dashboard = filterDashboardByProjectAccess(rawDashboard, effective.user, grants);
   const access = {
@@ -146,7 +171,18 @@ export async function POST(request: Request): Promise<Response> {
   const governanceImpact = governanceResult.status === "succeeded"
     ? buildGovernanceImpactDashboard(governanceResult.instances)
     : undefined;
-  const riskResult = await listRisks().catch(() => ({ risks: initialRisks, events: [], source: "memory" as const }));
+  let riskResult: Awaited<ReturnType<typeof listRisks>>;
+  try {
+    riskResult = await listRisks();
+  } catch {
+    return jsonResponse({
+      success: false,
+      status: "source_failed",
+      error: "REPORT_DATA_SOURCE_UNAVAILABLE",
+      detail: "风险登记册读取失败，本次不会使用内置风险生成正式报告。",
+      request_id: requestId,
+    }, 503, requestId);
+  }
   const riskIntegration = buildRiskIntegrationDashboard({
     risks: riskResult.risks,
     dashboard,
@@ -162,8 +198,8 @@ export async function POST(request: Request): Promise<Response> {
   const context: ReportFactoryContext = {
     dashboard,
     finance,
-    sourceLabel: effective.config ? "飞书项目台账" : "样例数据源",
-    sourceStatus: effective.config ? "live" : "fallback",
+    sourceLabel: "飞书项目台账",
+    sourceStatus: "live",
     model: "configured-llm",
     governanceImpact,
     riskIntegration,

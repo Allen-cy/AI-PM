@@ -1,6 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
-import { llmComplete, SYSTEM_PROMPTS } from "@/lib/llm";
+import { llmComplete } from "@/lib/llm";
 import { PaymentMilestone } from "@/lib/contract";
+
+type ParsedMilestone = {
+  milestone?: string;
+  name?: string;
+  amount?: string | number;
+  dueDate?: string;
+  date?: string;
+  trigger?: string;
+};
 
 export async function POST(request: NextRequest) {
   try {
@@ -19,7 +28,7 @@ export async function POST(request: NextRequest) {
 5. 输出JSON数组格式：[{"milestone": "里程碑名称", "amount": 金额, "dueDate": "YYYY-MM-DD", "trigger": "触发条件"}]
 6. 只输出JSON，不要其他说明`;
 
-      const result = await llmComplete("contract" as any, systemPrompt, text, { temperature: 0.3 });
+      const result = await llmComplete("parse", systemPrompt, text, { temperature: 0.3 });
 
       let milestones: PaymentMilestone[] = [];
       let aiReasoning = "";
@@ -29,11 +38,11 @@ export async function POST(request: NextRequest) {
         const content = result.content;
         const jsonMatch = content.match(/\[[\s\S]*\]/);
         if (jsonMatch) {
-          const parsed = JSON.parse(jsonMatch[0]);
-          milestones = parsed.map((item: any, idx: number) => ({
+          const parsed = JSON.parse(jsonMatch[0]) as ParsedMilestone[];
+          milestones = parsed.map((item, idx: number) => ({
             id: `ai-${Date.now()}-${idx}`,
             name: item.milestone || item.name || `里程碑${idx + 1}`,
-            amount: parseFloat(item.amount) || 0,
+            amount: Number.parseFloat(String(item.amount ?? "")) || 0,
             dueDate: item.dueDate || item.date || "",
             status: "pending" as const,
             trigger: item.trigger || "",

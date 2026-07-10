@@ -48,6 +48,18 @@ interface RecordListResponse {
   };
 }
 
+interface RecordGetResponse {
+  code: number;
+  msg?: string;
+  data?: {
+    record?: {
+      record_id: string;
+      fields?: Record<string, unknown>;
+      last_modified_time?: string | number;
+    };
+  };
+}
+
 interface FieldListResponse {
   code: number;
   msg?: string;
@@ -71,6 +83,7 @@ export interface FeishuEventClaimInput {
 export interface FeishuEventClaim {
   claimed: boolean;
   recordId: string;
+  status: 'pending' | 'succeeded' | 'failed' | 'unknown';
 }
 
 export interface FeishuProjectCreateInput {
@@ -90,6 +103,7 @@ export interface FeishuRecordCreateResult {
 export interface FeishuRecordItem {
   recordId: string;
   fields: Record<string, unknown>;
+  updatedAt?: string;
 }
 
 export interface FeishuFieldItem {
@@ -233,6 +247,46 @@ export class FeishuBaseClient {
     return { recordId };
   }
 
+  async updateRecord(
+    tableKey: FeishuTableKey,
+    recordId: string,
+    fields: Record<string, unknown>,
+  ): Promise<FeishuRecordCreateResult> {
+    const tableId = this.config.tables[tableKey];
+    if (!tableId) {
+      throw new FeishuApiError(`Feishu table ${tableKey} is not configured.`, 'FEISHU_TABLE_NOT_CONFIGURED');
+    }
+    if (!recordId.trim()) {
+      throw new FeishuApiError('Feishu record id is required.', 'FEISHU_RECORD_ID_REQUIRED');
+    }
+    const normalized = Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined));
+    if (Object.keys(normalized).length === 0) {
+      throw new FeishuApiError('Feishu record update fields are required.', 'FEISHU_RECORD_FIELDS_REQUIRED');
+    }
+
+    const token = await this.getTenantToken();
+    const response = await this.fetcher(
+      `https://open.feishu.cn/open-apis/bitable/v1/apps/${encodeURIComponent(this.config.baseToken)}/tables/${encodeURIComponent(tableId)}/records/${encodeURIComponent(recordId)}`,
+      {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ fields: normalized }),
+      },
+    );
+    if (!response.ok) {
+      throw new FeishuApiError('Feishu Base record update request failed.', 'FEISHU_RECORD_UPDATE_HTTP_ERROR');
+    }
+    const updated = await response.json() as RecordCreateResponse;
+    const updatedRecordId = updated.data?.record?.record_id;
+    if (updated.code !== 0 || !updatedRecordId) {
+      throw new FeishuApiError('Feishu Base record update was rejected.', `FEISHU_RECORD_UPDATE_${updated.code}`);
+    }
+    return { recordId: updatedRecordId };
+  }
+
   async listRecords(tableKey: FeishuTableKey, limit = 500): Promise<FeishuRecordItem[]> {
     const tableId = this.config.tables[tableKey];
     if (!tableId) {
@@ -266,6 +320,24 @@ export class FeishuBaseClient {
     } while (pageToken && output.length < limit);
 
     return output.slice(0, limit);
+  }
+
+  async getRecord(tableKey: FeishuTableKey, recordId: string): Promise<FeishuRecordItem> {
+    const tableId = this.config.tables[tableKey];
+    if (!tableId) throw new FeishuApiError(`Feishu table ${tableKey} is not configured.`, 'FEISHU_TABLE_NOT_CONFIGURED');
+    if (!recordId.trim()) throw new FeishuApiError('Feishu record id is required.', 'FEISHU_RECORD_ID_REQUIRED');
+    const token = await this.getTenantToken();
+    const response = await this.fetcher(
+      `https://open.feishu.cn/open-apis/bitable/v1/apps/${encodeURIComponent(this.config.baseToken)}/tables/${encodeURIComponent(tableId)}/records/${encodeURIComponent(recordId)}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    if (!response.ok) throw new FeishuApiError('Feishu Base record request failed.', 'FEISHU_RECORD_GET_HTTP_ERROR');
+    const payload = await response.json() as RecordGetResponse;
+    const record = payload.data?.record;
+    if (payload.code !== 0 || !record) throw new FeishuApiError('Feishu Base record was not found or not accessible.', `FEISHU_RECORD_GET_${payload.code}`);
+    const modified = Number(record.last_modified_time);
+    const updatedAt = Number.isFinite(modified) && modified > 0 ? new Date(modified < 100000000000 ? modified * 1000 : modified).toISOString() : undefined;
+    return { recordId: record.record_id, fields: record.fields ?? {}, updatedAt };
   }
 
   async listFields(tableKey: FeishuTableKey): Promise<FeishuFieldItem[]> {
@@ -375,9 +447,13 @@ export class FeishuBaseClient {
         if (retried.code !== 0) {
           throw new FeishuApiError('Feishu sync ledger retry was rejected.', `FEISHU_LEDGER_RETRY_${retried.code}`);
         }
-        return { claimed: true, recordId: existing.record_id };
+        return { claimed: true, recordId: existing.record_id, status: 'pending' };
       }
-      return { claimed: false, recordId: existing.record_id };
+      return {
+        claimed: false,
+        recordId: existing.record_id,
+        status: status === 'pending' || status === 'succeeded' || status === 'failed' ? status : 'unknown',
+      };
     }
 
     const createResponse = await this.fetcher(recordsUrl, {
@@ -410,7 +486,7 @@ export class FeishuBaseClient {
     if (created.code !== 0 || !recordId) {
       throw new FeishuApiError('Feishu sync ledger write was rejected.', `FEISHU_LEDGER_CREATE_${created.code}`);
     }
-    return { claimed: true, recordId };
+    return { claimed: true, recordId, status: 'pending' };
   }
 
   private async updateEventStatus(

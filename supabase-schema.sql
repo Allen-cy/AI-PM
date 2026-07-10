@@ -468,11 +468,14 @@ create table if not exists user_ai_settings (
   model text not null default 'MiniMax-M3',
   base_url text,
   api_key text,
+  api_key_encrypted text,
   api_key_last4 text,
+  credential_key_version smallint,
   enabled boolean not null default true,
   created_at timestamptz default now(),
   updated_at timestamptz default now(),
-  unique (user_id)
+  unique (user_id),
+  check (not (api_key is not null and api_key_encrypted is not null))
 );
 
 create table if not exists user_feishu_connections (
@@ -480,13 +483,21 @@ create table if not exists user_feishu_connections (
   user_id uuid not null references app_users(id) on delete cascade,
   app_id text,
   app_secret text,
+  app_secret_encrypted text,
+  app_secret_last4 text,
+  app_secret_key_version smallint,
   base_token text,
+  base_token_encrypted text,
+  base_token_last4 text,
+  base_token_key_version smallint,
   table_mapping jsonb not null default '{}',
   connection_mode text not null default 'web_app',
   status text not null default 'configured',
   created_at timestamptz default now(),
   updated_at timestamptz default now(),
-  unique (user_id)
+  unique (user_id),
+  check (not (app_secret is not null and app_secret_encrypted is not null)),
+  check (not (base_token is not null and base_token_encrypted is not null))
 );
 
 alter table app_users enable row level security;

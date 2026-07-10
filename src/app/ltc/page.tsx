@@ -1,8 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import type { FeishuTableKey } from "@/features/feishu/config";
-import { FEISHU_BASE_HOME_URL, feishuTableUrl } from "@/features/feishu/links";
+import { readStoredDataClass } from "@/features/operating-model/client-context";
+import type { LTCRealProject } from "@/features/ltc/real-data";
 
 // 12 LTC stages with full metadata
 const STAGES = [
@@ -152,14 +154,6 @@ const STAGES = [
   },
 ];
 
-// Simulated project progress data for demo
-const DEMO_PROJECTS = [
-  { name: "某中学智慧校园项目", currentStage: 6, stageStatus: Array(12).fill("").map((_, i) => i < 6 ? "completed" : i === 6 ? "current" : "upcoming") },
-  { name: "某省政务云平台项目", currentStage: 9, stageStatus: Array(12).fill("").map((_, i) => i < 9 ? "completed" : i === 9 ? "current" : "upcoming") },
-  { name: "某三甲医院HIS系统", currentStage: 3, stageStatus: Array(12).fill("").map((_, i) => i < 3 ? "completed" : i === 3 ? "current" : "upcoming") },
-  { name: "某职校数字化校园", currentStage: 1, stageStatus: Array(12).fill("").map((_, i) => i < 1 ? "completed" : i === 1 ? "current" : "upcoming") },
-];
-
 // RACI matrix summary
 const RACI_ROLES = ["PMO", "PM", "销售", "解决方案", "研发/交付", "客户", "财务", "法务"];
 
@@ -199,20 +193,47 @@ function getStageFeishuTableKey(stageId: string): FeishuTableKey {
   return "project";
 }
 
-// AI bottleneck analysis
-const BOTTLENECK_DATA = STAGES.map(s => ({
-  ...s,
-  avgDays: s.avgDays + Math.floor(Math.random() * 10 - 5), // Add some variance for demo
-})).sort((a, b) => b.avgDays - a.avgDays);
-
 export default function LTCPage() {
   const [selectedStage, setSelectedStage] = useState<number | null>(null);
   const [selectedProject, setSelectedProject] = useState(0);
-  const [showBottleneck, setShowBottleneck] = useState(false);
   const [activeTab, setActiveTab] = useState<"flow" | "raci" | "bottleneck">("flow");
+  const [projects, setProjects] = useState<LTCRealProject[]>([]);
+  const [source, setSource] = useState<{ status: "loading" | "ready" | "unavailable"; detail: string }>({ status: "loading", detail: "正在读取飞书项目台账的LTC阶段。" });
+  const [bottleneckDetail, setBottleneckDetail] = useState("阶段实际开始/完成数据未接入，不能计算真实瓶颈。");
+  const [tableLinks, setTableLinks] = useState<Partial<Record<FeishuTableKey, string>>>({});
 
-  const project = DEMO_PROJECTS[selectedProject];
-  const stageStatuses = project.stageStatus;
+  const loadProjects = useCallback(async () => {
+    const dataClass = readStoredDataClass();
+    setSource({ status: "loading", detail: `正在读取飞书${dataClass}数据空间。` });
+    try {
+      const response = await fetch(`/api/ltc?data_class=${encodeURIComponent(dataClass)}`, { cache: "no-store" });
+      const payload = await response.json() as { projects?: LTCRealProject[]; source?: { detail?: string }; bottleneck_detail?: string; table_links?: Partial<Record<FeishuTableKey, string>>; detail?: string; error?: string };
+      if (!response.ok) throw new Error(payload.detail || payload.error || "LTC数据读取失败");
+      const next = Array.isArray(payload.projects) ? payload.projects : [];
+      setProjects(next);
+      setSelectedProject(previous => Math.min(previous, Math.max(0, next.length - 1)));
+      setSelectedStage(null);
+      setBottleneckDetail(payload.bottleneck_detail || "阶段实际日期不完整，不能计算真实瓶颈。");
+      setTableLinks(payload.table_links || {});
+      setSource({ status: "ready", detail: payload.source?.detail || `已读取${next.length}个真实项目。` });
+    } catch (error) {
+      setProjects([]); setSelectedProject(0); setSelectedStage(null); setTableLinks({});
+      setSource({ status: "unavailable", detail: error instanceof Error ? error.message : "LTC数据源不可用。" });
+    }
+  }, []);
+
+  useEffect(() => {
+    const initialLoad = window.setTimeout(() => void loadProjects(), 0);
+    const reload = () => void loadProjects();
+    window.addEventListener("ai-pmo:data-class-changed", reload);
+    return () => {
+      window.clearTimeout(initialLoad);
+      window.removeEventListener("ai-pmo:data-class-changed", reload);
+    };
+  }, [loadProjects]);
+
+  const project = projects[selectedProject] ?? null;
+  const stageStatuses = project?.stageStatus ?? STAGES.map(() => "unknown");
 
   return (
     <div style={{ minHeight: "100vh", background: "var(--bg)", display: "flex", flexDirection: "column" }}>
@@ -225,13 +246,26 @@ export default function LTCPage() {
         gap: 16,
         background: "var(--surface)",
       }}>
-        <a href="/" style={{ color: "var(--text2)", textDecoration: "none", fontSize: "0.85rem" }}>← 返回首页</a>
+        <Link href="/" style={{ color: "var(--text2)", textDecoration: "none", fontSize: "0.85rem" }}>← 返回首页</Link>
         <span style={{ color: "var(--border)" }}>|</span>
         <span style={{ fontWeight: 700 }}>🔄 LTC全流程管理</span>
         <span className="tag tag-blue">飞书 + AI</span>
       </header>
 
       <main style={{ flex: 1, padding: "28px 32px", maxWidth: 1200, margin: "0 auto", width: "100%" }}>
+
+        <div style={{
+          marginBottom: 18,
+          padding: "10px 14px",
+          borderRadius: 8,
+          background: source.status === "ready" ? "rgba(16,185,129,0.08)" : source.status === "loading" ? "rgba(59,130,246,0.08)" : "rgba(245,158,11,0.1)",
+          border: `1px solid ${source.status === "ready" ? "rgba(16,185,129,0.25)" : source.status === "loading" ? "rgba(59,130,246,0.25)" : "rgba(245,158,11,0.3)"}`,
+          color: source.status === "ready" ? "var(--green)" : source.status === "loading" ? "var(--accent)" : "var(--amber)",
+          fontSize: "0.82rem",
+        }}>
+          <strong>{source.status === "ready" ? "飞书真实数据已连接" : source.status === "loading" ? "数据读取中" : "数据源不可用"}</strong>
+          <span style={{ marginLeft: 8 }}>{source.detail}</span>
+        </div>
 
         {/* Project Selector */}
         <div style={{
@@ -245,7 +279,7 @@ export default function LTCPage() {
             <div style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--text2)", textTransform: "uppercase", letterSpacing: "0.1em" }}>
               当前项目
             </div>
-            {DEMO_PROJECTS.map((p, i) => (
+            {projects.map((p, i) => (
               <button
                 key={i}
                 onClick={() => { setSelectedProject(i); setSelectedStage(null); }}
@@ -264,6 +298,7 @@ export default function LTCPage() {
                 {p.name}
               </button>
             ))}
+            {projects.length === 0 && <span style={{ color: "var(--text2)", fontSize: "0.82rem" }}>当前数据空间没有可见项目，不使用演示项目补位。</span>}
           </div>
         </div>
 
@@ -276,7 +311,7 @@ export default function LTCPage() {
           ].map(tab => (
             <button
               key={tab.key}
-              onClick={() => { setActiveTab(tab.key as typeof activeTab); setShowBottleneck(tab.key === "bottleneck"); }}
+              onClick={() => setActiveTab(tab.key as typeof activeTab)}
               style={{
                 padding: "10px 20px",
                 borderRadius: "8px 8px 0 0",
@@ -322,6 +357,9 @@ export default function LTCPage() {
                   </span>
                   <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
                     <div style={{ width: 10, height: 10, borderRadius: "50%", background: "var(--red)" }} />已阻塞
+                  </span>
+                  <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                    <div style={{ width: 10, height: 10, borderRadius: "50%", border: "1px dashed var(--text2)" }} />未录入
                   </span>
                 </span>
               </div>
@@ -414,8 +452,8 @@ export default function LTCPage() {
                       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
                         <span style={{ fontSize: "1.1rem", fontWeight: 800, color: "var(--text)" }}>{stage.id}</span>
                         <span style={{ fontSize: "1.2rem", fontWeight: 700 }}>{stage.name}</span>
-                        <span className={`tag tag-${status === "completed" ? "green" : status === "current" ? "blue" : "amber"}`} style={{ fontSize: "0.7rem" }}>
-                          {status === "completed" ? "已完成" : status === "current" ? "进行中" : "待开始"}
+                        <span className={`tag tag-${status === "completed" ? "green" : status === "current" ? "blue" : status === "blocked" ? "red" : "amber"}`} style={{ fontSize: "0.7rem" }}>
+                          {status === "completed" ? "已完成" : status === "current" ? "进行中" : status === "blocked" ? "已阻塞" : status === "unknown" ? "未录入" : "待开始"}
                         </span>
                       </div>
                       <p style={{ color: "var(--text2)", fontSize: "0.88rem" }}>{stage.desc}</p>
@@ -502,8 +540,8 @@ export default function LTCPage() {
 
                   {/* Feishu link */}
                   <div style={{ marginTop: 20, display: "flex", alignItems: "center", gap: 12 }}>
-                    <a
-                      href={feishuTableUrl(getStageFeishuTableKey(stage.id))}
+                    {tableLinks[getStageFeishuTableKey(stage.id)] ? <a
+                      href={tableLinks[getStageFeishuTableKey(stage.id)]}
                       target="_blank"
                       rel="noopener noreferrer"
                       style={{
@@ -521,8 +559,8 @@ export default function LTCPage() {
                       }}
                     >
                       📋 打开飞书 {stage.feishuTable}
-                    </a>
-                    <span style={{ color: "var(--text2)", fontSize: "0.78rem" }}>进入该阶段的实际数据录入</span>
+                    </a> : <button disabled title="当前用户未配置该飞书数据表" style={{ padding: "8px 20px", border: "1px solid var(--border)", borderRadius: 8, color: "var(--text2)", background: "var(--surface2)", cursor: "not-allowed" }}>该飞书表未配置</button>}
+                    <span style={{ color: "var(--text2)", fontSize: "0.78rem" }}>链接来自当前登录用户的飞书配置</span>
                   </div>
                 </div>
               );
@@ -564,7 +602,6 @@ export default function LTCPage() {
                         <span style={{ marginLeft: 6, color: "var(--text)" }}>{stage.name}</span>
                       </td>
                       {["PMO", "PM", "销售", "解决方案", "研发/交付", "客户", "财务", "法务"].map(role => {
-                        let val = "";
                         Object.entries(stage.raci).forEach(([k, v]) => {
                           if (v === role || (role === "PMO" && k === "A")) return;
                         });
@@ -647,94 +684,17 @@ export default function LTCPage() {
               </div>
 
               <div style={{
-                background: "rgba(59,130,246,0.08)",
-                border: "1px solid rgba(59,130,246,0.2)",
+                background: "rgba(245,158,11,0.08)",
+                border: "1px solid rgba(245,158,11,0.25)",
                 borderRadius: 8,
                 padding: "16px 20px",
-                marginBottom: 20,
                 fontSize: "0.85rem",
                 color: "var(--text2)",
                 lineHeight: 1.7,
               }}>
-                📊 分析范围：{DEMO_PROJECTS.length} 个项目 | 12个阶段 | 时间跨度：过去6个月
-                <br />
-                ⚠️ 当前识别瓶颈：S03方案建设（平均15天）、S04招投标（平均20天）、S09项目实施（平均60天）
-              </div>
-
-              {/* Stage time bars */}
-              <div style={{ display: "flex", flexDirection: "column", gap: 14, marginBottom: 24 }}>
-                {BOTTLENECK_DATA.map((stage, idx) => {
-                  const maxDays = Math.max(...BOTTLENECK_DATA.map(s => s.avgDays));
-                  const pct = (stage.avgDays / maxDays) * 100;
-                  const isBottleneck = stage.avgDays > 20;
-                  return (
-                    <div key={stage.id}>
-                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, alignItems: "center", gap: 12 }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 160 }}>
-                          <span style={{ fontSize: "0.75rem", fontWeight: 700, color: "var(--text2)" }}>{stage.id}</span>
-                          <span style={{ fontSize: "0.88rem", fontWeight: 600 }}>{stage.name}</span>
-                          {isBottleneck && (
-                            <span style={{
-                              display: "inline-block",
-                              padding: "2px 8px",
-                              borderRadius: 10,
-                              background: "rgba(239,68,68,0.15)",
-                              color: "var(--red)",
-                              fontSize: "0.68rem",
-                              fontWeight: 700,
-                            }}>
-                              ⚠ 瓶颈
-                            </span>
-                          )}
-                        </div>
-                        <div style={{ display: "flex", alignItems: "center", gap: 12, flex: 1 }}>
-                          <div style={{ flex: 1, height: 20, background: "var(--surface2)", borderRadius: 6, overflow: "hidden" }}>
-                            <div style={{
-                              height: "100%",
-                              width: `${pct}%`,
-                              background: isBottleneck
-                                ? "linear-gradient(90deg, var(--amber), var(--red))"
-                                : "linear-gradient(90deg, var(--accent), var(--green))",
-                              borderRadius: 6,
-                              transition: "width 0.5s ease",
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "flex-end",
-                              paddingRight: 8,
-                            }}>
-                              <span style={{ fontSize: "0.72rem", fontWeight: 700, color: "white", whiteSpace: "nowrap" }}>
-                                {stage.avgDays}天
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* AI Recommendations */}
-              <div style={{
-                background: "var(--surface2)",
-                border: "1px solid var(--border)",
-                borderRadius: 8,
-                padding: "20px 24px",
-              }}>
-                <div style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--text2)", marginBottom: 14, textTransform: "uppercase", letterSpacing: "0.08em" }}>
-                  💡 AI优化建议
-                </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 10, fontSize: "0.88rem", lineHeight: 1.7, color: "var(--text2)" }}>
-                  <div style={{ padding: "10px 14px", background: "rgba(245,158,11,0.08)", borderLeft: "3px solid var(--amber)", borderRadius: "0 6px 6px 0" }}>
-                    <span style={{ color: "var(--amber)", fontWeight: 600 }}>S04招投标</span> 平均耗时 20 天，为最长阶段。建议：引入招标模板库，标准化投标响应文件，将平均耗时压缩至 12 天以内。
-                  </div>
-                  <div style={{ padding: "10px 14px", background: "rgba(245,158,11,0.08)", borderLeft: "3px solid var(--amber)", borderRadius: "0 6px 6px 0" }}>
-                    <span style={{ color: "var(--amber)", fontWeight: 600 }}>S09项目实施</span> 平均耗时 60 天，建议分阶段验收（每2周一次Sprint Review），加速交付反馈循环。
-                  </div>
-                  <div style={{ padding: "10px 14px", background: "rgba(16,185,129,0.08)", borderLeft: "3px solid var(--green)", borderRadius: "0 6px 6px 0" }}>
-                    <span style={{ color: "var(--green)", fontWeight: 600 }}>S08项目规划</span> 平均耗时仅 5 天，效率优秀。建议将此阶段快速规划方法论推广至全组织。
-                  </div>
-                </div>
+                <strong style={{ color: "var(--amber)" }}>瓶颈分析当前不可用。</strong>
+                <br />{bottleneckDetail}
+                <br />当前不展示随机耗时、预设瓶颈或基于模板的优化建议。
               </div>
             </div>
 
@@ -747,7 +707,7 @@ export default function LTCPage() {
               marginBottom: 24,
             }}>
               <div style={{ fontSize: "0.85rem", fontWeight: 700, color: "var(--text2)", marginBottom: 16, textTransform: "uppercase", letterSpacing: "0.1em" }}>
-                🔀 条件分支与并行会签配置
+                🔀 条件分支与并行会签方法论参考（非当前运行配置）
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
                 <div style={{
@@ -761,12 +721,12 @@ export default function LTCPage() {
                     <div style={{ display: "flex", gap: 6 }}>
                       <span style={{ color: "var(--red)", fontWeight: 600 }}>S06 合同管理</span>
                       <span>跳过条件：</span>
-                      <span style={{ color: "var(--green)", fontWeight: 600 }}>项目类型="标品"</span>
+                      <span style={{ color: "var(--green)", fontWeight: 600 }}>项目类型=“标品”</span>
                     </div>
                     <div style={{ display: "flex", gap: 6 }}>
                       <span style={{ color: "var(--red)", fontWeight: 600 }}>S03 方案建设</span>
                       <span>跳过条件：</span>
-                      <span style={{ color: "var(--green)", fontWeight: 600 }}>产品类型="标准产品"</span>
+                      <span style={{ color: "var(--green)", fontWeight: 600 }}>产品类型=“标准产品”</span>
                     </div>
                   </div>
                 </div>
@@ -816,8 +776,8 @@ export default function LTCPage() {
               所有流程数据存储在飞书多维表格，点击阶段可直接跳转至对应数据表进行实际数据录入与管理
             </div>
           </div>
-          <a
-            href={FEISHU_BASE_HOME_URL}
+          {tableLinks.project ? <a
+            href={tableLinks.project}
             target="_blank"
             rel="noopener noreferrer"
             style={{
@@ -834,7 +794,7 @@ export default function LTCPage() {
             }}
           >
             打开飞书数据平台
-          </a>
+          </a> : <button disabled title="请先在用户中心配置个人飞书项目台账" style={{ padding: "10px 24px", background: "var(--surface2)", color: "var(--text2)", border: "1px solid var(--border)", borderRadius: 8, fontWeight: 700, cursor: "not-allowed" }}>飞书项目台账未配置</button>}
         </div>
       </main>
 

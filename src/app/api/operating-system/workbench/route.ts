@@ -3,12 +3,41 @@ import { writeIntegrationSyncLog } from "@/features/operating-system/sync-logs";
 import { buildOperationalWorkbench, loadOperationalWorkbenchFromFeishu } from "@/features/operating-system/workbench";
 import { listRiskRetrospectiveGovernanceFollowups } from "@/features/risk/retrospective-governance-followups";
 import { loadProjectAccessGrantsForUser, writeOperationAudit } from "@/features/security/repository";
+import { resolveBusinessContext, type BusinessRole, type SubjectScope } from "@/features/operating-model/context";
+import { listBusinessRoleAssignments, loadContextProjectIdentityMappings, type ManagementSignalRecord } from "@/features/operating-model/persistence";
 
 export const runtime = "nodejs";
 
-export async function GET(): Promise<Response> {
+export async function GET(request: Request): Promise<Response> {
   const requestId = crypto.randomUUID();
   const effective = await getEffectiveFeishuConfig();
+  if (!effective.user) return Response.json({ error: "UNAUTHORIZED", request_id: requestId }, { status: 401, headers: { "Cache-Control": "no-store", "X-Request-Id": requestId } });
+  const url = new URL(request.url);
+  const role = url.searchParams.get("role") as BusinessRole | null;
+  const orgId = url.searchParams.get("org_id");
+  const subjectScope = url.searchParams.get("subject_scope") as SubjectScope | null;
+  const subjectId = url.searchParams.get("subject_id");
+  const requestedDataClass = (url.searchParams.get("data_class") || "production") as ManagementSignalRecord["dataClass"];
+  if (!role || !orgId || !subjectScope || !subjectId || !["production", "sample", "test", "diagnostic", "unclassified"].includes(requestedDataClass)) {
+    return Response.json({ error: "BUSINESS_CONTEXT_AND_DATA_CLASS_REQUIRED", request_id: requestId }, { status: 400, headers: { "Cache-Control": "no-store", "X-Request-Id": requestId } });
+  }
+  const assignments = await listBusinessRoleAssignments(effective.user.id);
+  if (assignments.status !== "succeeded") return Response.json({ error: "P17_STORAGE_NOT_CONFIGURED", detail: assignments.warning, request_id: requestId }, { status: 503 });
+  const context = resolveBusinessContext({
+    user: { id: effective.user.id, systemRole: effective.user.role }, assignments: assignments.data ?? [],
+    requestedRole: role, requestedOrgId: orgId, requestedSubjectScope: subjectScope, requestedSubjectId: subjectId,
+  });
+  if (!context) return Response.json({ error: "BUSINESS_CONTEXT_FORBIDDEN", request_id: requestId }, { status: 403 });
+  const mappingResult = await loadContextProjectIdentityMappings({ context, dataClass: requestedDataClass });
+  if (mappingResult.status !== "succeeded") return Response.json({ error: "PROJECT_SCOPE_MAPPING_FAILED", detail: mappingResult.warning, request_id: requestId }, { status: mappingResult.status === "not_configured" ? 503 : 500 });
+  const mappings = mappingResult.data ?? [];
+  const businessScope = {
+    businessRole: role,
+    canonicalProjectIds: mappings.map(item => item.projectId),
+    sourceRecordIds: mappings.map(item => item.sourceRecordId),
+    externalProjectCodes: mappings.map(item => item.externalProjectCode).filter((value): value is string => Boolean(value)),
+    dataClass: requestedDataClass,
+  };
   const followupResult = await listRiskRetrospectiveGovernanceFollowups(80);
   if (!effective.config) {
     return Response.json({
@@ -24,6 +53,7 @@ export async function GET(): Promise<Response> {
         payments: [],
         riskRetrospectiveGovernanceFollowups: followupResult.followups,
         riskRetrospectiveGovernanceFollowupsWarning: "warning" in followupResult ? followupResult.warning : undefined,
+        businessScope,
       }),
       request_id: requestId,
     }, {
@@ -40,6 +70,7 @@ export async function GET(): Promise<Response> {
       grants,
       followupResult.followups,
       "warning" in followupResult ? followupResult.warning : undefined,
+      businessScope,
     );
     await writeIntegrationSyncLog({
       userId: effective.user?.id,
@@ -60,7 +91,7 @@ export async function GET(): Promise<Response> {
       resourceType: "workbench",
       status: "succeeded",
       summary: `读取工作台：项目${workbench.myProjects.length}个，待办${workbench.todayTodos.length}个`,
-      detail: { evidence: workbench.evidence, explicit_grants: grants.length },
+      detail: { evidence: workbench.evidence, explicit_grants: grants.length, businessRole: role, dataClass: requestedDataClass },
       requestId,
     });
     return Response.json({
@@ -68,6 +99,8 @@ export async function GET(): Promise<Response> {
       source: effective.source,
       generated_at: workbench.evidence.generatedAt,
       explicit_grants: grants.length,
+      context,
+      data_class: requestedDataClass,
       workbench,
       request_id: requestId,
     }, {
@@ -88,6 +121,7 @@ export async function GET(): Promise<Response> {
         payments: [],
         riskRetrospectiveGovernanceFollowups: followupResult.followups,
         riskRetrospectiveGovernanceFollowupsWarning: "warning" in followupResult ? followupResult.warning : undefined,
+        businessScope,
       }),
       request_id: requestId,
     }, {

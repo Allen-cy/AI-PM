@@ -5,6 +5,7 @@ import {
   updateFeishuActionConfirmationStatus,
 } from "../../../../../../../../features/feishu/action-confirmations.ts";
 import { writeIntegrationSyncLog } from "../../../../../../../../features/operating-system/sync-logs.ts";
+import { cancelBusinessUpdateWriteback } from "../../../../../../../../features/operating-assistant/repository.ts";
 import { writeOperationAudit } from "../../../../../../../../features/security/repository.ts";
 
 export const runtime = "nodejs";
@@ -47,13 +48,11 @@ export async function POST(request: Request, context: RouteContext): Promise<Res
   }
 
   const reason = await readReason(request);
-  const cancelled = await updateFeishuActionConfirmationStatus({
-    id,
-    status: "cancelled",
-    cancelReason: reason || "用户取消飞书写入。",
-  });
+  const cancelled = confirmation.actionType === "base_record_update"
+    ? await cancelBusinessUpdateWriteback({ confirmationId: id, actorUserId: user.id, reason: reason || "用户取消飞书Base写回。" })
+    : await updateFeishuActionConfirmationStatus({ id, status: "cancelled", cancelReason: reason || "用户取消飞书写入。" });
   if (cancelled.status !== "succeeded") {
-    const httpStatus = cancelled.status === "not_configured" ? 503 : 500;
+    const httpStatus = cancelled.status === "not_configured" ? 503 : cancelled.status === "conflict" ? 409 : cancelled.status === "not_found" ? 404 : 500;
     return json({ request_id: requestId, ...cancelled }, httpStatus, requestId);
   }
 
@@ -79,5 +78,6 @@ export async function POST(request: Request, context: RouteContext): Promise<Res
     requestId,
   });
 
-  return json({ request_id: requestId, status: "cancelled", confirmation: cancelled.confirmation }, 200, requestId);
+  const refreshed = await getFeishuActionConfirmation(id);
+  return json({ request_id: requestId, status: "cancelled", confirmation: refreshed.status === "succeeded" ? refreshed.confirmation : confirmation, draft: "data" in cancelled ? cancelled.data : undefined }, 200, requestId);
 }

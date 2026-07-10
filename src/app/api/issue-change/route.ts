@@ -1,4 +1,4 @@
-import { getCurrentUser } from "@/features/auth/server";
+import { requireAuthenticatedApiUser } from "@/features/auth/server";
 import {
   closeUnifiedAction,
   createChange,
@@ -44,14 +44,16 @@ function statusCode(status?: string): number {
 
 export async function GET(): Promise<Response> {
   const requestId = crypto.randomUUID();
+  const user = await requireAuthenticatedApiUser();
+  if (!user) return jsonResponse({ request_id: requestId, status: "unauthorized" }, 401, requestId);
   const result = await listIssueChangeChain();
   return jsonResponse({ request_id: requestId, ...result }, statusCode(result.status), requestId);
 }
 
 export async function POST(request: Request): Promise<Response> {
   const requestId = crypto.randomUUID();
-  const user = await getCurrentUser();
-  if (process.env.AUTH_REQUIRED === "true" && !user) {
+  const user = await requireAuthenticatedApiUser();
+  if (!user) {
     return jsonResponse({
       request_id: requestId,
       status: "unauthorized",

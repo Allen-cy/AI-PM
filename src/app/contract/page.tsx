@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import {
   Contract,
   PaymentMilestone,
@@ -494,7 +495,7 @@ export default function ContractPage() {
         gap: 16,
         background: "var(--surface)",
       }}>
-        <a href="/" style={{ color: "var(--text2)", textDecoration: "none", fontSize: "0.85rem" }}>← 返回首页</a>
+        <Link href="/" style={{ color: "var(--text2)", textDecoration: "none", fontSize: "0.85rem" }}>← 返回首页</Link>
         <span style={{ color: "var(--border)" }}>|</span>
         <span style={{ fontWeight: 700 }}>合同与回款管理</span>
         <span className="tag tag-green" style={{ fontSize: "0.7rem" }}>智能解析</span>

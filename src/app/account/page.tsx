@@ -31,7 +31,11 @@ interface FeishuConnection {
   appId: string;
   appSecretConfigured: boolean;
   appSecretLast4: string;
+  appSecretMasked: string;
   baseToken: string;
+  baseTokenConfigured: boolean;
+  baseTokenLast4: string;
+  baseTokenMasked: string;
   tableMapping: Partial<Record<FeishuTableKey, string>>;
   configured: boolean;
   status: string;
@@ -168,7 +172,7 @@ export default function AccountPage() {
             setFeishuDraft({
               appId: feishuData.connection.appId,
               appSecret: "",
-              baseToken: feishuData.connection.baseToken,
+              baseToken: "",
               tableMapping: feishuData.connection.tableMapping,
             });
           }
@@ -302,7 +306,7 @@ export default function AccountPage() {
       setFeishuDraft({
         appId: data.connection.appId,
         appSecret: "",
-        baseToken: data.connection.baseToken,
+        baseToken: "",
         tableMapping: data.connection.tableMapping,
       });
       setFeishuMessage("个人飞书接入配置已保存。");
@@ -840,7 +844,7 @@ export default function AccountPage() {
             </div>
             <div>
               <label style={brownLabelStyle}>多维表格 App Token</label>
-              <input style={lightInputStyle} value={feishuDraft.baseToken} onChange={event => setFeishuDraft(prev => ({ ...prev, baseToken: event.target.value }))} placeholder="Base App Token" />
+              <input type="password" style={lightInputStyle} value={feishuDraft.baseToken} onChange={event => setFeishuDraft(prev => ({ ...prev, baseToken: event.target.value }))} placeholder={feishuConnection?.baseTokenConfigured ? `留空表示不修改（${feishuConnection.baseTokenMasked}）` : "首次配置必须填写 Base App Token"} />
             </div>
           </div>
 

@@ -220,6 +220,7 @@ export function normalizeProjectRows(rows: RawRow[]): DashboardProjectRecord[] {
         计划开始: dateText(row, ['计划开始', '开始时间']),
         计划完成: dueDate,
         当前进度: progress,
+        计划进度: number(row, ['计划进度', '基线进度'], Number.NaN),
         合同金额: contract,
         已回款金额: collection,
         应收金额: receivable,
@@ -235,6 +236,28 @@ export function normalizeProjectRows(rows: RawRow[]): DashboardProjectRecord[] {
         计划成本: number(row, ['计划成本', '成本预算'], Number.NaN),
         实际成本: number(row, ['实际成本', '已发生成本', '累计成本', 'AC'], Number.NaN),
         预计成本: number(row, ['预计成本', '预测成本', 'EAC'], Number.NaN),
+        计划价值: number(row, ['计划价值', 'PV'], Number.NaN),
+        挣值: number(row, ['挣值', 'EV'], Number.NaN),
+        完工预算: number(row, ['完工预算', 'BAC'], Number.NaN),
+        完工估算: number(row, ['完工估算', 'EAC'], Number.NaN),
+        已承诺成本: number(row, ['已承诺成本', '承诺成本'], Number.NaN),
+        关键路径任务数: number(row, ['关键路径任务数'], Number.NaN),
+        延期任务数: number(row, ['延期任务数'], Number.NaN),
+        交付物总数: number(row, ['交付物总数'], Number.NaN),
+        已验收交付物: number(row, ['已验收交付物'], Number.NaN),
+        待验收交付物: number(row, ['待验收交付物'], Number.NaN),
+        验收驳回数: number(row, ['验收驳回数'], Number.NaN),
+        范围变更数: number(row, ['范围变更数'], Number.NaN),
+        缺陷密度: number(row, ['缺陷密度'], Number.NaN),
+        质检通过率: number(row, ['质检通过率'], Number.NaN),
+        质量指数: number(row, ['质量指数'], Number.NaN),
+        未关闭缺陷: number(row, ['未关闭缺陷'], Number.NaN),
+        已解决缺陷: number(row, ['已解决缺陷'], Number.NaN),
+        待处理变更: number(row, ['待处理变更'], Number.NaN),
+        进行中变更: number(row, ['进行中变更'], Number.NaN),
+        已批准变更: number(row, ['已批准变更'], Number.NaN),
+        已拒绝变更: number(row, ['已拒绝变更'], Number.NaN),
+        已实施变更: number(row, ['已实施变更'], Number.NaN),
         毛利: number(row, ['毛利', '项目毛利'], Number.NaN),
         毛利率: number(row, ['毛利率'], Number.NaN),
         验收状态: text(row, ['验收状态', '客户验收状态', '交付验收状态']),
@@ -307,7 +330,7 @@ export function buildDashboardData(
   source: { type: DashboardSourceType; name: string; note?: string },
   options: { useTemplateFallback?: boolean } = {},
 ): DashboardData {
-  const useTemplateFallback = options.useTemplateFallback ?? true;
+  const useTemplateFallback = options.useTemplateFallback ?? false;
   const safeRecords = records.length > 0 ? records : useTemplateFallback ? normalizeProjectRows(DEFAULT_TEMPLATE_ROWS) : [];
   const totalContract = safeRecords.reduce((sum, item) => sum + item.合同金额, 0);
   const totalCollection = safeRecords.reduce((sum, item) => sum + item.已回款金额, 0);

@@ -1,0 +1,18 @@
+export interface RetrospectiveInput {projectId:string;projectName:string;objectives:string;outcomes:string;deviations:string;rootCauses:string;keyDecisions:string;actionEffects:string;lessons:string;applicabilityConditions:string;templateGaps:string;governanceSuggestions:string;evidenceIds:string[];improvementOwnerUserId:string;improvementDueAt:string;}
+export type RetrospectiveCandidateType="lesson_learned"|"improvement_action"|"template_revision"|"governance_rule";
+export interface RetrospectiveCandidate {projectId:string;status:"pending_review";evidenceIds:string[];applicabilityConditions:string;candidateType:RetrospectiveCandidateType;title:string;summary:string;suggestedAction:string|null;ownerUserId:string|null;dueAt:string|null;}
+function required(value:string,label:string){const output=value.trim();if(!output)throw new Error(`${label}不能为空`);return output;}
+export function buildRetrospectiveCandidates(input:RetrospectiveInput){
+  required(input.objectives,"目标");required(input.outcomes,"结果");required(input.rootCauses,"根因");required(input.lessons,"经验教训");if(input.evidenceIds.length===0)throw new Error("复盘必须关联证据");
+  const base={projectId:input.projectId,status:"pending_review" as const,evidenceIds:[...new Set(input.evidenceIds)],applicabilityConditions:required(input.applicabilityConditions,"适用条件")};
+  const candidates:RetrospectiveCandidate[]=[{...base,candidateType:"lesson_learned",title:`${input.projectName}经验教训`,summary:`目标：${input.objectives}\n结果：${input.outcomes}\n偏差：${input.deviations}\n根因：${input.rootCauses}\n关键决策：${input.keyDecisions}\n经验：${input.lessons}`,suggestedAction:null,ownerUserId:null,dueAt:null}];
+  if(input.actionEffects.trim())candidates.push({...base,candidateType:"improvement_action" as RetrospectiveCandidateType,title:`${input.projectName}组织改进项`,summary:`根因：${input.rootCauses}\n既有行动效果：${input.actionEffects}`,suggestedAction:`固化改进：${input.lessons}`,ownerUserId:required(input.improvementOwnerUserId,"改进责任人"),dueAt:required(input.improvementDueAt,"改进期限")});
+  if(input.templateGaps.trim())candidates.push({...base,candidateType:"template_revision" as RetrospectiveCandidateType,title:`${input.projectName}模板修订建议`,summary:input.templateGaps,suggestedAction:"评审并修订相关项目管理模板",ownerUserId:input.improvementOwnerUserId||null,dueAt:input.improvementDueAt||null});
+  if(input.governanceSuggestions.trim())candidates.push({...base,candidateType:"governance_rule" as RetrospectiveCandidateType,title:`${input.projectName}治理规则建议`,summary:input.governanceSuggestions,suggestedAction:"由PMO评估规则阈值、适用项目等级和生效日期",ownerUserId:input.improvementOwnerUserId||null,dueAt:input.improvementDueAt||null});
+  return candidates;
+}
+
+export interface KnowledgeRecommendationCandidate{id:string;title:string;status:string;domains:string[];tags:string[];applicableScenarios:string[];metadata:Record<string,unknown>}
+export function rankKnowledgeRecommendations(context:{projectLevel:string;projectType:string;scenario:string;tags:string[]},items:KnowledgeRecommendationCandidate[]){
+  return items.filter(item=>item.status==="published").map(item=>{let score=0;const reasons:string[]=[];if(item.domains.includes(context.projectType)){score+=3;reasons.push("项目类型匹配");}if(item.applicableScenarios.includes(context.scenario)){score+=4;reasons.push("当前场景匹配");}const common=item.tags.filter(tag=>context.tags.includes(tag));if(common.length){score+=common.length*2;reasons.push(`标签匹配：${common.join("、")}`);}if(String(item.metadata.project_level||"")===context.projectLevel){score+=2;reasons.push("项目等级匹配");}return{knowledgeItemId:item.id,title:item.title,score,reasons};}).sort((a,b)=>b.score-a.score||a.title.localeCompare(b.title,"zh-CN"));
+}

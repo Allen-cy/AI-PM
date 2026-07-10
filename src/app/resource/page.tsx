@@ -13,6 +13,8 @@ import {
   Allocation,
 } from "@/lib/resource";
 
+type ResourceTab = "pool" | "matrix" | "planning";
+
 // Allocation Bar Component
 function AllocationBar({ member }: { member: TeamMember }) {
   const utilization = calculateUtilization(member);
@@ -395,7 +397,7 @@ export default function ResourcePage() {
         ].map(tab => (
           <button
             key={tab.id}
-            onClick={() => setActiveTab(tab.id as any)}
+            onClick={() => setActiveTab(tab.id as ResourceTab)}
             style={{
               padding: "8px 16px",
               borderRadius: 8,

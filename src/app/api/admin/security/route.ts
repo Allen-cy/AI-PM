@@ -3,6 +3,7 @@ import { getAuthSupabase, isAuthStorageConfigured, requireAdmin } from "@/featur
 import { hasPermission, type AppRole } from "@/features/security/authorization";
 import { isMissingSecurityTableError } from "@/features/security/errors";
 import { loadAdminSecuritySnapshot, writeOperationAudit } from "@/features/security/repository";
+import { parseBusinessRoleAssignmentInput } from "@/features/operating-model/context";
 
 export const runtime = "nodejs";
 
@@ -66,6 +67,18 @@ function status(value: unknown): "active" | "disabled" {
 function accessLevel(value: unknown): "viewer" | "editor" | "owner" {
   if (value === "viewer" || value === "editor" || value === "owner") return value;
   throw new AdminSecurityError("授权级别必须是 viewer、editor 或 owner");
+}
+
+const BUSINESS_ROLES = ["pm", "operations", "pmo", "ceo", "sponsor", "business_owner", "finance", "quality"] as const;
+function businessRole(value: unknown): typeof BUSINESS_ROLES[number] {
+  const output = String(value || "");
+  if (BUSINESS_ROLES.includes(output as typeof BUSINESS_ROLES[number])) return output as typeof BUSINESS_ROLES[number];
+  throw new AdminSecurityError("业务角色不合法");
+}
+
+function reportingScope(value: unknown): "project" | "portfolio" | "organization" {
+  if (value === "project" || value === "portfolio" || value === "organization") return value;
+  throw new AdminSecurityError("汇报范围必须是项目、项目组合或组织");
 }
 
 export async function GET() {
@@ -219,6 +232,182 @@ export async function POST(request: Request) {
         requestId,
       });
       return json({ ok: true, id: data.id, audit, request_id: requestId });
+    }
+
+    if (operation === "assign_business_role") {
+      const assignment = parseBusinessRoleAssignmentInput({
+        userId: body.userId,
+        businessRole: body.businessRole,
+        orgId: body.orgId,
+        subjectScope: body.subjectScope,
+        subjectId: body.subjectId,
+        validFrom: body.validFrom || new Date().toISOString(),
+        validUntil: body.validUntil || null,
+        delegatedFromUserId: body.delegatedFromUserId || null,
+        assignmentReason: body.assignmentReason || null,
+      });
+      if (assignment.subjectScope === "project") {
+        const { data: project, error: projectError } = await supabase
+          .from("projects")
+          .select("id,org_id")
+          .eq("id", assignment.subjectId)
+          .maybeSingle();
+        if (projectError) throw new AdminSecurityError(projectError.message, 500);
+        if (!project || project.org_id !== assignment.orgId) throw new AdminSecurityError("项目不存在或不属于指定组织", 409);
+      }
+      const { data: existing, error: existingError } = await supabase
+        .from("user_business_roles")
+        .select("id")
+        .eq("user_id", assignment.userId)
+        .eq("business_role", assignment.businessRole)
+        .eq("org_id", assignment.orgId)
+        .eq("subject_scope", assignment.subjectScope)
+        .eq("subject_id", assignment.subjectId)
+        .eq("status", "active")
+        .maybeSingle();
+      if (existingError) throw new AdminSecurityError(existingError.message, 500);
+      if (existing) throw new AdminSecurityError("相同范围的有效业务角色已经存在", 409);
+      const { data, error } = await supabase.from("user_business_roles").insert({
+        user_id: assignment.userId,
+        business_role: assignment.businessRole,
+        org_id: assignment.orgId,
+        subject_scope: assignment.subjectScope,
+        subject_id: assignment.subjectId,
+        status: "active",
+        valid_from: assignment.validFrom,
+        valid_until: assignment.validUntil,
+        delegated_from_user_id: assignment.delegatedFromUserId,
+        assigned_by: admin.id,
+        assignment_reason: assignment.assignmentReason,
+      }).select("id").single();
+      if (error) throw new AdminSecurityError(error.message, 500);
+      const audit = await writeOperationAudit({
+        user: admin,
+        action: "assign_business_role",
+        resourceType: "business_role_assignment",
+        resourceId: data.id,
+        status: "succeeded",
+        severity: assignment.businessRole === "ceo" ? "high" : "medium",
+        summary: `分配业务角色：${assignment.businessRole} / ${assignment.subjectScope}`,
+        detail: { ...assignment },
+        requestId,
+      });
+      return json({ ok: true, id: data.id, audit, request_id: requestId });
+    }
+
+    if (operation === "revoke_business_role") {
+      const assignmentId = text(body.assignmentId, "assignmentId", 80);
+      const reason = text(body.reason, "撤销原因", 500);
+      const { data: existing, error: readError } = await supabase
+        .from("user_business_roles")
+        .select("id,business_role,subject_scope,subject_id,status")
+        .eq("id", assignmentId)
+        .maybeSingle();
+      if (readError) throw new AdminSecurityError(readError.message, 500);
+      if (!existing) throw new AdminSecurityError("业务角色分配不存在", 404);
+      if (existing.status !== "active") throw new AdminSecurityError("业务角色已经失效，不能重复撤销", 409);
+      const { error } = await supabase.from("user_business_roles")
+        .update({ status: "revoked", assignment_reason: reason, updated_at: new Date().toISOString() })
+        .eq("id", assignmentId)
+        .eq("status", "active");
+      if (error) throw new AdminSecurityError(error.message, 500);
+      const audit = await writeOperationAudit({
+        user: admin,
+        action: "revoke_business_role",
+        resourceType: "business_role_assignment",
+        resourceId: assignmentId,
+        status: "succeeded",
+        severity: existing.business_role === "ceo" ? "high" : "medium",
+        summary: `撤销业务角色：${existing.business_role} / ${existing.subject_scope}`,
+        detail: { reason, subjectId: existing.subject_id },
+        requestId,
+      });
+      return json({ ok: true, audit, request_id: requestId });
+    }
+
+    if (operation === "assign_reporting_relationship") {
+      const orgId = text(body.orgId, "orgId", 80);
+      const subjectScope = reportingScope(body.subjectScope);
+      const subjectId = text(body.subjectId, "subjectId", 100);
+      const fromUserId = text(body.fromUserId, "fromUserId", 80);
+      const fromRole = businessRole(body.fromBusinessRole);
+      const toUserId = text(body.toUserId, "toUserId", 80);
+      const toRole = businessRole(body.toBusinessRole);
+      if (fromUserId === toUserId && fromRole === toRole) throw new AdminSecurityError("汇报关系的上报方和接收方不能完全相同", 409);
+      const validFrom = new Date(text(body.validFrom, "validFrom", 80));
+      const validUntil = body.validUntil ? new Date(String(body.validUntil)) : null;
+      if (!Number.isFinite(validFrom.getTime()) || (validUntil && (!Number.isFinite(validUntil.getTime()) || validUntil < validFrom))) throw new AdminSecurityError("汇报关系有效期不合法");
+      const [fromAssignment, toAssignment] = await Promise.all([
+        supabase.from("user_business_roles").select("id").eq("user_id", fromUserId).eq("business_role", fromRole).eq("org_id", orgId).eq("status", "active").limit(1).maybeSingle(),
+        supabase.from("user_business_roles").select("id").eq("user_id", toUserId).eq("business_role", toRole).eq("org_id", orgId).eq("status", "active").limit(1).maybeSingle(),
+      ]);
+      if (fromAssignment.error || toAssignment.error) throw new AdminSecurityError(fromAssignment.error?.message || toAssignment.error?.message || "业务角色校验失败", 500);
+      if (!fromAssignment.data || !toAssignment.data) throw new AdminSecurityError("上报方和接收方必须先拥有同组织内的有效业务角色", 409);
+      const { data, error } = await supabase.from("business_reporting_relationships").insert({
+        org_id: orgId,
+        subject_scope: subjectScope,
+        subject_id: subjectId,
+        from_user_id: fromUserId,
+        from_business_role: fromRole,
+        to_user_id: toUserId,
+        to_business_role: toRole,
+        relationship_type: body.relationshipType || "reports_to",
+        status: "active",
+        valid_from: validFrom.toISOString(),
+        valid_until: validUntil?.toISOString() || null,
+      }).select("id").single();
+      if (error) throw new AdminSecurityError(error.message, error.code === "23505" ? 409 : 500);
+      const audit = await writeOperationAudit({ user: admin, action: operation, resourceType: "business_reporting_relationship", resourceId: data.id, status: "succeeded", severity: "high", summary: `建立汇报关系：${fromRole} → ${toRole}`, detail: { orgId, subjectScope, subjectId, fromUserId, toUserId }, requestId });
+      return json({ ok: true, id: data.id, audit, request_id: requestId });
+    }
+
+    if (operation === "revoke_reporting_relationship") {
+      const relationshipId = text(body.relationshipId, "relationshipId", 80);
+      const reason = text(body.reason, "撤销原因", 500);
+      const { data, error } = await supabase.from("business_reporting_relationships")
+        .update({ status: "revoked", revoked_reason: reason, valid_until: new Date().toISOString() })
+        .eq("id", relationshipId).eq("status", "active").select("id").maybeSingle();
+      if (error) throw new AdminSecurityError(error.message, 500);
+      if (!data) throw new AdminSecurityError("汇报关系不存在或已经失效", 409);
+      const audit = await writeOperationAudit({ user: admin, action: operation, resourceType: "business_reporting_relationship", resourceId: relationshipId, status: "succeeded", severity: "high", summary: "撤销业务汇报关系", detail: { reason }, requestId });
+      return json({ ok: true, audit, request_id: requestId });
+    }
+
+    if (operation === "activate_management_rule") {
+      const ruleId = text(body.ruleId, "ruleId", 80);
+      if (body.confirmation !== "ACTIVATE_S1_MILESTONE_DELAY") {
+        throw new AdminSecurityError("启用规则前必须完成明确确认", 409);
+      }
+      const { data: rule, error: readError } = await supabase.from("management_rule_versions")
+        .select("id,rule_key,version,status")
+        .eq("id", ruleId)
+        .maybeSingle();
+      if (readError) throw new AdminSecurityError(readError.message, 500);
+      if (!rule) throw new AdminSecurityError("管理规则不存在", 404);
+      if (rule.rule_key !== "milestone_delay" || rule.version !== "S1-MILESTONE-DELAY-v1") {
+        throw new AdminSecurityError("当前入口只允许批准S1里程碑延期规则", 409);
+      }
+      if (rule.status === "retired") throw new AdminSecurityError("已退役规则不能重新启用", 409);
+      const now = new Date().toISOString();
+      const { error } = await supabase.from("management_rule_versions").update({
+        status: "active",
+        approved_by: admin.id,
+        approved_at: now,
+        effective_from: now,
+      }).eq("id", ruleId).eq("status", rule.status);
+      if (error) throw new AdminSecurityError(error.message, 500);
+      const audit = await writeOperationAudit({
+        user: admin,
+        action: "activate_management_rule",
+        resourceType: "management_rule_version",
+        resourceId: ruleId,
+        status: "succeeded",
+        severity: "high",
+        summary: `批准启用管理规则：${rule.rule_key}/${rule.version}`,
+        detail: { previousStatus: rule.status },
+        requestId,
+      });
+      return json({ ok: true, audit, request_id: requestId });
     }
 
     if (operation === "approve_project_access_request") {

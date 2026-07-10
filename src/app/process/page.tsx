@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import Link from "next/link";
+import { useState } from "react";
 import {
   type ProcessTemplate,
   type ProcessElement,
@@ -31,14 +32,9 @@ export default function ProcessPage() {
   const [generating, setGenerating] = useState(false);
   const [showQuickActions, setShowQuickActions] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
-  const [savedFlows, setSavedFlows] = useState<ProcessTemplate[]>([]);
+  const [savedFlows, setSavedFlows] = useState<ProcessTemplate[]>(() => loadFromStorage("templates"));
   const [currentTemplate, setCurrentTemplate] = useState<ProcessTemplate | null>(null);
   const [loadError, setLoadError] = useState("");
-
-  // Load saved flows from localStorage
-  useEffect(() => {
-    setSavedFlows(loadFromStorage("templates"));
-  }, []);
 
   // Save current flow
   const saveCurrentFlow = () => {
@@ -146,7 +142,7 @@ export default function ProcessPage() {
         gap: 16,
         background: "var(--surface)",
       }}>
-        <a href="/" style={{ color: "var(--text2)", textDecoration: "none", fontSize: "0.85rem" }}>← 返回首页</a>
+        <Link href="/" style={{ color: "var(--text2)", textDecoration: "none", fontSize: "0.85rem" }}>← 返回首页</Link>
         <span style={{ color: "var(--border)" }}>|</span>
         <span style={{ fontWeight: 700 }}>🎨 流程设计与白板</span>
         <span className="tag" style={{ fontSize: "0.7rem", background: BLUE.light, color: BLUE.primary }}>draw.io + Excalidraw</span>

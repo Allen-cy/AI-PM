@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import mammoth from "mammoth";
 import { SYSTEM_PROMPTS } from "@/lib/llm-prompts";
 
@@ -206,7 +207,7 @@ const fieldPlaceholders: Record<keyof SOWData, string> = {
   riskNotes: "已知风险、特殊约束、历史遗留问题...",
 };
 
-const Field = ({ field }: { field: keyof SOWData }) => {
+const renderField = (field: keyof SOWData) => {
   const label = fieldLabels[field];
   const placeholder = fieldPlaceholders[field];
   return (
@@ -235,7 +236,7 @@ const Field = ({ field }: { field: keyof SOWData }) => {
         gap: 16,
         background: "var(--surface)",
       }}>
-        <a href="/" style={{ color: "var(--text2)", textDecoration: "none", fontSize: "0.85rem" }}>← 返回首页</a>
+        <Link href="/" style={{ color: "var(--text2)", textDecoration: "none", fontSize: "0.85rem" }}>← 返回首页</Link>
         <span style={{ color: "var(--border)" }}>|</span>
         <span style={{ fontWeight: 700 }}>🧩 AI WBS智能拆解</span>
         <span className="tag tag-blue" style={{ fontSize: "0.7rem" }}>MiniMax</span>
@@ -301,18 +302,18 @@ const Field = ({ field }: { field: keyof SOWData }) => {
           {activeTab === "structured" && (
             <div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 24px" }}>
-                <Field field="projectBackground" />
-                <Field field="constructionGoal" />
-                <Field field="projectRequirements" />
-                <Field field="deliverables" />
-                <Field field="scheduleGoal" />
-                <Field field="qualityGoal" />
-                <Field field="deliveryForm" />
-                <Field field="acceptanceCriteria" />
-                <Field field="projectScope" />
-                <Field field="teamMembers" />
+                {renderField("projectBackground")}
+                {renderField("constructionGoal")}
+                {renderField("projectRequirements")}
+                {renderField("deliverables")}
+                {renderField("scheduleGoal")}
+                {renderField("qualityGoal")}
+                {renderField("deliveryForm")}
+                {renderField("acceptanceCriteria")}
+                {renderField("projectScope")}
+                {renderField("teamMembers")}
               </div>
-              <Field field="riskNotes" />
+              {renderField("riskNotes")}
             </div>
           )}
 

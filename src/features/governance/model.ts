@@ -10,6 +10,7 @@ export interface GovernanceActionItemInput {
 
 export interface GovernanceInstanceRecord {
   id: string;
+  canonicalProjectId?: string | null;
   workflowId: string;
   workflowName: string;
   stage: string;

@@ -127,6 +127,8 @@ type FeishuActionConfirmationSnapshot = {
     errorCode?: string | null;
     cancelReason?: string | null;
     createdAt: string;
+    writebackAttemptCount?: number;
+    writebackLeaseExpiresAt?: string | null;
   }>;
 };
 
@@ -187,8 +189,10 @@ function canCancelFeishuAction(status: string): boolean {
   return !["succeeded", "writing", "cancelled"].includes(status);
 }
 
-function canConfirmFeishuAction(status: string): boolean {
-  return status === "pending_confirmation" || status === "failed";
+function canConfirmFeishuAction(item: FeishuActionConfirmationSnapshot["confirmations"][number]): boolean {
+  return item.status === "pending_confirmation"
+    || item.status === "failed"
+    || (item.status === "writing" && item.riskReview?.canConfirm === true);
 }
 
 function riskLabel(value: string): string {
@@ -209,7 +213,9 @@ export default function IntegrationCenterPage() {
   const [confirmations, setConfirmations] = useState<FeishuActionConfirmationSnapshot | null>(null);
   const [confirmationBusyId, setConfirmationBusyId] = useState("");
   const [confirmationStatusFilter, setConfirmationStatusFilter] = useState("all");
-  const [confirmationSearch, setConfirmationSearch] = useState("");
+  const [confirmationSearch, setConfirmationSearch] = useState(() => (
+    typeof window === "undefined" ? "" : new URLSearchParams(window.location.search).get("confirmation_id")?.trim() || ""
+  ));
   const [selectedConfirmationIds, setSelectedConfirmationIds] = useState<string[]>([]);
   const [confirmationMessage, setConfirmationMessage] = useState("");
   const [error, setError] = useState("");
@@ -299,7 +305,7 @@ export default function IntegrationCenterPage() {
   }
 
   async function batchConfirmFeishuActions() {
-    const ids = selectedConfirmationIds.filter(id => confirmations?.confirmations.some(item => item.id === id && canConfirmFeishuAction(item.status)));
+    const ids = selectedConfirmationIds.filter(id => confirmations?.confirmations.some(item => item.id === id && canConfirmFeishuAction(item)));
     if (ids.length === 0) {
       setConfirmationMessage("请先勾选待确认或失败可重试的飞书写入动作。");
       return;
@@ -399,6 +405,7 @@ export default function IntegrationCenterPage() {
   const visibleConfirmations = confirmationRows.filter(item => {
     if (!confirmationKeyword) return true;
     return [
+      item.id,
       item.targetSummary,
       item.actionType,
       item.source,
@@ -409,9 +416,9 @@ export default function IntegrationCenterPage() {
       ...item.preview.fields.map(field => `${field.label}:${field.value}`),
     ].join(" ").toLowerCase().includes(confirmationKeyword);
   });
-  const selectableConfirmationIds = visibleConfirmations.filter(item => canCancelFeishuAction(item.status) || canConfirmFeishuAction(item.status)).map(item => item.id);
+  const selectableConfirmationIds = visibleConfirmations.filter(item => canCancelFeishuAction(item.status) || canConfirmFeishuAction(item)).map(item => item.id);
   const selectedVisibleConfirmationIds = selectedConfirmationIds.filter(id => selectableConfirmationIds.includes(id));
-  const confirmableConfirmationIds = visibleConfirmations.filter(item => canConfirmFeishuAction(item.status)).map(item => item.id);
+  const confirmableConfirmationIds = visibleConfirmations.filter(item => canConfirmFeishuAction(item)).map(item => item.id);
   const selectedConfirmableConfirmationIds = selectedConfirmationIds.filter(id => confirmableConfirmationIds.includes(id));
   const cancellableConfirmationIds = visibleConfirmations.filter(item => canCancelFeishuAction(item.status)).map(item => item.id);
   const selectedCancellableConfirmationIds = selectedConfirmationIds.filter(id => cancellableConfirmationIds.includes(id));
@@ -617,7 +624,7 @@ export default function IntegrationCenterPage() {
                             type="checkbox"
                             aria-label={`选择 ${item.targetSummary}`}
                             checked={selectedConfirmationIds.includes(item.id)}
-                            disabled={!canCancelFeishuAction(item.status) && !canConfirmFeishuAction(item.status)}
+                            disabled={!canCancelFeishuAction(item.status) && !canConfirmFeishuAction(item)}
                             onChange={event => {
                               setSelectedConfirmationIds(prev => event.target.checked
                                 ? Array.from(new Set([...prev, item.id]))
@@ -634,6 +641,9 @@ export default function IntegrationCenterPage() {
                         </div>
                         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                           <StatusPill status={item.status} />
+                          {item.actionType === "base_record_update" && Number(item.writebackAttemptCount) > 0 && (
+                            <span className="tag">写回尝试 {item.writebackAttemptCount}</span>
+                          )}
                           <span className="tag" style={{ background: `${riskColor(item.riskReview?.riskLevel || item.riskLevel)}22`, color: riskColor(item.riskReview?.riskLevel || item.riskLevel) }}>
                             {riskLabel(item.riskReview?.riskLevel || item.riskLevel)}
                           </span>
@@ -684,9 +694,9 @@ export default function IntegrationCenterPage() {
                       {item.errorCode && <p style={{ color: "var(--red)", fontSize: "0.8rem", lineHeight: 1.6, marginTop: 8 }}>失败原因：{item.errorCode}</p>}
                       {item.cancelReason && <p style={{ color: "var(--text2)", fontSize: "0.8rem", lineHeight: 1.6, marginTop: 8 }}>取消原因：{item.cancelReason}</p>}
                       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
-                        {["pending_confirmation", "failed"].includes(item.status) && (
+                        {canConfirmFeishuAction(item) && (
                           <button className="btn-primary" type="button" disabled={confirmationBusyId === item.id || item.riskReview?.canConfirm === false} onClick={() => void confirmFeishuAction(item)}>
-                            {confirmationBusyId === item.id ? "处理中..." : "确认执行"}
+                            {confirmationBusyId === item.id ? "处理中..." : item.status === "writing" ? "恢复并对账" : "确认执行"}
                           </button>
                         )}
                         {canCancelFeishuAction(item.status) && (

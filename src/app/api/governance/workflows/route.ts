@@ -1,4 +1,4 @@
-import { getCurrentUser } from "@/features/auth/server";
+import { requireAuthenticatedApiUser } from "@/features/auth/server";
 import { syncGovernanceEventToFeishu } from "@/features/governance/feishu-sync";
 import { buildGovernanceImpactDashboard, buildGovernanceImpactPackage } from "@/features/governance/impact";
 import { listGovernanceStrategyCatalog } from "@/features/governance/strategy";
@@ -29,7 +29,8 @@ function jsonResponse(body: unknown, status = 200, requestId = crypto.randomUUID
 
 export async function GET(): Promise<Response> {
   const requestId = crypto.randomUUID();
-  const user = await getCurrentUser();
+  const user = await requireAuthenticatedApiUser();
+  if (!user) return jsonResponse({ request_id: requestId, status: "unauthorized", warning: "请先登录后再查看治理流程。" }, 401, requestId);
   const result = await listGovernanceInstances();
   const operationHistory = await listRiskRetrospectiveGovernanceOperationHistory({ snapshotLimit: 8, reminderLimit: 80 });
   const governance_workbench = buildGovernanceSlaDashboard(result.instances, user);
@@ -62,8 +63,8 @@ export async function GET(): Promise<Response> {
 
 export async function POST(request: Request): Promise<Response> {
   const requestId = crypto.randomUUID();
-  const user = await getCurrentUser();
-  if (process.env.AUTH_REQUIRED === "true" && !user) {
+  const user = await requireAuthenticatedApiUser();
+  if (!user) {
     return jsonResponse({ request_id: requestId, status: "unauthorized", warning: "请先登录后再创建治理流程。" }, 401, requestId);
   }
 
@@ -99,8 +100,8 @@ export async function POST(request: Request): Promise<Response> {
 
 export async function PATCH(request: Request): Promise<Response> {
   const requestId = crypto.randomUUID();
-  const user = await getCurrentUser();
-  if (process.env.AUTH_REQUIRED === "true" && !user) {
+  const user = await requireAuthenticatedApiUser();
+  if (!user) {
     return jsonResponse({ request_id: requestId, status: "unauthorized", warning: "请先登录后再处理治理流程。" }, 401, requestId);
   }
 

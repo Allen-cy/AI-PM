@@ -1,8 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import type { AiEvidence, AiSuggestedAction } from "@/features/ai/evidence";
+import {
+  readStoredBusinessContext,
+  readStoredCurrentProject,
+  readStoredDataClass,
+} from "@/features/operating-model/client-context";
 import {
   Task,
   Deliverable,
@@ -11,15 +16,21 @@ import {
   calculateTeamWorkload,
   getBlockedTasks,
   calculateProgress,
-  DEMO_TASKS,
-  DEMO_DELIVERABLES,
-  DEMO_CHANGE_REQUESTS,
 } from "@/lib/execution";
 
+type ExecutionSourceState = {
+  status: "loading" | "ready" | "unavailable";
+  detail: string;
+  warnings: string[];
+};
+
 export default function ExecutionPage() {
-  const [tasks, setTasks] = useState<Task[]>(DEMO_TASKS);
-  const [deliverables, setDeliverables] = useState<Deliverable[]>(DEMO_DELIVERABLES);
-  const [changeRequests] = useState<ChangeRequest[]>(DEMO_CHANGE_REQUESTS);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [deliverables, setDeliverables] = useState<Deliverable[]>([]);
+  const [changeRequests, setChangeRequests] = useState<ChangeRequest[]>([]);
+  const [projectId, setProjectId] = useState("");
+  const [projectName, setProjectName] = useState("");
+  const [source, setSource] = useState<ExecutionSourceState>({ status: "loading", detail: "正在读取当前项目的飞书任务和交付物。", warnings: [] });
   const [aiSummary, setAiSummary] = useState<{
     summary: string;
     risks: string[];
@@ -29,6 +40,56 @@ export default function ExecutionPage() {
   const [loadingAI, setLoadingAI] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [savingEvidenceAction, setSavingEvidenceAction] = useState<string | null>(null);
+
+  const loadExecutionData = useCallback(async () => {
+    const context = readStoredBusinessContext();
+    const currentProject = readStoredCurrentProject();
+    const dataClass = readStoredDataClass();
+    setProjectId(currentProject);
+    setAiSummary(null);
+    if (!context?.businessRole || !currentProject) {
+      setTasks([]); setDeliverables([]); setChangeRequests([]); setProjectName("");
+      setSource({ status: "unavailable", detail: "请先在顶部业务上下文中选择已授权的项目和项目经理/运营/PMO角色。", warnings: [] });
+      return;
+    }
+    setSource({ status: "loading", detail: "正在读取飞书任务、飞书里程碑与Supabase变更记录。", warnings: [] });
+    const params = new URLSearchParams({ project_id: currentProject, business_role: context.businessRole, data_class: dataClass });
+    try {
+      const response = await fetch(`/api/execution?${params.toString()}`, { cache: "no-store" });
+      const payload = await response.json() as {
+        tasks?: Task[];
+        deliverables?: Deliverable[];
+        change_requests?: ChangeRequest[];
+        project?: { name?: string };
+        source?: { detail?: string; warnings?: string[] };
+        detail?: string;
+        error?: string;
+      };
+      if (!response.ok) throw new Error(payload.detail || payload.error || "执行数据读取失败");
+      setTasks(Array.isArray(payload.tasks) ? payload.tasks : []);
+      setDeliverables(Array.isArray(payload.deliverables) ? payload.deliverables : []);
+      setChangeRequests(Array.isArray(payload.change_requests) ? payload.change_requests : []);
+      setProjectName(payload.project?.name || "当前项目");
+      setSource({ status: "ready", detail: payload.source?.detail || "已读取真实数据源。", warnings: payload.source?.warnings?.filter(Boolean) || [] });
+    } catch (error) {
+      setTasks([]); setDeliverables([]); setChangeRequests([]); setProjectName("");
+      setSource({ status: "unavailable", detail: error instanceof Error ? error.message : "执行数据源不可用。", warnings: [] });
+    }
+  }, []);
+
+  useEffect(() => {
+    const initialLoad = window.setTimeout(() => void loadExecutionData(), 0);
+    const reload = () => void loadExecutionData();
+    window.addEventListener("ai-pmo:project-context-changed", reload);
+    window.addEventListener("ai-pmo:business-context-changed", reload);
+    window.addEventListener("ai-pmo:data-class-changed", reload);
+    return () => {
+      window.clearTimeout(initialLoad);
+      window.removeEventListener("ai-pmo:project-context-changed", reload);
+      window.removeEventListener("ai-pmo:business-context-changed", reload);
+      window.removeEventListener("ai-pmo:data-class-changed", reload);
+    };
+  }, [loadExecutionData]);
 
   const blockedTasks = getBlockedTasks(tasks);
   const teamWorkload = calculateTeamWorkload(tasks);
@@ -77,9 +138,10 @@ export default function ExecutionPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          operation: "generate_summary",
           tasks,
           deliverables,
-          projectId: "PRJ-2026-001",
+          projectId,
         }),
       });
       if (!res.ok) throw new Error("AI summary request failed");
@@ -138,35 +200,38 @@ export default function ExecutionPage() {
     }
   };
 
-  const handleAddTask = () => {
-    const nextNo = tasks.length + 1;
-    const newTask: Task = {
-      id: `T${nextNo}`,
-      name: `新增任务${nextNo}`,
-      assignee: "待分配",
-      status: "pending",
-      priority: "medium",
-      dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
-      progress: 0,
-    };
-    setTasks(prev => [...prev, newTask]);
-    setMessage(`已添加任务 ${newTask.id}，当前为待处理状态。`);
+  const createExecutionRecord = async (operation: "create_task" | "create_deliverable") => {
+    const context = readStoredBusinessContext();
+    const dataClass = readStoredDataClass();
+    if (!context?.businessRole || !projectId) {
+      setMessage("请先选择已授权的当前项目和业务角色。");
+      return;
+    }
+    const name = window.prompt(operation === "create_task" ? "请输入任务名称" : "请输入交付物名称");
+    if (!name?.trim()) return;
+    setMessage(operation === "create_task" ? "正在写入飞书任务表…" : "正在写入飞书里程碑表…");
+    try {
+      const response = await fetch("/api/execution", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          operation,
+          project_id: projectId,
+          business_role: context.businessRole,
+          data_class: dataClass,
+          name: name.trim(),
+        }),
+      });
+      const payload = await response.json() as { record_id?: string; detail?: string; error?: string };
+      if (!response.ok || !payload.record_id) throw new Error(payload.detail || payload.error || "写入飞书失败");
+      setMessage(`已写入飞书，记录ID：${payload.record_id}`);
+      await loadExecutionData();
+    } catch (error) {
+      setMessage(`创建失败：${error instanceof Error ? error.message : "数据源不可用"}`);
+    }
   };
 
-  const handleAddDeliverable = () => {
-    const nextNo = deliverables.length + 1;
-    const newDeliverable: Deliverable = {
-      id: `D${nextNo}`,
-      name: `新增交付物${nextNo}`,
-      status: "pending",
-      qualityCheck: "待检查",
-    };
-    setDeliverables(prev => [...prev, newDeliverable]);
-    setMessage(`已添加交付物 ${newDeliverable.id}，当前为待验收状态。`);
-  };
-
-  // Baseline: 10 tasks over 20 days
-  const baselineProgress = 65;
+  const baselineProgress: number | null = null;
   const currentProgress = progress;
 
   return (
@@ -189,7 +254,7 @@ export default function ExecutionPage() {
         <div style={{ marginLeft: "auto", display: "flex", gap: 10 }}>
           <button
             onClick={requestAiSummary}
-            disabled={loadingAI}
+            disabled={loadingAI || source.status !== "ready" || (tasks.length === 0 && deliverables.length === 0)}
             style={{
               padding: "7px 16px",
               borderRadius: 8,
@@ -198,7 +263,7 @@ export default function ExecutionPage() {
               color: "var(--cyan)",
               fontSize: "0.82rem",
               fontWeight: 600,
-              cursor: loadingAI ? "not-allowed" : "pointer",
+              cursor: loadingAI || source.status !== "ready" || (tasks.length === 0 && deliverables.length === 0) ? "not-allowed" : "pointer",
               display: "flex",
               alignItems: "center",
               gap: 6,
@@ -206,7 +271,7 @@ export default function ExecutionPage() {
           >
             {loadingAI ? "⏳ 分析中..." : "🤖 AI状态摘要"}
           </button>
-          <button onClick={handleAddTask} style={{
+          <button onClick={() => void createExecutionRecord("create_task")} disabled={source.status !== "ready"} style={{
             padding: "7px 16px",
             borderRadius: 8,
             border: "1px solid var(--border)",
@@ -214,11 +279,11 @@ export default function ExecutionPage() {
             color: "var(--text)",
             fontSize: "0.82rem",
             fontWeight: 600,
-            cursor: "pointer",
+            cursor: source.status === "ready" ? "pointer" : "not-allowed",
           }}>
             + 添加任务
           </button>
-          <button onClick={handleAddDeliverable} style={{
+          <button onClick={() => void createExecutionRecord("create_deliverable")} disabled={source.status !== "ready"} style={{
             padding: "7px 16px",
             borderRadius: 8,
             border: "1px solid var(--border)",
@@ -226,7 +291,7 @@ export default function ExecutionPage() {
             color: "var(--text)",
             fontSize: "0.82rem",
             fontWeight: 600,
-            cursor: "pointer",
+            cursor: source.status === "ready" ? "pointer" : "not-allowed",
           }}>
             + 添加交付物
           </button>
@@ -234,6 +299,20 @@ export default function ExecutionPage() {
       </header>
 
       <main style={{ flex: 1, padding: "24px 32px", maxWidth: 1400, margin: "0 auto", width: "100%" }}>
+        <div style={{
+          marginBottom: 16,
+          padding: "10px 14px",
+          borderRadius: 8,
+          background: source.status === "ready" ? "rgba(16,185,129,0.08)" : source.status === "loading" ? "rgba(59,130,246,0.08)" : "rgba(245,158,11,0.1)",
+          border: `1px solid ${source.status === "ready" ? "rgba(16,185,129,0.25)" : source.status === "loading" ? "rgba(59,130,246,0.25)" : "rgba(245,158,11,0.3)"}`,
+          color: source.status === "ready" ? "var(--green)" : source.status === "loading" ? "var(--accent)" : "var(--amber)",
+          fontSize: "0.82rem",
+          lineHeight: 1.6,
+        }}>
+          <strong>{projectName ? `${projectName} · ` : ""}{source.status === "ready" ? "真实数据已连接" : source.status === "loading" ? "数据读取中" : "数据源不可用"}</strong>
+          <span style={{ marginLeft: 8 }}>{source.detail}</span>
+          {source.warnings.map(warning => <div key={warning}>⚠ {warning}</div>)}
+        </div>
         {message && (
           <div style={{
             marginBottom: 16,
@@ -267,14 +346,14 @@ export default function ExecutionPage() {
               </span>
               <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <div style={{ width: 10, height: 10, borderRadius: 2, background: "var(--text2)" }} />
-                基线: {baselineProgress}%
+                基线: {baselineProgress === null ? "未录入" : `${baselineProgress}%`}
               </span>
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <div style={{ flex: 1, height: 24, background: "var(--surface2)", borderRadius: 6, overflow: "hidden", position: "relative" }}>
               {/* Baseline marker */}
-              <div style={{
+              {baselineProgress !== null && <div style={{
                 position: "absolute",
                 left: `${baselineProgress}%`,
                 top: 0,
@@ -282,12 +361,12 @@ export default function ExecutionPage() {
                 width: 2,
                 background: "var(--text2)",
                 zIndex: 2,
-              }} />
+              }} />}
               {/* Current progress */}
               <div style={{
                 height: "100%",
                 width: `${currentProgress}%`,
-                background: currentProgress >= baselineProgress
+                background: baselineProgress !== null && currentProgress >= baselineProgress
                   ? "linear-gradient(90deg, var(--cyan), var(--green))"
                   : "linear-gradient(90deg, var(--cyan), var(--amber))",
                 borderRadius: 6,
@@ -304,18 +383,18 @@ export default function ExecutionPage() {
             <div style={{
               padding: "4px 12px",
               borderRadius: 12,
-              background: currentProgress >= baselineProgress ? "rgba(16,185,129,0.15)" : "rgba(245,158,11,0.15)",
-              color: currentProgress >= baselineProgress ? "var(--green)" : "var(--amber)",
+              background: baselineProgress === null ? "rgba(148,163,184,0.12)" : currentProgress >= baselineProgress ? "rgba(16,185,129,0.15)" : "rgba(245,158,11,0.15)",
+              color: baselineProgress === null ? "var(--text2)" : currentProgress >= baselineProgress ? "var(--green)" : "var(--amber)",
               fontSize: "0.78rem",
               fontWeight: 700,
             }}>
-              {currentProgress >= baselineProgress ? "正常" : "落后"}
+              {baselineProgress === null ? "基线未录入" : currentProgress >= baselineProgress ? "正常" : "落后"}
             </div>
           </div>
           {/* Mini Gantt bars */}
           <div style={{ display: "flex", gap: 4, marginTop: 14, height: 20 }}>
             {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14].map((day) => {
-              const isBaseline = day <= 13;
+              const isBaseline = false;
               const isCurrent = day <= Math.round((currentProgress / 100) * 15);
               return (
                 <div key={day} style={{
@@ -326,14 +405,14 @@ export default function ExecutionPage() {
                     : isBaseline
                     ? "rgba(148,163,184,0.3)"
                     : "rgba(148,163,184,0.1)",
-                  border: day === 13 ? "1px solid var(--text2)" : "none",
+                  border: "none",
                 }} />
               );
             })}
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.68rem", color: "var(--text2)", marginTop: 4 }}>
             <span>Day 1</span>
-            <span>Day 20 (基线)</span>
+            <span>计划基线未接入</span>
           </div>
         </div>
 

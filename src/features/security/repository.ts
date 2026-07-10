@@ -65,6 +65,67 @@ export interface AdminSecuritySnapshot {
     createdAt?: string;
     reviewedAt?: string | null;
   }>;
+  businessRoles: Array<{
+    id: string;
+    userId: string;
+    userName?: string | null;
+    userEmail?: string | null;
+    businessRole: string;
+    orgId: string;
+    subjectScope: string;
+    subjectId: string;
+    status: string;
+    validFrom: string;
+    validUntil?: string | null;
+    delegatedFromUserId?: string | null;
+    assignmentReason?: string | null;
+    updatedAt?: string;
+  }>;
+  organizations: Array<{
+    id: string;
+    code: string;
+    name: string;
+    status: string;
+  }>;
+  portfolios: Array<{
+    id: string;
+    orgId: string;
+    code: string;
+    name: string;
+    status: string;
+  }>;
+  projects: Array<{
+    id: string;
+    orgId: string;
+    code?: string | null;
+    name: string;
+    dataClass: string;
+  }>;
+  managementRules: Array<{
+    id: string;
+    ruleKey: string;
+    version: string;
+    status: string;
+    scopeKey: string;
+    configuration: Record<string, unknown>;
+    approvedAt?: string | null;
+  }>;
+  reportingRelationships: Array<{
+    id: string;
+    orgId: string;
+    subjectScope: string;
+    subjectId: string;
+    fromUserId: string;
+    fromUserName?: string | null;
+    fromBusinessRole: string;
+    toUserId: string;
+    toUserName?: string | null;
+    toBusinessRole: string;
+    relationshipType: string;
+    status: string;
+    validFrom: string;
+    validUntil?: string | null;
+  }>;
   auditLogs: Array<{
     id: string;
     actorName: string;
@@ -187,6 +248,12 @@ export async function loadAdminSecuritySnapshot(): Promise<AdminSecuritySnapshot
     users: [],
     projectAccess: [],
     projectAccessRequests: [],
+    businessRoles: [],
+    organizations: [],
+    portfolios: [],
+    projects: [],
+    managementRules: [],
+    reportingRelationships: [],
     auditLogs: [],
     systemConfigurations: [],
     warnings: [],
@@ -197,12 +264,18 @@ export async function loadAdminSecuritySnapshot(): Promise<AdminSecuritySnapshot
   }
 
   const supabase = getAuthSupabase();
-  const [users, grants, requests, audits, configs] = await Promise.all([
+  const [users, grants, requests, audits, configs, businessRoles, organizations, portfolios, projects, managementRules, reportingRelationships] = await Promise.all([
     supabase.from("app_users").select("id,email,phone,name,role,status,created_at").order("created_at", { ascending: false }).limit(200),
     supabase.from("user_project_access_grants").select("id,user_id,project_name,project_code,access_level,status,grant_reason,granted_by_name,created_at,updated_at").order("updated_at", { ascending: false }).limit(200),
     supabase.from("project_access_requests").select("id,requester_id,requester_name,requester_email,project_name,project_code,access_level,reason,status,reviewer_name,review_comment,related_grant_id,created_at,reviewed_at").order("created_at", { ascending: false }).limit(200),
     supabase.from("operation_audit_logs").select("id,actor_name,actor_role,action,resource_type,resource_id,status,severity,summary,created_at,request_id").order("created_at", { ascending: false }).limit(100),
     supabase.from("system_configurations").select("id,config_key,config_value,category,description,updated_at,updated_by_name").order("updated_at", { ascending: false }).limit(100),
+    supabase.from("user_business_roles").select("id,user_id,business_role,org_id,subject_scope,subject_id,status,valid_from,valid_until,delegated_from_user_id,assignment_reason,updated_at").order("updated_at", { ascending: false }).limit(300),
+    supabase.from("organizations").select("id,org_code,name,status").order("name", { ascending: true }).limit(100),
+    supabase.from("portfolios").select("id,org_id,portfolio_code,name,status").order("name", { ascending: true }).limit(200),
+    supabase.from("projects").select("id,org_id,oa_no,name,data_class").order("name", { ascending: true }).limit(500),
+    supabase.from("management_rule_versions").select("id,rule_key,version,status,scope_key,configuration,approved_at").order("created_at", { ascending: false }).limit(100),
+    supabase.from("business_reporting_relationships").select("id,org_id,subject_scope,subject_id,from_user_id,from_business_role,to_user_id,to_business_role,relationship_type,status,valid_from,valid_until").order("created_at", { ascending: false }).limit(300),
   ]);
 
   if (users.error) snapshot.warnings.push(users.error.message);
@@ -281,5 +354,64 @@ export async function loadAdminSecuritySnapshot(): Promise<AdminSecuritySnapshot
       updatedByName: row.updated_by_name,
     }));
   }
+  if (businessRoles.error) {
+    snapshot.warnings.push(businessRoles.error.message.includes("user_business_roles") ? "P17 SQL 未执行：user_business_roles 不存在。" : businessRoles.error.message);
+  } else {
+    snapshot.businessRoles = (businessRoles.data ?? []).map(row => {
+      const user = usersById.get(row.user_id);
+      return {
+        id: row.id,
+        userId: row.user_id,
+        userName: user?.name ?? null,
+        userEmail: user?.email ?? null,
+        businessRole: row.business_role,
+        orgId: row.org_id,
+        subjectScope: row.subject_scope,
+        subjectId: row.subject_id,
+        status: row.status,
+        validFrom: row.valid_from,
+        validUntil: row.valid_until,
+        delegatedFromUserId: row.delegated_from_user_id,
+        assignmentReason: row.assignment_reason,
+        updatedAt: row.updated_at,
+      };
+    });
+  }
+  if (organizations.error) snapshot.warnings.push(organizations.error.message.includes("organizations") ? "P17 SQL 未执行：organizations 不存在。" : organizations.error.message);
+  else snapshot.organizations = (organizations.data ?? []).map(row => ({ id: row.id, code: row.org_code, name: row.name, status: row.status }));
+
+  if (portfolios.error) snapshot.warnings.push(portfolios.error.message.includes("portfolios") ? "P17 SQL 未执行：portfolios 不存在。" : portfolios.error.message);
+  else snapshot.portfolios = (portfolios.data ?? []).map(row => ({ id: row.id, orgId: row.org_id, code: row.portfolio_code, name: row.name, status: row.status }));
+
+  if (projects.error) snapshot.warnings.push(projects.error.message.includes("org_id") || projects.error.message.includes("data_class") ? "P17 SQL 未执行：projects 组织与数据分类字段不存在。" : projects.error.message);
+  else snapshot.projects = (projects.data ?? []).map(row => ({ id: row.id, orgId: row.org_id, code: row.oa_no, name: row.name, dataClass: row.data_class }));
+
+  if (managementRules.error) snapshot.warnings.push(managementRules.error.message.includes("management_rule_versions") ? "P17 SQL 未执行：management_rule_versions 不存在。" : managementRules.error.message);
+  else snapshot.managementRules = (managementRules.data ?? []).map(row => ({
+    id: row.id,
+    ruleKey: row.rule_key,
+    version: row.version,
+    status: row.status,
+    scopeKey: row.scope_key,
+    configuration: row.configuration ?? {},
+    approvedAt: row.approved_at,
+  }));
+  if (reportingRelationships.error) snapshot.warnings.push(reportingRelationships.error.message.includes("business_reporting_relationships") ? "P17 SQL 未执行：business_reporting_relationships 不存在。" : reportingRelationships.error.message);
+  else snapshot.reportingRelationships = (reportingRelationships.data ?? []).map(row => ({
+    id: row.id,
+    orgId: row.org_id,
+    subjectScope: row.subject_scope,
+    subjectId: row.subject_id,
+    fromUserId: row.from_user_id,
+    fromUserName: usersById.get(row.from_user_id)?.name || usersById.get(row.from_user_id)?.email || null,
+    fromBusinessRole: row.from_business_role,
+    toUserId: row.to_user_id,
+    toUserName: usersById.get(row.to_user_id)?.name || usersById.get(row.to_user_id)?.email || null,
+    toBusinessRole: row.to_business_role,
+    relationshipType: row.relationship_type,
+    status: row.status,
+    validFrom: row.valid_from,
+    validUntil: row.valid_until,
+  }));
   return snapshot;
 }

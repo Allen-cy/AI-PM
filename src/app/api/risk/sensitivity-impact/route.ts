@@ -1,6 +1,5 @@
 import { getCurrentUser } from "@/features/auth/server";
 import { loadDashboardFromFeishu } from "@/features/dashboard/feishu";
-import { DEFAULT_DASHBOARD_DATA } from "@/features/dashboard/normalizer";
 import { getEffectiveFeishuConfig } from "@/features/feishu/user-config";
 import { buildRiskSensitivityImpactDashboard } from "@/features/risk/sensitivity-impact";
 import { filterDashboardByProjectAccess, projectAccessMode } from "@/features/security/authorization";
@@ -19,9 +18,15 @@ export async function GET(): Promise<Response> {
   const requestId = crypto.randomUUID();
   const user = await getCurrentUser();
   const effective = await getEffectiveFeishuConfig();
-  const rawDashboard = effective.config
-    ? await loadDashboardFromFeishu(effective.config).catch(() => DEFAULT_DASHBOARD_DATA)
-    : DEFAULT_DASHBOARD_DATA;
+  if (!effective.config) {
+    return jsonResponse({ request_id: requestId, status: "not_configured", code: "FEISHU_DASHBOARD_NOT_CONFIGURED", detail: effective.setupHint, lark_cli_hint: effective.larkCliHint }, process.env.AUTH_REQUIRED === "true" && !effective.user ? 401 : 503, requestId);
+  }
+  let rawDashboard;
+  try {
+    rawDashboard = await loadDashboardFromFeishu(effective.config);
+  } catch (error) {
+    return jsonResponse({ request_id: requestId, status: "failed", code: "FEISHU_DASHBOARD_LOAD_FAILED", detail: error instanceof Error ? error.message : "飞书项目台账读取失败。" }, 503, requestId);
+  }
   const grants = await loadProjectAccessGrantsForUser(effective.user ?? user);
   const dashboard = filterDashboardByProjectAccess(rawDashboard, effective.user ?? user, grants);
   const access = {
@@ -37,7 +42,7 @@ export async function GET(): Promise<Response> {
     status: "succeeded",
     risk_sensitivity_impact,
     source: {
-      dashboard: effective.config ? "feishu" : "sample",
+      dashboard: "feishu",
     },
     access,
   }, 200, requestId);

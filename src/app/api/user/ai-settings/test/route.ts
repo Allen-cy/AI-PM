@@ -2,6 +2,10 @@ import { NextResponse } from "next/server";
 import { testAiConnection } from "@/features/ai/connection-test";
 import { getAuthSupabase, getCurrentUser, isAuthStorageConfigured } from "@/features/auth/server";
 import type { AiProvider } from "@/features/ai/settings";
+import {
+  aiApiKeyCredentialContext,
+  resolveStoredCredential,
+} from "@/features/security/credential-encryption";
 
 export const runtime = "nodejs";
 
@@ -21,6 +25,7 @@ type UserAiSettingsRow = {
   model?: string | null;
   base_url?: string | null;
   api_key?: string | null;
+  api_key_encrypted?: string | null;
   enabled?: boolean | null;
 };
 
@@ -51,10 +56,10 @@ export async function POST(request: Request) {
   const supabase = getAuthSupabase();
   const { data: existing, error } = await supabase
     .from("user_ai_settings")
-    .select("provider,model,base_url,api_key,enabled")
+    .select("provider,model,base_url,api_key,api_key_encrypted,enabled")
     .eq("user_id", user.id)
     .maybeSingle();
-  if (error) return NextResponse.json({ request_id: requestId, status: "failed", warning: error.message }, { status: 500 });
+  if (error) return NextResponse.json({ request_id: requestId, status: "failed", warning: "AI_SETTINGS_STORAGE_FAILED" }, { status: 500 });
 
   const row = existing as UserAiSettingsRow | null;
   const requestedProvider = text(body.provider) || row?.provider || "minimax";
@@ -64,7 +69,17 @@ export async function POST(request: Request) {
   const provider = requestedProvider as AiProvider;
   const model = text(body.model) || row?.model?.trim() || defaultModels[requestedProvider];
   const baseUrl = body.baseUrl === undefined ? row?.base_url || "" : text(body.baseUrl);
-  const apiKey = text(body.apiKey) || row?.api_key || "";
+  let storedApiKey = "";
+  try {
+    storedApiKey = resolveStoredCredential({
+      encrypted: row?.api_key_encrypted,
+      plaintext: row?.api_key,
+      context: aiApiKeyCredentialContext(user.id),
+    }).value || "";
+  } catch {
+    return NextResponse.json({ request_id: requestId, status: "failed", warning: "CREDENTIAL_DECRYPTION_FAILED" }, { status: 503 });
+  }
+  const apiKey = text(body.apiKey) || storedApiKey;
   const enabled = body.enabled === undefined ? row?.enabled !== false : body.enabled !== false;
 
   const result = await testAiConnection({

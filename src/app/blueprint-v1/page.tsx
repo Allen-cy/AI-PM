@@ -112,7 +112,7 @@ export default function BlueprintPage() {
         gap: 16,
         background: "var(--surface)",
       }}>
-        <a href="/" style={{ color: "var(--text2)", textDecoration: "none", fontSize: "0.85rem" }}>← 返回首页</a>
+        <Link href="/" style={{ color: "var(--text2)", textDecoration: "none", fontSize: "0.85rem" }}>← 返回首页</Link>
         <span style={{ color: "var(--border)" }}>|</span>
         <span style={{ fontWeight: 700 }}>🗺️ 项目全流程交付管理蓝图</span>
         <span className="tag" style={{ fontSize: "0.7rem", background: "rgba(59, 130, 246, 0.1)", color: "#3b82f6" }}>5大阶段 · 17个子流程</span>

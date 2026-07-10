@@ -1,209 +1,206 @@
-import { NextRequest, NextResponse } from "next/server";
+import { requireAuthenticatedApiUser, type AppUser } from "@/features/auth/server";
+import { buildGovernanceImpactDashboard, buildGovernanceImpactPackage } from "@/features/governance/impact";
+import { listGovernanceInstancesForProjectIds } from "@/features/governance/repository";
+import { buildGovernanceSlaDashboard, deriveGovernanceSla } from "@/features/governance/sla";
+import { canPerformBusinessAction } from "@/features/operating-model/authorization";
+import {
+  resolveBusinessContext,
+  type BusinessContext,
+  type BusinessRole,
+  type SubjectScope,
+} from "@/features/operating-model/context";
+import {
+  listBusinessRoleAssignments,
+  loadContextProjectIdentityMappings,
+  type ManagementSignalRecord,
+} from "@/features/operating-model/persistence";
 
-// Mock data for governance analysis
-const GOVERNANCE_MOCK = {
-  portfolioHealth: {
-    score: 78,
-    trend: "+3",
-    status: "yellow",
-    factors: ["资源饱和度超标", "部分项目进度偏差", "变更控制率偏低"],
-  },
-  exceptionSummary: {
-    critical: 3,
-    warning: 12,
-    normal: 32,
-    trend: "-2",
-  },
-  pmoMaturity: {
-    level: 3,
-    maxLevel: 5,
-    dimensions: {
-      governance: 78,
-      risk: 72,
-      quality: 85,
-      communication: 68,
-      change: 61,
-    },
-  },
-  aiSuggestions: [
-    {
-      category: "风险缓解",
-      priority: "高",
-      suggestion: "技术架构师资源饱和度达95%，建议暂停新项目接入并启动资源调配",
-      impact: "避免项目交付延期风险",
-    },
-    {
-      category: "治理改进",
-      priority: "中",
-      suggestion: "变更控制合规率仅76%，建议加强变更评审委员会运作",
-      impact: "提升项目基准控制能力",
-    },
-    {
-      category: "OKR优化",
-      priority: "中",
-      suggestion: "流程标准化率OKR仅55%，建议调整为分阶段目标",
-      impact: "提高OKR达成可行性",
-    },
-  ],
-};
+export const runtime = "nodejs";
 
-// OKR generation templates
-const OKR_TEMPLATES = {
-  company: [
-    { objective: "实现年度营收增长{target}%", keyResults: ["Q2新增合同额达到{amount}万", "客户续约率达到{rate}%", "重点客户渗透率提升至{target}%"] },
-    { objective: "提升客户满意度至{target}分", keyResults: ["NPS评分达到{target}分以上", "客户投诉24小时响应率100%", "客户满意度调查参与率≥90%"] },
-  ],
-  department: [
-    { objective: "项目管理能力达到行业领先水平", keyResults: ["PMBOK/PRINCE2认证通过人数≥{count}人", "项目文档规范化达到{target}%", "项目复盘会议覆盖率100%"] },
-  ],
-  project: [
-    { objective: "按时按质交付项目成果", keyResults: ["里程碑达成率≥95%", "客户验收满意度≥{target}分", "缺陷遗留率≤{rate}%"] },
-  ],
-};
+type DataClass = ManagementSignalRecord["dataClass"];
 
-export async function POST(request: NextRequest) {
-  try {
-    const body = await request.json();
-    const { action, context } = body;
-
-    // Simulate AI processing delay
-    await new Promise(resolve => setTimeout(resolve, 500));
-
-    switch (action) {
-      case "analyzeGovernance": {
-        // AI-assisted governance analysis
-        return NextResponse.json({
-          success: true,
-          data: {
-            portfolioHealth: GOVERNANCE_MOCK.portfolioHealth,
-            exceptionSummary: GOVERNANCE_MOCK.exceptionSummary,
-            pmoMaturity: GOVERNANCE_MOCK.pmoMaturity,
-            aiSuggestions: GOVERNANCE_MOCK.aiSuggestions,
-            generatedAt: new Date().toISOString(),
-          },
-        });
-      }
-
-      case "generateOKR": {
-        // AI-assisted OKR generation
-        const { level = "company", customParams = {} } = context || {};
-        const templates = OKR_TEMPLATES[level as keyof typeof OKR_TEMPLATES] || OKR_TEMPLATES.company;
-
-        const generatedOKRs = templates.map((template, index) => {
-          const krWithParams = template.keyResults.map((kr: string) => {
-            let result = kr;
-            Object.entries(customParams).forEach(([key, value]) => {
-              result = result.replace(`{${key}}`, String(value));
-            });
-            return result;
-          });
-
-          return {
-            id: `O${index + 1}`,
-            level,
-            objective: template.objective
-              .replace("{target}", customParams.target || "30")
-              .replace("{amount}", customParams.amount || "1500")
-              .replace("{rate}", customParams.rate || "85")
-              .replace("{count}", customParams.count || "20"),
-            keyResults: krWithParams.map((kr: string, i: number) => ({
-              id: `KR${i + 1}`,
-              kr,
-              progress: Math.floor(Math.random() * 30) + 10,
-              owner: customParams.owner || "待定",
-            })),
-          };
-        });
-
-        return NextResponse.json({
-          success: true,
-          data: {
-            generatedOKRs,
-            suggestions: [
-              "建议OKR设置遵循SMART原则，确保具体、可衡量",
-              "关键结果应与Objective强相关，避免OKR脱节",
-              "建议每个Objective配置3-5个Key Results",
-            ],
-          },
-        });
-      }
-
-      case "analyzeException": {
-        // Analyze exception projects
-        const { projectId } = context || {};
-        return NextResponse.json({
-          success: true,
-          data: {
-            projectId,
-            analysis: {
-              rootCause: "资源分配不均 + 需求变更频繁",
-              severity: "中",
-              recommendedActions: [
-                "重新评估资源分配方案",
-                "加强需求变更控制流程",
-                "建立早期预警机制",
-              ],
-              expectedRecovery: "4-6周",
-            },
-          },
-        });
-      }
-
-      case "assessPRINCE2Compliance": {
-        // PRINCE2 compliance self-assessment
-        return NextResponse.json({
-          success: true,
-          data: {
-            overall: 86,
-            principles: [
-              { name: "持续业务验证", compliant: true, score: 92 },
-              { name: "吸取经验教训", compliant: true, score: 88 },
-              { name: "明确定义角色与职责", compliant: true, score: 95 },
-              { name: "按阶段管理", compliant: true, score: 82 },
-              { name: "例外管理", compliant: false, score: 65 },
-              { name: "产品导向规划", compliant: true, score: 90 },
-              { name: "情境适配", compliant: true, score: 84 },
-            ],
-            themes: [
-              { name: "Business Case", score: 85 },
-              { name: "Organization", score: 92 },
-              { name: "Quality", score: 88 },
-              { name: "Plans", score: 80 },
-              { name: "Risk", score: 75 },
-              { name: "Change", score: 68 },
-              { name: "Progress", score: 78 },
-            ],
-            recommendations: [
-              "例外管理机制需强化，建议明确授权阈值",
-              "变更控制流程合规率偏低，需加强培训",
-            ],
-          },
-        });
-      }
-
-      default:
-        return NextResponse.json(
-          { success: false, error: "Unknown action" },
-          { status: 400 }
-        );
-    }
-  } catch (error) {
-    return NextResponse.json(
-      { success: false, error: "Internal server error" },
-      { status: 500 }
-    );
-  }
+interface RequestedGovernanceContext {
+  role: BusinessRole;
+  orgId: string;
+  subjectScope: SubjectScope;
+  subjectId: string;
+  dataClass: DataClass;
 }
 
-export async function GET() {
-  return NextResponse.json({
-    success: true,
-    data: {
-      endpoints: [
-        "POST /api/governance - AI-assisted governance analysis",
-        "Actions: analyzeGovernance, generateOKR, analyzeException, assessPRINCE2Compliance",
-      ],
-      version: "1.0",
-    },
+const BUSINESS_ROLES = new Set<BusinessRole>(["pm", "operations", "pmo", "ceo", "sponsor", "business_owner", "finance", "quality"]);
+const SUBJECT_SCOPES = new Set<SubjectScope>(["project", "portfolio", "organization", "customer", "contract"]);
+const DATA_CLASSES = new Set<DataClass>(["production", "sample", "test", "diagnostic", "unclassified"]);
+const GOVERNANCE_SOURCE = {
+  type: "supabase",
+  tables: ["governance_process_instances", "project_identity_mappings", "projects"],
+  fallback_used: false,
+} as const;
+
+function json(body: unknown, status = 200, requestId = crypto.randomUUID()) {
+  return Response.json(body, {
+    status,
+    headers: { "Cache-Control": "no-store", "X-Request-Id": requestId },
   });
+}
+
+function requestedContext(record: Record<string, unknown>): RequestedGovernanceContext | null {
+  const nested = record.context && typeof record.context === "object" && !Array.isArray(record.context)
+    ? record.context as Record<string, unknown>
+    : {};
+  const value = { ...nested, ...record };
+  const role = String(value.role ?? value.business_role ?? value.businessRole ?? "") as BusinessRole;
+  const orgId = String(value.org_id ?? value.orgId ?? "").trim();
+  const subjectScope = String(value.subject_scope ?? value.subjectScope ?? "") as SubjectScope;
+  const subjectId = String(value.subject_id ?? value.subjectId ?? "").trim();
+  const dataClass = String(value.data_class ?? value.dataClass ?? "production") as DataClass;
+  if (!BUSINESS_ROLES.has(role) || !orgId || !SUBJECT_SCOPES.has(subjectScope) || !subjectId || !DATA_CLASSES.has(dataClass)) return null;
+  return { role, orgId, subjectScope, subjectId, dataClass };
+}
+
+async function resolveGovernanceContext(user: AppUser, requested: RequestedGovernanceContext): Promise<{
+  context?: BusinessContext;
+  projectIds?: string[];
+  error?: string;
+  detail?: string;
+  status?: number;
+}> {
+  const assignments = await listBusinessRoleAssignments(user.id);
+  if (assignments.status !== "succeeded") {
+    return { error: "P17_STORAGE_NOT_CONFIGURED", detail: assignments.warning, status: 503 };
+  }
+  const context = resolveBusinessContext({
+    user: { id: user.id, systemRole: user.role },
+    assignments: assignments.data ?? [],
+    requestedRole: requested.role,
+    requestedOrgId: requested.orgId,
+    requestedSubjectScope: requested.subjectScope,
+    requestedSubjectId: requested.subjectId,
+  });
+  if (!context || !canPerformBusinessAction(context, "project.read", {
+    orgId: requested.orgId,
+    subjectScope: requested.subjectScope,
+    subjectId: requested.subjectId,
+  })) return { error: "GOVERNANCE_SCOPE_FORBIDDEN", status: 403 };
+
+  const mappings = await loadContextProjectIdentityMappings({ context, dataClass: requested.dataClass });
+  if (mappings.status !== "succeeded") {
+    return {
+      error: mappings.status === "not_configured" ? "P17_STORAGE_NOT_CONFIGURED" : "GOVERNANCE_SCOPE_MAPPING_FAILED",
+      detail: mappings.warning,
+      status: mappings.status === "not_configured" ? 503 : 500,
+    };
+  }
+  return {
+    context,
+    projectIds: [...new Set((mappings.data ?? []).map(item => item.projectId))],
+  };
+}
+
+async function loadGovernanceWorkspace(user: AppUser, requested: RequestedGovernanceContext) {
+  const access = await resolveGovernanceContext(user, requested);
+  if (access.error || !access.context || !access.projectIds) return { access };
+  const result = await listGovernanceInstancesForProjectIds(access.projectIds, 120);
+  if (result.status !== "succeeded") return { access, result };
+  const governanceWorkbench = buildGovernanceSlaDashboard(result.instances, user);
+  const governanceImpact = buildGovernanceImpactDashboard(result.instances);
+  return {
+    access,
+    result,
+    workspace: {
+      summary: {
+        total: result.instances.length,
+        ...governanceWorkbench.summary,
+        pendingWritebackConfirmation: governanceImpact.summary.pendingConfirmation,
+        highSeverityImpacts: governanceImpact.summary.highSeverity,
+      },
+      workflows: result.workflows,
+      instances: result.instances.map(instance => ({
+        ...instance,
+        sla: deriveGovernanceSla(instance),
+        businessImpact: buildGovernanceImpactPackage({ instance }),
+      })),
+      governance_workbench: governanceWorkbench,
+      governance_impact: governanceImpact,
+    },
+  };
+}
+
+function storageFailure(result: {
+  status: "succeeded" | "not_configured" | "failed";
+  warning?: string;
+}, requestId: string) {
+  const notConfigured = result.status === "not_configured";
+  return json({
+    status: result.status,
+    error: notConfigured ? "GOVERNANCE_STORAGE_NOT_CONFIGURED" : "GOVERNANCE_DATA_UNAVAILABLE",
+    detail: result.warning,
+    source: GOVERNANCE_SOURCE,
+    request_id: requestId,
+  }, 503, requestId);
+}
+
+async function respondWithWorkspace(user: AppUser, requested: RequestedGovernanceContext, requestId: string) {
+  const loaded = await loadGovernanceWorkspace(user, requested);
+  if (loaded.access.error) {
+    return json({
+      error: loaded.access.error,
+      detail: loaded.access.detail,
+      source: GOVERNANCE_SOURCE,
+      request_id: requestId,
+    }, loaded.access.status ?? 500, requestId);
+  }
+  if (!loaded.result || loaded.result.status !== "succeeded" || !loaded.workspace) {
+    return storageFailure(loaded.result ?? { status: "failed", warning: "治理数据读取失败。" }, requestId);
+  }
+  return json({
+    status: "succeeded",
+    context: loaded.access.context,
+    data_class: requested.dataClass,
+    source: GOVERNANCE_SOURCE,
+    governance: loaded.workspace,
+    successor: { page: "/governance-workflows", api: "/api/governance/workflows" },
+    request_id: requestId,
+  }, 200, requestId);
+}
+
+export async function GET(request: Request): Promise<Response> {
+  const requestId = crypto.randomUUID();
+  const user = await requireAuthenticatedApiUser();
+  if (!user) return json({ error: "UNAUTHORIZED", request_id: requestId }, 401, requestId);
+  const requested = requestedContext(Object.fromEntries(new URL(request.url).searchParams.entries()));
+  if (!requested) {
+    return json({ error: "GOVERNANCE_BUSINESS_CONTEXT_REQUIRED", source: GOVERNANCE_SOURCE, request_id: requestId }, 400, requestId);
+  }
+  return respondWithWorkspace(user, requested, requestId);
+}
+
+export async function POST(request: Request): Promise<Response> {
+  const requestId = crypto.randomUUID();
+  const user = await requireAuthenticatedApiUser();
+  if (!user) return json({ error: "UNAUTHORIZED", request_id: requestId }, 401, requestId);
+  let body: Record<string, unknown>;
+  try {
+    body = await request.json() as Record<string, unknown>;
+  } catch {
+    return json({ error: "INVALID_JSON", request_id: requestId }, 400, requestId);
+  }
+  const requested = requestedContext(body);
+  if (!requested) {
+    return json({ error: "GOVERNANCE_BUSINESS_CONTEXT_REQUIRED", source: GOVERNANCE_SOURCE, request_id: requestId }, 400, requestId);
+  }
+  const action = String(body.action ?? "");
+  if (action === "analyzeGovernance") return respondWithWorkspace(user, requested, requestId);
+  return json({
+    status: "retired",
+    error: "LEGACY_GOVERNANCE_ACTION_RETIRED",
+    detail: "该旧动作不会再生成模板或随机结果，请进入正式治理工作流或对应业务中心完成真实录入、审批和闭环。",
+    action,
+    source: GOVERNANCE_SOURCE,
+    successor: {
+      governance: { page: "/governance-workflows", api: "/api/governance/workflows" },
+      okr: { page: "/planning" },
+      exception: { page: "/pmo/control-center", api: "/api/pmo/control-center" },
+    },
+    request_id: requestId,
+  }, 410, requestId);
 }

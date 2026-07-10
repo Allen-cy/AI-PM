@@ -1,7 +1,7 @@
 // AI Resource Optimization API
 import { NextRequest, NextResponse } from "next/server";
 import { llmComplete } from "@/lib/llm";
-import { TeamMember, Allocation, ACTIVE_PROJECTS } from "@/lib/resource";
+import { TeamMember, Allocation } from "@/lib/resource";
 
 const SYSTEM_PROMPT = `你是资源管理专家，精通人员配置和项目资源优化。
 根据团队成员分配情况和项目需求，提供资源优化建议。
@@ -51,7 +51,7 @@ ${memberData.map(m =>
 2. 具体调整建议（JSON格式）
 `;
 
-    const result = await llmComplete("resource" as any, SYSTEM_PROMPT, userMessage);
+    const result = await llmComplete("planning", SYSTEM_PROMPT, userMessage);
 
     // Parse the AI response to extract optimized allocations and suggestions
     let optimizedAllocations: Allocation[] = [];
@@ -59,7 +59,11 @@ ${memberData.map(m =>
     let conflicts: string[] = [];
 
     try {
-      const parsed = JSON.parse(result.content);
+      const parsed = JSON.parse(result.content) as Partial<{
+        optimizedAllocations: Allocation[];
+        suggestions: string[];
+        conflicts: string[];
+      }>;
       if (parsed.optimizedAllocations) {
         optimizedAllocations = parsed.optimizedAllocations;
       }

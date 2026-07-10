@@ -1,7 +1,7 @@
 import { FeishuActionClient } from "./actions.ts";
 import type { FeishuConfig } from "./config.ts";
 
-export type FeishuActionType = "message" | "task" | "calendar" | "document";
+export type FeishuActionType = "message" | "task" | "calendar" | "document" | "base_record_update";
 export type FeishuActionBody = Record<string, unknown>;
 
 export interface ValidatedFeishuAction {
@@ -11,7 +11,7 @@ export interface ValidatedFeishuAction {
 
 export interface FeishuActionPreview {
   actionType: FeishuActionType;
-  targetType: "飞书消息" | "飞书任务" | "飞书日程" | "飞书文档";
+  targetType: "飞书消息" | "飞书任务" | "飞书日程" | "飞书文档" | "飞书多维表格记录";
   targetSummary: string;
   riskLevel: "low" | "medium" | "high";
   riskReasons: string[];
@@ -45,6 +45,54 @@ function stringArray(body: FeishuActionBody, field: string): string[] | undefine
     throw new ActionValidationError(`${field} must be an array of up to 50 IDs.`);
   }
   return value.map(item => item.trim());
+}
+
+const WRITABLE_BASE_TABLES = ["project", "milestone", "risk", "contract", "payment"] as const;
+type WritableBaseTable = typeof WRITABLE_BASE_TABLES[number];
+
+function baseTable(body: FeishuActionBody): WritableBaseTable {
+  const value = text(body, "table_key", 32);
+  if (!WRITABLE_BASE_TABLES.includes(value as WritableBaseTable)) {
+    throw new ActionValidationError("table_key must be project, milestone, risk, contract, or payment.");
+  }
+  return value as WritableBaseTable;
+}
+
+function businessFieldPatch(body: FeishuActionBody, field: "fields" | "expected_fields"): Record<string, unknown> {
+  const value = body[field];
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new ActionValidationError(`${field} must be a business field object.`);
+  }
+  const entries = Object.entries(value as Record<string, unknown>);
+  if (entries.length === 0 || entries.length > 20) {
+    throw new ActionValidationError(`${field} must contain 1 to 20 fields.`);
+  }
+  for (const [name, cell] of entries) {
+    if (!name.trim() || name.length > 80 || !/[\u3400-\u9fff]/u.test(name)) {
+      throw new ActionValidationError(`${field} 中的业务字段必须使用中文名称。`);
+    }
+    if (cell === undefined) throw new ActionValidationError(`${field}.${name} cannot be undefined.`);
+  }
+  return Object.fromEntries(entries);
+}
+
+function validateBaseRecordUpdate(body: FeishuActionBody): void {
+  baseTable(body);
+  text(body, "record_id", 160);
+  text(body, "business_update_draft_id", 80);
+  text(body, "org_id", 80);
+  text(body, "project_id", 80);
+  const dataClass = text(body, "data_class", 32);
+  if (!["production", "sample", "test", "diagnostic", "unclassified"].includes(dataClass)) {
+    throw new ActionValidationError("data_class is invalid.");
+  }
+  const fields = businessFieldPatch(body, "fields");
+  const expected = businessFieldPatch(body, "expected_fields");
+  const nextKeys = Object.keys(fields).sort();
+  const expectedKeys = Object.keys(expected).sort();
+  if (JSON.stringify(nextKeys) !== JSON.stringify(expectedKeys)) {
+    throw new ActionValidationError("fields and expected_fields must contain the same Chinese business fields.");
+  }
 }
 
 function timestamp(body: FeishuActionBody, field: string): number | undefined {
@@ -100,8 +148,11 @@ export function validateFeishuActionBody(body: FeishuActionBody): ValidatedFeish
       stringArray(body, "bullets");
       optionalText(body, "parent_token", 256);
       break;
+    case "base_record_update":
+      validateBaseRecordUpdate(body);
+      break;
     default:
-      throw new ActionValidationError("type must be message, task, calendar, or document.");
+      throw new ActionValidationError("type must be message, task, calendar, document, or base_record_update.");
   }
   return { actionType, idempotencyKey };
 }
@@ -173,6 +224,28 @@ export function buildFeishuActionPreview(body: FeishuActionBody): FeishuActionPr
         ],
         confirmationRequired: true,
       };
+    case "base_record_update": {
+      const tableKey = baseTable(body);
+      const recordId = text(body, "record_id", 160);
+      const fields = businessFieldPatch(body, "fields");
+      const expected = businessFieldPatch(body, "expected_fields");
+      return {
+        actionType,
+        targetType: "飞书多维表格记录",
+        targetSummary: `更新 ${tableKey} 表记录 ${short(recordId, 48)}`,
+        riskLevel: "high",
+        riskReasons: ["将改写现有飞书业务主数据。", "执行前必须重新核对当前事实与数据空间。"],
+        fields: [
+          { label: "数据表", value: tableKey },
+          { label: "记录ID", value: short(recordId, 80) },
+          ...Object.entries(fields).map(([name, value]) => ({
+            label: name,
+            value: `${short(JSON.stringify(expected[name]) ?? String(expected[name]), 80)} → ${short(JSON.stringify(value) ?? String(value), 80)}`,
+          })),
+        ],
+        confirmationRequired: true,
+      };
+    }
   }
 }
 
@@ -220,7 +293,10 @@ export async function executeFeishuAction(config: FeishuConfig, body: FeishuActi
         bullets: stringArray(body, "bullets"),
         parentToken: optionalText(body, "parent_token", 256) ?? config.documentParentToken,
       });
+    case "base_record_update": {
+      throw new ActionValidationError("Base记录更新必须经过业务变化草稿、二次确认和同步流水的受控业务写回流程。");
+    }
     default:
-      throw new ActionValidationError("type must be message, task, calendar, or document.");
+      throw new ActionValidationError("type must be message, task, calendar, document, or base_record_update.");
   }
 }

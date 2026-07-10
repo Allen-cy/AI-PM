@@ -10,10 +10,10 @@ const categoryDomains: Record<string, string> = {
   'ai-pmo': 'AI-PMO能力',
 };
 
-async function getOptionalCurrentUser() {
+async function requireAuthenticatedApiUser() {
   try {
     const auth = await import('../../../features/auth/server.ts');
-    return await auth.getCurrentUser();
+    return await auth.requireAuthenticatedApiUser();
   } catch {
     return null;
   }
@@ -27,7 +27,7 @@ async function saveKnowledgeOutputReference(input: {
   pageId: string;
   citationText: string;
   confidence: number;
-  user: Awaited<ReturnType<typeof getOptionalCurrentUser>>;
+  user: Awaited<ReturnType<typeof requireAuthenticatedApiUser>>;
   requestId: string;
 }) {
   try {
@@ -39,6 +39,10 @@ async function saveKnowledgeOutputReference(input: {
 }
 
 export async function POST(request: Request): Promise<Response> {
+  const user = await requireAuthenticatedApiUser();
+  if (process.env.AUTH_REQUIRED === 'true' && !user) {
+    return Response.json({ error: 'UNAUTHORIZED' }, { status: 401 });
+  }
   let body: unknown;
   try {
     body = await request.json();
@@ -64,7 +68,6 @@ export async function POST(request: Request): Promise<Response> {
     query: raw.question.trim(),
     ...(domain ? { filters: { domains: [domain] } } : {}),
   });
-  const user = await getOptionalCurrentUser();
   const knowledgeReferences = [];
   for (const citation of result.citations.slice(0, 5)) {
     const saved = await saveKnowledgeOutputReference({
@@ -109,6 +112,10 @@ export async function POST(request: Request): Promise<Response> {
 }
 
 export async function GET(): Promise<Response> {
+  const user = await requireAuthenticatedApiUser();
+  if (process.env.AUTH_REQUIRED === 'true' && !user) {
+    return Response.json({ error: 'UNAUTHORIZED' }, { status: 401 });
+  }
   return Response.json({
     categories: knowledgeCategories,
     timestamp: new Date().toISOString(),

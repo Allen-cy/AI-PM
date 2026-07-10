@@ -42,9 +42,14 @@ export interface FeishuActionConfirmationRecord {
   cancelReason: string | null;
   requestId: string | null;
   createdAt: string;
+  updatedAt?: string;
   confirmedAt: string | null;
   executedAt: string | null;
   cancelledAt: string | null;
+  writebackAttemptCount?: number;
+  writebackLastAttemptAt?: string | null;
+  writebackLeaseExpiresAt?: string | null;
+  writebackLastError?: string | null;
 }
 
 export type FeishuActionConfirmationRiskReviewLevel = "low" | "medium" | "high";
@@ -143,9 +148,14 @@ function mapRow(row: Record<string, unknown>): FeishuActionConfirmationRecord {
     cancelReason: typeof row.cancel_reason === "string" ? row.cancel_reason : null,
     requestId: typeof row.request_id === "string" ? row.request_id : null,
     createdAt: String(row.created_at || ""),
+    updatedAt: String(row.updated_at || ""),
     confirmedAt: typeof row.confirmed_at === "string" ? row.confirmed_at : null,
     executedAt: typeof row.executed_at === "string" ? row.executed_at : null,
     cancelledAt: typeof row.cancelled_at === "string" ? row.cancelled_at : null,
+    writebackAttemptCount: Number(row.writeback_attempt_count ?? 0),
+    writebackLastAttemptAt: typeof row.writeback_last_attempt_at === "string" ? row.writeback_last_attempt_at : null,
+    writebackLeaseExpiresAt: typeof row.writeback_lease_expires_at === "string" ? row.writeback_lease_expires_at : null,
+    writebackLastError: typeof row.writeback_last_error === "string" ? row.writeback_last_error : null,
   };
 }
 
@@ -191,6 +201,13 @@ function ageInDays(createdAt: string, now: Date): number | null {
   return Math.max(0, Math.floor((now.getTime() - parsed) / 86_400_000));
 }
 
+function isRecoverableBaseWriteback(confirmation: FeishuActionConfirmationRecord, now: Date): boolean {
+  if (confirmation.actionType !== "base_record_update" || confirmation.status !== "writing") return false;
+  if (!confirmation.writebackLeaseExpiresAt) return true;
+  const leaseExpiresAt = Date.parse(confirmation.writebackLeaseExpiresAt);
+  return Number.isFinite(leaseExpiresAt) && leaseExpiresAt <= now.getTime();
+}
+
 function addUnique(target: string[], value: string) {
   if (!target.includes(value)) target.push(value);
 }
@@ -214,6 +231,7 @@ export function buildFeishuConfirmationRiskReview(
   const warnings: string[] = [];
   const blockingIssues: string[] = [];
   const currentAgeDays = ageInDays(confirmation.createdAt, now);
+  const recoverableBaseWriteback = isRecoverableBaseWriteback(confirmation, now);
   let riskLevel = confirmation.riskLevel;
 
   function pushCheck(
@@ -227,7 +245,7 @@ export function buildFeishuConfirmationRiskReview(
     if (status === "block") addUnique(blockingIssues, detail);
   }
 
-  if (isFeishuActionConfirmationConfirmable(confirmation.status)) {
+  if (isFeishuActionConfirmationConfirmable(confirmation.status) || recoverableBaseWriteback) {
     pushCheck("status", "状态可执行", "pass", `当前状态为 ${confirmation.status}，允许进入确认前复核。`);
   } else {
     pushCheck("status", "状态可执行", "block", `当前状态为 ${confirmation.status}，不能批量确认。`);
@@ -259,6 +277,10 @@ export function buildFeishuConfirmationRiskReview(
   if (confirmation.status === "failed") {
     riskLevel = elevateRisk(riskLevel, "medium");
     pushCheck("retry", "失败重试", "warning", `该动作此前执行失败${confirmation.errorCode ? `：${confirmation.errorCode}` : ""}，重试前应核对配置和目标权限。`);
+  }
+  if (recoverableBaseWriteback) {
+    riskLevel = elevateRisk(riskLevel, "high");
+    pushCheck("recovery", "中断恢复", "warning", "上一次Base写回租约已过期；本次只会在重新核对权限、当前事实和同步流水后恢复。");
   }
 
   for (const reason of confirmation.preview.riskReasons) {
@@ -309,10 +331,36 @@ export function buildFeishuConfirmationRiskReview(
         pushCheck("location", "文档位置", "pass", "已指定飞书文档父目录。");
       }
       break;
+    case "base_record_update": {
+      riskLevel = elevateRisk(riskLevel, "high");
+      const tableKey = payloadString(confirmation.payload, "table_key");
+      const recordId = payloadString(confirmation.payload, "record_id");
+      const draftId = payloadString(confirmation.payload, "business_update_draft_id");
+      const dataClass = payloadString(confirmation.payload, "data_class");
+      const fields = confirmation.payload.fields;
+      if (!tableKey || !recordId || !draftId) {
+        pushCheck("base-target", "Base稳定目标", "block", "写回载荷缺少 table_key、record_id 或业务草稿ID。");
+      } else {
+        pushCheck("base-target", "Base稳定目标", "pass", `目标为 ${tableKey} 表的稳定记录 ${recordId}。`);
+      }
+      if (!["production", "sample", "test", "diagnostic", "unclassified"].includes(dataClass)) {
+        pushCheck("data-class", "数据空间", "block", "写回载荷缺少合法数据空间。");
+      } else {
+        pushCheck("data-class", "数据空间", "pass", `写回限定在 ${dataClass} 数据空间。`);
+      }
+      const fieldNames = fields && typeof fields === "object" && !Array.isArray(fields) ? Object.keys(fields as Record<string, unknown>) : [];
+      if (fieldNames.length === 0 || fieldNames.some(field => !/[\u3400-\u9fff]/u.test(field))) {
+        pushCheck("base-fields", "中文业务字段", "block", "Base更新字段为空或存在非中文业务字段。");
+      } else {
+        pushCheck("base-fields", "中文业务字段", "warning", `将改写 ${fieldNames.join("、")}，最终执行前会重新核对当前事实。`);
+      }
+      break;
+    }
   }
 
   const requiresSecondConfirm = riskLevel === "high" || warnings.length >= 3 || (currentAgeDays ?? 0) >= 7;
-  const canConfirm = blockingIssues.length === 0 && isFeishuActionConfirmationConfirmable(confirmation.status);
+  const canConfirm = blockingIssues.length === 0
+    && (isFeishuActionConfirmationConfirmable(confirmation.status) || recoverableBaseWriteback);
   const canCancel = isFeishuActionConfirmationCancellable(confirmation.status);
 
   return {
@@ -361,8 +409,9 @@ export function buildFeishuConfirmationQueueSummary(
   confirmations: FeishuActionConfirmationRecord[],
   now = new Date(),
 ): FeishuActionConfirmationQueueSummary {
-  const active = confirmations.filter(item => isFeishuActionConfirmationConfirmable(item.status));
-  const reviews = active.map(item => ({ confirmation: item, review: buildFeishuConfirmationRiskReview(item, { now }) }));
+  const reviews = confirmations
+    .map(item => ({ confirmation: item, review: buildFeishuConfirmationRiskReview(item, { now }) }))
+    .filter(({ confirmation, review }) => isFeishuActionConfirmationConfirmable(confirmation.status) || review.canConfirm);
   const reminderDrafts = reviews
     .filter(({ confirmation, review }) => confirmation.status === "failed" || review.riskLevel === "high" || (review.ageDays ?? 0) >= 7 || review.requiresSecondConfirm)
     .slice(0, 5)
@@ -404,6 +453,9 @@ export async function createFeishuActionConfirmation(input: {
   }
 
   const validated = validateFeishuActionBody(input.payload);
+  if (validated.actionType === "base_record_update") {
+    return { status: "failed", warning: "Base记录更新只能由业务变化草稿在数据库事务中创建，不接受通用接口直接入队。" };
+  }
   const preview = buildFeishuActionPreview(input.payload);
   const supabase = getAuthSupabase();
   const { data, error } = await supabase

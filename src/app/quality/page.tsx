@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import {
   testDefects,
   testAcceptanceCriteria,
@@ -103,7 +104,7 @@ export default function QualityPage() {
         gap: 16,
         background: "var(--surface)",
       }}>
-        <a href="/" style={{ color: "var(--text2)", textDecoration: "none", fontSize: "0.85rem" }}>← 返回首页</a>
+        <Link href="/" style={{ color: "var(--text2)", textDecoration: "none", fontSize: "0.85rem" }}>← 返回首页</Link>
         <span style={{ color: "var(--border)" }}>|</span>
         <span style={{ fontWeight: 700 }}>Quality Management</span>
         <span className="tag" style={{ background: "rgba(16,185,129,0.15)", color: "var(--green)", fontSize: "0.7rem" }}>质量管理</span>

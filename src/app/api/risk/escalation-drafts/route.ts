@@ -1,6 +1,5 @@
 import { getCurrentUser } from "@/features/auth/server";
 import { loadDashboardFromFeishu } from "@/features/dashboard/feishu";
-import { DEFAULT_DASHBOARD_DATA } from "@/features/dashboard/normalizer";
 import { getEffectiveFeishuConfig } from "@/features/feishu/user-config";
 import { syncGovernanceEventToFeishu } from "@/features/governance/feishu-sync";
 import { createGovernanceInstance, listGovernanceInstances } from "@/features/governance/repository";
@@ -10,7 +9,6 @@ import { buildRiskEscalationDraftDashboard, type RiskEscalationDraftType } from 
 import { buildRiskIntegrationDashboard } from "@/features/risk/integration";
 import { filterDashboardByProjectAccess, projectAccessMode } from "@/features/security/authorization";
 import { loadProjectAccessGrantsForUser } from "@/features/security/repository";
-import { initialRisks } from "@/lib/risk";
 import { listRisks } from "@/lib/risk-repository";
 
 export const runtime = "nodejs";
@@ -38,16 +36,20 @@ function statusCode(status?: string): number {
 
 async function loadDraftDashboard() {
   const user = await getCurrentUser();
-  const riskResult = await listRisks().catch(error => ({
-    risks: initialRisks,
-    events: [],
-    source: "memory" as const,
-    warning: error instanceof Error ? error.message : "风险登记册读取失败，已回退到样例风险。",
-  }));
+  const riskResult = await listRisks().catch(() => null);
+  if (!riskResult) {
+    return { status: "failed" as const, code: "RISK_REGISTER_LOAD_FAILED", warning: "风险登记册读取失败，未使用样例风险兜底。", user };
+  }
   const effective = await getEffectiveFeishuConfig();
-  const rawDashboard = effective.config
-    ? await loadDashboardFromFeishu(effective.config).catch(() => DEFAULT_DASHBOARD_DATA)
-    : DEFAULT_DASHBOARD_DATA;
+  if (!effective.config) {
+    return { status: "not_configured" as const, code: "FEISHU_DASHBOARD_NOT_CONFIGURED", warning: effective.setupHint || "飞书项目台账未配置。", larkCliHint: effective.larkCliHint, user };
+  }
+  let rawDashboard;
+  try {
+    rawDashboard = await loadDashboardFromFeishu(effective.config);
+  } catch (error) {
+    return { status: "failed" as const, code: "FEISHU_DASHBOARD_LOAD_FAILED", warning: error instanceof Error ? error.message : "飞书项目台账读取失败。", user };
+  }
   const grants = await loadProjectAccessGrantsForUser(effective.user ?? user);
   const dashboard = filterDashboardByProjectAccess(rawDashboard, effective.user ?? user, grants);
   const riskIntegration = buildRiskIntegrationDashboard({
@@ -57,6 +59,7 @@ async function loadDraftDashboard() {
   const riskEscalation = buildRiskEscalationDraftDashboard({ riskIntegration });
 
   return {
+    status: "succeeded" as const,
     user,
     riskResult,
     effective,
@@ -76,6 +79,9 @@ async function loadDraftDashboard() {
 export async function GET(): Promise<Response> {
   const requestId = crypto.randomUUID();
   const loaded = await loadDraftDashboard();
+  if (loaded.status !== "succeeded") {
+    return jsonResponse({ request_id: requestId, status: loaded.status, code: loaded.code, warning: loaded.warning, lark_cli_hint: loaded.larkCliHint }, loaded.status === "not_configured" ? 503 : 503, requestId);
+  }
 
   return jsonResponse({
     request_id: requestId,
@@ -83,7 +89,7 @@ export async function GET(): Promise<Response> {
     risk_escalation: loaded.riskEscalation,
     source: {
       risk: loaded.riskResult.source,
-      dashboard: loaded.effective.config ? "feishu" : "sample",
+      dashboard: "feishu",
     },
     warning: loaded.riskResult.warning,
     access: loaded.access,
@@ -112,6 +118,9 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   const loaded = await loadDraftDashboard();
+  if (loaded.status !== "succeeded") {
+    return jsonResponse({ request_id: requestId, status: loaded.status, code: loaded.code, warning: loaded.warning, lark_cli_hint: loaded.larkCliHint }, loaded.status === "not_configured" ? 503 : 503, requestId);
+  }
   const governanceDraft = loaded.riskEscalation.governanceDrafts.find(draft => draft.id === body.draftId);
   const actionDraft = loaded.riskEscalation.actionDrafts.find(draft => draft.id === body.draftId);
   if (body.draftType === "governance_workflow" && governanceDraft) {

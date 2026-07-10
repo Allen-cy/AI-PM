@@ -100,9 +100,9 @@ export default function BlueprintV2Page() {
   const [editName, setEditName] = useState("");
   const [hoveredNode, setHoveredNode] = useState<string | null>(null);
 
-  const handleEditModule = (module: Module) => {
-    setEditingModule(module.id);
-    setEditName(module.name);
+  const handleEditModule = (targetModule: Module) => {
+    setEditingModule(targetModule.id);
+    setEditName(targetModule.name);
   };
 
   const handleSaveModule = () => {
@@ -115,8 +115,8 @@ export default function BlueprintV2Page() {
   };
 
   const handleEditItem = (moduleId: string, itemId: string) => {
-    const module = modules.find(m => m.id === moduleId);
-    const item = module?.items.find(i => i.id === itemId);
+    const targetModule = modules.find(m => m.id === moduleId);
+    const item = targetModule?.items.find(i => i.id === itemId);
     if (item) {
       const newName = prompt("修改节点名称", item.name);
       if (newName && newName !== item.name) {
@@ -130,8 +130,8 @@ export default function BlueprintV2Page() {
   };
 
   const handleStatusChange = (moduleId: string, itemId: string) => {
-    const module = modules.find(m => m.id === moduleId);
-    const item = module?.items.find(i => i.id === itemId);
+    const targetModule = modules.find(m => m.id === moduleId);
+    const item = targetModule?.items.find(i => i.id === itemId);
     if (item) {
       const nextStatus = item.status === "done" ? "current" : item.status === "current" ? "pending" : "done";
       setModules(modules.map(m =>
@@ -154,7 +154,7 @@ export default function BlueprintV2Page() {
         background: "var(--surface)",
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-          <a href="/" style={{ color: "var(--text2)", textDecoration: "none", fontSize: "0.85rem" }}>← 返回首页</a>
+          <Link href="/" style={{ color: "var(--text2)", textDecoration: "none", fontSize: "0.85rem" }}>← 返回首页</Link>
           <span style={{ color: "var(--border)" }}>|</span>
           <span style={{ fontWeight: 700, fontSize: "0.95rem" }}>🗺️ 项目全流程交付管理蓝图 V2</span>
           <span className="tag" style={{ fontSize: "0.7rem", background: "rgba(139, 92, 246, 0.1)", color: "#8b5cf6" }}>可编辑</span>

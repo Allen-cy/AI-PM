@@ -146,7 +146,7 @@ test('creates a structured Feishu document in XML format', async () => {
   assert.equal(body.format, 'xml');
   assert.equal(body.parent_token, 'fld-1');
   assert.match(body.content, /<title>项目周报<\/title>/);
-  assert.match(body.content, /<callout[^>]*>.*本周进度正常/s);
+  assert.match(body.content, /<callout[^>]*>[\s\S]*本周进度正常/);
   assert.match(body.content, /<ul><li>里程碑按期<\/li><li>回款无逾期<\/li><\/ul>/);
 });
 

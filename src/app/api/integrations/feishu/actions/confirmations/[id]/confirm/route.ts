@@ -7,7 +7,8 @@ import {
 } from "../../../../../../../../features/feishu/action-confirmations.ts";
 import { executeFeishuAction } from "../../../../../../../../features/feishu/action-payload.ts";
 import { FeishuApiError, FeishuBaseClient } from "../../../../../../../../features/feishu/client.ts";
-import { getEffectiveFeishuConfig } from "../../../../../../../../features/feishu/user-config.ts";
+import { getEffectiveFeishuConfig, getUserFeishuConfig, larkCliHint } from "../../../../../../../../features/feishu/user-config.ts";
+import { executeBusinessUpdateWriteback } from "../../../../../../../../features/operating-assistant/writeback.ts";
 import { writeIntegrationSyncLog } from "../../../../../../../../features/operating-system/sync-logs.ts";
 import { writeOperationAudit } from "../../../../../../../../features/security/repository.ts";
 
@@ -51,7 +52,7 @@ export async function POST(request: Request, context: RouteContext): Promise<Res
   if (!canManageFeishuActionConfirmation(user, confirmation)) {
     return json({ request_id: requestId, status: "forbidden", warning: "你无权确认该飞书写入动作。" }, 403, requestId);
   }
-  if (confirmation.status === "succeeded" || confirmation.status === "cancelled" || confirmation.status === "writing") {
+  if (confirmation.status === "succeeded" || confirmation.status === "cancelled") {
     return json({ request_id: requestId, status: "conflict", warning: `当前状态为 ${confirmation.status}，不能重复确认。`, confirmation }, 409, requestId);
   }
   const riskReview = buildFeishuConfirmationRiskReview(confirmation, { user });
@@ -74,14 +75,64 @@ export async function POST(request: Request, context: RouteContext): Promise<Res
     }, 428, requestId);
   }
 
-  const effectiveFeishu = await getEffectiveFeishuConfig();
+  if (confirmation.actionType === "base_record_update") {
+    const executed = await executeBusinessUpdateWriteback({ confirmation, actor: user });
+    const refreshed = await getFeishuActionConfirmation(id);
+    const effectiveConfirmation = refreshed.status === "succeeded" ? refreshed.confirmation : confirmation;
+    const succeeded = executed.status === "succeeded" || executed.status === "duplicate";
+    await writeOperationAudit({
+      user,
+      action: "business_update_base_confirmation_execute",
+      resourceType: "feishu_action_confirmation",
+      resourceId: id,
+      status: succeeded ? "succeeded" : "failed",
+      severity: "high",
+      summary: succeeded ? `已人工确认并执行Base业务记录更新：${confirmation.targetSummary}` : `Base业务记录更新未执行：${confirmation.targetSummary}`,
+      detail: { action_type: confirmation.actionType, feishu_source: executed.feishuSource, error_code: executed.errorCode, data_class: confirmation.payload.data_class, business_update_draft_id: confirmation.payload.business_update_draft_id },
+      requestId,
+    });
+    await writeIntegrationSyncLog({
+      userId: user.id,
+      source: "feishu",
+      eventType: "business_update_base_record_update",
+      status: succeeded ? "succeeded" : "failed",
+      severity: "high",
+      summary: succeeded ? `飞书Base业务记录已经二次确认更新：${confirmation.targetSummary}` : `飞书Base业务记录写回被阻断：${confirmation.targetSummary}`,
+      detail: { confirmation_id: id, business_update_draft_id: confirmation.payload.business_update_draft_id, data_class: confirmation.payload.data_class, error_code: executed.errorCode, resource: executed.resource },
+      remediation: succeeded ? undefined : executed.warning ?? "刷新当前事实，检查申请人角色权限、个人飞书配置和数据空间后重试。",
+      requestId,
+    });
+    const httpStatus = executed.status === "succeeded" ? 201
+      : executed.status === "duplicate" ? 200
+        : executed.status === "forbidden" ? 403
+          : executed.status === "not_configured" ? 503
+            : executed.status === "conflict" ? 409 : 502;
+    return json({
+      request_id: requestId,
+      status: executed.status,
+      warning: executed.warning,
+      confirmation: effectiveConfirmation,
+      draft: executed.draft,
+      resource: executed.resource,
+      riskReview,
+      boundary: succeeded ? "Base记录只在二次人工确认、当前事实复核、权限复核和同步流水占位后更新。" : "本次未将队列失败伪装成业务写回成功。",
+    }, httpStatus, requestId);
+  }
+
+  const requirePersonalFeishu = confirmation.payload.require_personal_feishu === true;
+  const executor_user_id = user.id;
+  const personalFeishuConfig = requirePersonalFeishu ? await getUserFeishuConfig(executor_user_id) : null;
+  const effectiveFeishu = requirePersonalFeishu
+    ? { config: personalFeishuConfig, source: "user" as const, larkCliHint }
+    : await getEffectiveFeishuConfig();
+  const setupHint = "setupHint" in effectiveFeishu ? effectiveFeishu.setupHint : undefined;
   if (!effectiveFeishu.config) {
     return json({
       request_id: requestId,
       status: "not_configured",
       confirmation,
       riskReview,
-      warning: effectiveFeishu.setupHint || "飞书接入未配置，请先在用户中心配置个人飞书或联系管理员配置全局飞书。",
+      warning: requirePersonalFeishu ? "该动作要求使用确认人的个人飞书接入。请先在用户中心配置个人飞书。" : setupHint || "飞书接入未配置，请先在用户中心配置个人飞书或联系管理员配置全局飞书。",
       lark_cli_hint: effectiveFeishu.larkCliHint,
     }, 503, requestId);
   }
@@ -151,7 +202,7 @@ export async function POST(request: Request, context: RouteContext): Promise<Res
       status: "succeeded",
       severity: "medium",
       summary: `飞书写入已确认执行：${confirmation.targetSummary}`,
-      detail: { confirmation_id: id, action_type: confirmation.actionType, feishu_source: effectiveFeishu.source },
+      detail: { confirmation_id: id, action_type: confirmation.actionType, feishu_source: effectiveFeishu.source, executor_user_id },
       requestId,
     });
     return json({ request_id: requestId, status: "succeeded", confirmation: completed.status === "succeeded" ? completed.confirmation : confirmation, riskReview, resource }, 201, requestId);

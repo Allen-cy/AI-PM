@@ -181,6 +181,7 @@ export default function FinancePage() {
             {loading ? "刷新中..." : "刷新飞书数据"}
           </button>
           <Link href="/dashboard" className="btn-secondary" style={{ textDecoration: "none" }}>项目组合看板</Link>
+          <Link href="/business-finance" className="btn-primary" style={{ textDecoration: "none" }}>收益实现与情景分析</Link>
           <Link href="/contract" className="btn-secondary" style={{ textDecoration: "none" }}>合同回款</Link>
           <Link href="/closing" className="btn-secondary" style={{ textDecoration: "none" }}>收尾验收</Link>
         </div>

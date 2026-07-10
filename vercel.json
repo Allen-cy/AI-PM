@@ -1,0 +1,16 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/evidence-expiry",
+      "schedule": "15 0 * * *"
+    },
+    {
+      "path": "/api/cron/operating-calendar",
+      "schedule": "20 0 * * *"
+    },
+    {
+      "path": "/api/cron/decision-sla",
+      "schedule": "*/15 * * * *"
+    }
+  ]
+}

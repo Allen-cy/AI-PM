@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { llmComplete } from "@/lib/llm";
+import { requireAuthenticatedApiUser } from "@/features/auth/server";
 
 export async function POST(request: NextRequest) {
   try {
+    const user = await requireAuthenticatedApiUser();
+    if (!user) return NextResponse.json({ error: "UNAUTHORIZED" }, { status: 401 });
     const body = await request.json();
     const { projects, timeframe } = body as {
       projects: Array<{
@@ -47,14 +50,14 @@ ${projectSummary}
 - 返回JSON格式：{ insights: string[], rootCauses: string[], recommendations: string[] }`;
 
     const result = await llmComplete(
-      "monitoring" as any,
+      "general",
       `你是AI PM系统的监控中心分析师，精通项目管理方法论和数据可视化。
 分析维度：进度、成本、质量、风险、干系人满意度
 输出格式：严格的JSON对象 { insights: string[], rootCauses: string[], recommendations: string[] }`,
       prompt
     );
 
-    let parsed;
+    let parsed: { insights?: string[]; rootCauses?: string[]; recommendations?: string[] };
     try {
       // Try to extract JSON from the response
       const content = result.content.trim();

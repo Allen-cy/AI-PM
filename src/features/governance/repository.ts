@@ -56,7 +56,7 @@ function missingStorageResult() {
 }
 
 function isMissingTableError(message?: string): boolean {
-  return Boolean(message?.includes("governance_process_instances") || message?.includes("governance_process_events") || message?.includes("relation") || message?.includes("does not exist"));
+  return Boolean(message?.includes("governance_process_instances") || message?.includes("governance_process_events") || message?.includes("canonical_project_id") || message?.includes("relation") || message?.includes("does not exist"));
 }
 
 function mapInstance(row: Record<string, unknown>): GovernanceInstanceRecord {
@@ -64,6 +64,7 @@ function mapInstance(row: Record<string, unknown>): GovernanceInstanceRecord {
   const source = typeof metadata.source === "object" && metadata.source !== null ? metadata.source as Record<string, unknown> : {};
   return {
     id: String(row.id),
+    canonicalProjectId: row.canonical_project_id ? String(row.canonical_project_id) : null,
     workflowId: String(row.workflow_id),
     workflowName: String(row.workflow_name),
     stage: String(row.stage),
@@ -167,6 +168,52 @@ export async function listGovernanceInstances(limit = 30): Promise<{
         workflows: governanceWorkflows,
         instances: [],
         warning: isMissingTableError(error.message) ? "请在 Supabase SQL Editor 执行 supabase-v529-governance-workflows.sql。" : error.message,
+      };
+    }
+    return {
+      status: "succeeded",
+      workflows: governanceWorkflows,
+      instances: (data ?? []).map(item => mapInstance(item as Record<string, unknown>)),
+    };
+  } catch (error) {
+    return {
+      status: "failed",
+      workflows: governanceWorkflows,
+      instances: [],
+      warning: error instanceof Error ? error.message : "治理流程读取失败。",
+    };
+  }
+}
+
+export async function listGovernanceInstancesForProjectIds(projectIds: string[], limit = 120): Promise<{
+  status: "succeeded" | "not_configured" | "failed";
+  workflows: typeof governanceWorkflows;
+  instances: GovernanceInstanceRecord[];
+  warning?: string;
+}> {
+  if (!isAuthStorageConfigured()) {
+    return { ...missingStorageResult(), workflows: governanceWorkflows, instances: [] };
+  }
+  const scopedProjectIds = [...new Set(projectIds.map(value => value.trim()).filter(Boolean))];
+  if (scopedProjectIds.length === 0) return { status: "succeeded", workflows: governanceWorkflows, instances: [] };
+
+  try {
+    const supabase = getAuthSupabase();
+    const { data, error } = await supabase
+      .from("governance_process_instances")
+      .select("*")
+      .in("canonical_project_id", scopedProjectIds)
+      .order("updated_at", { ascending: false })
+      .limit(Math.max(1, Math.min(limit, 200)));
+    if (error) {
+      const notConfigured = isMissingTableError(error.message);
+      return {
+        status: notConfigured ? "not_configured" : "failed",
+        workflows: governanceWorkflows,
+        instances: [],
+        warning: notConfigured
+          ? "请执行治理流程基础脚本和 P17 数据边界迁移，再为历史治理实例补齐 canonical_project_id。"
+          : error.message,
       };
     }
     return {

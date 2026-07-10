@@ -3,6 +3,12 @@ import {
   type FeishuConfig,
   type FeishuTableKey,
 } from "./config.ts";
+import {
+  feishuAppSecretCredentialContext,
+  feishuBaseTokenCredentialContext,
+  resolveStoredCredential,
+  type CredentialEnvironment,
+} from "../security/credential-encryption.ts";
 
 interface AppUser {
   id: string;
@@ -13,11 +19,13 @@ interface AppUser {
   status: "active" | "disabled";
 }
 
-type UserFeishuConnectionRow = {
+export type UserFeishuConnectionRow = {
   user_id: string;
   app_id?: string | null;
   app_secret?: string | null;
+  app_secret_encrypted?: string | null;
   base_token?: string | null;
+  base_token_encrypted?: string | null;
   table_mapping?: Record<string, unknown> | null;
   connection_mode?: string | null;
   status?: string | null;
@@ -48,10 +56,29 @@ function tableMappingFrom(value: Record<string, unknown> | null | undefined): Pa
   return output;
 }
 
-export function connectionToFeishuConfig(row: UserFeishuConnectionRow): FeishuConfig | null {
+export function connectionToFeishuConfig(
+  row: UserFeishuConnectionRow,
+  environment: CredentialEnvironment = process.env,
+): FeishuConfig | null {
   const appId = row.app_id?.trim();
-  const appSecret = row.app_secret?.trim();
-  const baseToken = row.base_token?.trim();
+  let appSecret: string | null;
+  let baseToken: string | null;
+  try {
+    appSecret = resolveStoredCredential({
+      encrypted: row.app_secret_encrypted,
+      plaintext: row.app_secret,
+      context: feishuAppSecretCredentialContext(row.user_id),
+      environment,
+    }).value;
+    baseToken = resolveStoredCredential({
+      encrypted: row.base_token_encrypted,
+      plaintext: row.base_token,
+      context: feishuBaseTokenCredentialContext(row.user_id),
+      environment,
+    }).value;
+  } catch {
+    return null;
+  }
   if (!appId || !appSecret || !baseToken) return null;
 
   const globalConfig = readFeishuConfig();
@@ -75,18 +102,33 @@ export function connectionToFeishuConfig(row: UserFeishuConnectionRow): FeishuCo
   };
 }
 
+export function resolvePersonalFeishuConfig(
+  row: UserFeishuConnectionRow,
+  environment: CredentialEnvironment = process.env,
+): FeishuConfig | null {
+  if (row.status === "disabled") return null;
+  const config = connectionToFeishuConfig(row, environment);
+  if (config) return config;
+  const configuredRecord = row.status === "configured" || Boolean(
+    row.app_id || row.app_secret || row.app_secret_encrypted || row.base_token || row.base_token_encrypted,
+  );
+  if (configuredRecord) throw new Error("PERSONAL_FEISHU_CREDENTIAL_UNAVAILABLE");
+  return null;
+}
+
 export async function getUserFeishuConfig(userId: string): Promise<FeishuConfig | null> {
   const auth = await import("../auth/server.ts");
   if (!auth.isAuthStorageConfigured()) return null;
   const supabase = auth.getAuthSupabase();
   const { data, error } = await supabase
     .from("user_feishu_connections")
-    .select("user_id,app_id,app_secret,base_token,table_mapping,connection_mode,status")
+    .select("user_id,app_id,app_secret,app_secret_encrypted,base_token,base_token_encrypted,table_mapping,connection_mode,status")
     .eq("user_id", userId)
     .maybeSingle();
 
-  if (error || !data || data.status === "disabled") return null;
-  return connectionToFeishuConfig(data as UserFeishuConnectionRow);
+  if (error) throw new Error("PERSONAL_FEISHU_CONFIG_STORAGE_UNAVAILABLE");
+  if (!data) return null;
+  return resolvePersonalFeishuConfig(data as UserFeishuConnectionRow);
 }
 
 export async function getEffectiveFeishuConfig(): Promise<EffectiveFeishuConfig> {

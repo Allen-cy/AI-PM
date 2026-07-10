@@ -1,4 +1,3 @@
-import { DEFAULT_DASHBOARD_DATA } from "@/features/dashboard/normalizer";
 import { loadDashboardFromFeishu } from "@/features/dashboard/feishu";
 import { getEffectiveFeishuConfig } from "@/features/feishu/user-config";
 import { buildFinanceCockpit } from "@/features/finance/cockpit";
@@ -25,16 +24,15 @@ export async function GET(): Promise<Response> {
   }
 
   if (!effective.config) {
-    const cockpit = buildFinanceCockpit(DEFAULT_DASHBOARD_DATA);
     return Response.json({
       status: "not_configured",
       source: effective.source,
-      detail: effective.setupHint,
+      code: "FINANCE_DATA_SOURCE_UNAVAILABLE",
+      detail: effective.setupHint || "请先配置飞书项目台账。",
       lark_cli_hint: effective.larkCliHint,
-      cockpit,
       request_id: requestId,
     }, {
-      status: 200,
+      status: 503,
       headers: { "Cache-Control": "no-store", "X-Request-Id": requestId },
     });
   }
@@ -83,14 +81,12 @@ export async function GET(): Promise<Response> {
     }, {
       headers: { "Cache-Control": "no-store", "X-Request-Id": requestId },
     });
-  } catch (error) {
-    const cockpit = buildFinanceCockpit(DEFAULT_DASHBOARD_DATA);
+  } catch {
     return Response.json({
       status: "error",
       source: effective.source,
-      code: "FINANCE_COCKPIT_FAILED",
-      detail: error instanceof Error ? error.message : "unknown",
-      cockpit,
+      code: "FINANCE_DATA_SOURCE_UNAVAILABLE",
+      detail: "飞书项目台账读取失败，本次不会使用演示数据生成经营驾驶舱。",
       request_id: requestId,
     }, {
       status: 503,
