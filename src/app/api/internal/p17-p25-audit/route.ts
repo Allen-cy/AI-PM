@@ -4,6 +4,7 @@ import { verifyPassword } from "@/features/auth/password";
 import { isReasonablePhone, isValidEmail, normalizeEmail, normalizePhone } from "@/features/auth/validation";
 import { readFeishuConfig } from "@/features/feishu/config";
 import { FeishuBaseClient } from "@/features/feishu/client";
+import { listBusinessRoleAssignments } from "@/features/operating-model/persistence";
 
 export const runtime = "nodejs";
 
@@ -139,6 +140,7 @@ async function checkAdmin() {
   const passwordMatches = Boolean(data?.password_hash && verifyPassword(password, data.password_hash));
   let businessRoleCount: number | null = null;
   let businessRoleError: { code: string | null; message: string } | null = null;
+  let businessRoleLoader: { status: string; count: number | null; warning: string | null } | null = null;
   if (data?.id) {
     const roleCheck = await getAuthSupabase()
       .from("user_business_roles")
@@ -151,6 +153,12 @@ async function checkAdmin() {
         message: safeErrorMessage(roleCheck.error) || "unknown role storage error",
       };
     }
+    const loader = await listBusinessRoleAssignments(data.id);
+    businessRoleLoader = {
+      status: loader.status,
+      count: loader.data?.length ?? null,
+      warning: loader.warning ? loader.warning.slice(0, 500) : null,
+    };
   }
   return {
     ok: !error && Boolean(data) && data?.status === "active" && passwordMatches,
@@ -160,6 +168,7 @@ async function checkAdmin() {
     passwordMatches,
     businessRoleCount,
     businessRoleError,
+    businessRoleLoader,
     errorCode: error?.code || null,
   };
 }
@@ -199,6 +208,13 @@ async function checkStorageCompatibility() {
       required: true,
     },
     {
+      key: "user_business_roles_filtered_columns",
+      table: "user_business_roles",
+      select: "id,user_id,business_role,org_id,subject_scope,subject_id,status,valid_from,valid_until,delegated_from_user_id",
+      required: true,
+      userId: "admin",
+    },
+    {
       key: "user_feishu_connections_base_columns",
       table: "user_feishu_connections",
       select: "app_id,app_secret,app_secret_encrypted,app_secret_last4,base_token,base_token_encrypted,base_token_last4,table_mapping,status",
@@ -213,10 +229,19 @@ async function checkStorageCompatibility() {
   ] as const;
   const results = [];
   for (const item of checks) {
-    const { error, status } = await supabase
-      .from(item.table)
-      .select(item.select, { head: true })
-      .limit(1);
+    let query = supabase.from(item.table).select(item.select, { head: true }).limit(1);
+    if ("userId" in item && item.userId === "admin") {
+      const email = normalizeEmail(process.env.ADMIN_EMAIL || "");
+      const phone = normalizePhone(process.env.ADMIN_PHONE || "");
+      const { data: adminUser } = await supabase
+        .from("app_users")
+        .select("id")
+        .or(`email.eq.${email},phone.eq.${phone}`)
+        .eq("role", "admin")
+        .maybeSingle();
+      if (adminUser?.id) query = query.eq("user_id", adminUser.id);
+    }
+    const { error, status } = await query;
     results.push({
       key: item.key,
       table: item.table,
