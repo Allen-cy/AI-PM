@@ -149,6 +149,7 @@ supabase/migrations/20260710220000_p25_golden_chain_execution.sql
 - `supabase-v5349-feishu-action-confirmations.sql` 必须早于 P21 SLA 升级执行，否则不能生成飞书待确认队列。
 - `supabase/migrations/20260710071709_p25_encrypt_user_credentials.sql` 执行后，应用需要 `CREDENTIAL_ENCRYPTION_KEY` 或 `AUTH_SESSION_SECRET` 才能读写用户密钥。
 - P21 hardening 会使用 `pgcrypto` 的 `digest`，Supabase 中必须允许 `pgcrypto` extension；本地 PGlite 干跑使用 stub 替代。
+- Vercel Hobby 计划只允许每日 Cron；`/api/cron/decision-sla` 当前部署配置为每日一次。若需要 15 分钟级 SLA，请使用外部调度器携带 `CRON_SECRET` 调用同一 API。
 
 ## 5. 环境变量
 

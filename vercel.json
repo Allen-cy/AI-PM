@@ -10,7 +10,7 @@
     },
     {
       "path": "/api/cron/decision-sla",
-      "schedule": "*/15 * * * *"
+      "schedule": "25 0 * * *"
     }
   ]
 }
