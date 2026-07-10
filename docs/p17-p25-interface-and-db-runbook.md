@@ -71,8 +71,9 @@
 | `/api/decisions` | GET/POST | 决策包列表和创建 |
 | `/api/decisions/[id]` | GET/POST | 决策动作、证据、回执、复核 |
 | `/api/decisions/committees` | GET/POST | 决策委员会创建和成员绑定 |
-| `/api/cron/decision-sla` | POST | 决策SLA升级，仅生成个人飞书待确认队列 |
-| `/api/cron/evidence-expiry` | POST | 证据过期恢复与重开 |
+| `/api/cron/decision-sla` | GET | 决策SLA升级，仅生成个人飞书待确认队列；需要 `Authorization: Bearer <CRON_SECRET>` |
+| `/api/cron/evidence-expiry` | GET | 证据过期恢复与重开；需要 `Authorization: Bearer <CRON_SECRET>` |
+| `/api/cron/operating-calendar` | GET | 运营日历物化；需要 `Authorization: Bearer <CRON_SECRET>` |
 
 ### P22-P25 业财、AI、知识与验收
 
@@ -149,7 +150,7 @@ supabase/migrations/20260710220000_p25_golden_chain_execution.sql
 - `supabase-v5349-feishu-action-confirmations.sql` 必须早于 P21 SLA 升级执行，否则不能生成飞书待确认队列。
 - `supabase/migrations/20260710071709_p25_encrypt_user_credentials.sql` 执行后，应用需要 `CREDENTIAL_ENCRYPTION_KEY` 或 `AUTH_SESSION_SECRET` 才能读写用户密钥。
 - P21 hardening 会使用 `pgcrypto` 的 `digest`，Supabase 中必须允许 `pgcrypto` extension；本地 PGlite 干跑使用 stub 替代。
-- Vercel Hobby 计划只允许每日 Cron；`/api/cron/decision-sla` 当前部署配置为每日一次。若需要 15 分钟级 SLA，请使用外部调度器携带 `CRON_SECRET` 调用同一 API。
+- Vercel Hobby 计划只允许每日 Cron；`/api/cron/decision-sla` 当前部署配置为每日一次。若需要 15 分钟级 SLA，请使用外部调度器以 GET 方式携带 `Authorization: Bearer <CRON_SECRET>` 调用同一 API。
 
 ## 5. 环境变量
 
@@ -237,3 +238,25 @@ SQL干跑
    - 决策中心能创建/推进决策包，SLA cron 不直接发送飞书，只生成确认队列。
    - 运营中心黄金链能创建验收 run，并按步骤推进。
 3. 飞书写入动作必须全部经过待确认队列；不得静默写入业务表。
+
+## 8. 2026-07-11 追加完成审计
+
+详见 `docs/p17-p25-completion-audit-2026-07-11.md`。
+
+追加验证结果：
+
+- `npm run lint -- --quiet`：通过。
+- `npx tsc --noEmit --pretty false`：通过。
+- `npm run build`：通过，生成 174 个路由。
+- `npx --yes tsx --test --test-concurrency=1 tests/*.test.ts`：294/294 通过。
+- Vercel Production 关键环境变量名存在。
+- 生产部署 `dpl_487W8e15yLu1wbw2gFu2zAwRumaT` 状态 Ready。
+- 生产匿名访问：`/` 跳转登录页，`/auth/login` 返回 200，`/api/auth/me` 返回 401。
+- P17-P25 关键 API 未登录均返回 401。
+- Cron 路由使用 GET 且未授权均返回 401。
+
+仍未被本会话证明：
+
+- Supabase Production 表/函数实际落库状态。Supabase MCP 当前无权限，本地和临时拉取环境没有可用密钥值。
+- 真实管理员登录态业务冒烟。
+- 真实飞书写回与真实业务数据闭环。
