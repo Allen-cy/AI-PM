@@ -192,6 +192,55 @@ supabase/migrations/20260711102000_p17_p25_production_repair.sql
 
 执行该 SQL 后，必须重新跑 `/api/internal/p17-p25-audit`；只有审计返回 `200 passed`，才能把 P17-P25 判定为生产闭环完成。
 
+## 6. 2026-07-11 v6.0.9 追加诊断
+
+v6.0.9 已完成发布与生产部署：
+
+- Release：`https://github.com/Allen-cy/AI-PM/releases/tag/v6.0.9`
+- Production 部署：`dpl_2nMA7jXbgUQV91yLH7h6gvG5RJqL`
+- 域名：`https://pmai.chunyu2026.qzz.io`
+
+本地验证：
+
+```text
+npm run lint -- --quiet：通过
+npx tsc --noEmit --pretty false：通过
+npm run build：通过，生成 175 个路由
+```
+
+v6.0.8 已执行完整测试：
+
+```text
+npx --yes tsx --test --test-concurrency=1 tests/*.test.ts：294/294 通过
+```
+
+生产审计结论：
+
+- `user_business_roles_required_columns`：通过。
+- `user_business_roles_filtered_columns`：通过。
+- 但真实业务路径 `listBusinessRoleAssignments` 仍返回 `not_configured`。
+- 具体错误仍是：`Could not find the table 'public.user_business_roles' in the schema cache`。
+- `/api/context/current` 因此仍返回 `P17_STORAGE_NOT_CONFIGURED`。
+- `/api/user/feishu-connection` 已返回 200。
+- `user_feishu_connections` 加密/通知字段检查仍未通过。
+
+判断：
+
+这不是 Vercel 版本未部署，也不是登录失败。生产域名已指向 v6.0.9。剩余问题集中在 Supabase PostgREST schema cache 与 `user_feishu_connections` 缺字段，必须执行生产修复 SQL。
+
+当前本机会话无法代替执行：
+
+- Supabase MCP 返回无权限。
+- `npx supabase projects list` 返回 `Access token not provided`，本机没有 `SUPABASE_ACCESS_TOKEN`。
+
+仍需执行：
+
+```text
+supabase/migrations/20260711102000_p17_p25_production_repair.sql
+```
+
+执行后重新跑 `/api/internal/p17-p25-audit`，审计必须返回 `200 passed`。
+
 验收标准：所有 `exists` 都必须为 `true`。如果有 `false`，先补执行对应 SQL，再做登录态验收。
 
 ## 5. 登录态线上冒烟清单

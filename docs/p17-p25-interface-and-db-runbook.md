@@ -315,3 +315,28 @@ Header: x-audit-token: <P17P25_AUDIT_TOKEN>
 - `/api/user/feishu-connection` 返回 200。
 - `storageCompatibility.user_feishu_connections_base_columns` 通过。
 - 如通知字段已补齐，`storageCompatibility.user_feishu_connections_notification_columns` 也通过。
+
+## 10. 2026-07-11 v6.0.9 生产诊断结果
+
+v6.0.9 已发布并部署到 Production：
+
+- Release：`https://github.com/Allen-cy/AI-PM/releases/tag/v6.0.9`
+- Production 部署：`dpl_2nMA7jXbgUQV91yLH7h6gvG5RJqL`
+
+新增诊断证明：
+
+- `user_business_roles` 的表结构探测和按管理员过滤的 `HEAD` 探测均通过。
+- 真实数据读取路径 `listBusinessRoleAssignments` 仍因 PostgREST schema cache 返回 `not_configured`。
+- `/api/context/current` 仍返回 `P17_STORAGE_NOT_CONFIGURED`。
+- `/api/user/feishu-connection` 已恢复 200。
+- `user_feishu_connections` 仍缺当前版本要求的加密/通知字段。
+
+本机不能直接执行 Supabase 修复：
+
+- Supabase MCP：无权限。
+- Supabase CLI：没有 `SUPABASE_ACCESS_TOKEN`。
+
+下一步只能二选一：
+
+1. 在 Supabase SQL Editor 手动执行 `supabase/migrations/20260711102000_p17_p25_production_repair.sql`。
+2. 提供可用的 Supabase access token，由本机 `npx supabase` 执行迁移。
