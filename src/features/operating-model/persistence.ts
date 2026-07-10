@@ -153,9 +153,10 @@ export async function listBusinessRoleAssignments(userId: string): Promise<Persi
     .select("*")
     .eq("user_id", userId);
   if (error) {
+    const isMissing = missing(error.message);
     return {
-      status: missing(error.message) ? "not_configured" : "failed",
-      warning: missing(error.message) ? "请先执行P17/S1数据库迁移。" : error.message,
+      status: isMissing ? "not_configured" : "failed",
+      warning: isMissing ? `请先执行P17/S1数据库迁移。原始错误：${error.message}` : error.message,
     };
   }
   return { status: "succeeded", data: (data ?? []).map(row => mapBusinessRoleAssignment(row as Record<string, unknown>)) };

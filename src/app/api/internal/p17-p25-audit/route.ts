@@ -65,6 +65,25 @@ function authorized(request: Request): boolean {
   return left.length === right.length && timingSafeEqual(left, right);
 }
 
+function safeErrorMessage(error: unknown): string | null {
+  if (!error) return null;
+  if (typeof error === "object" && "message" in error && typeof (error as { message?: unknown }).message === "string") {
+    return (error as { message: string }).message;
+  }
+  try {
+    const serialized = JSON.stringify(error);
+    return serialized ? serialized.slice(0, 800) : String(error);
+  } catch {
+    return String(error).slice(0, 800);
+  }
+}
+
+function safeErrorCode(error: unknown): string | null {
+  if (!error || typeof error !== "object") return null;
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "string" ? code : null;
+}
+
 async function checkTables() {
   if (!isAuthStorageConfigured()) {
     return {
@@ -85,7 +104,7 @@ async function checkTables() {
       table,
       ok: !error,
       status: status ?? (error ? 500 : 200),
-      code: error?.code || null,
+      code: safeErrorCode(error),
     });
   }
   const failed = results.filter(item => !item.ok);
@@ -128,8 +147,8 @@ async function checkAdmin() {
     businessRoleCount = roleCheck.count ?? null;
     if (roleCheck.error) {
       businessRoleError = {
-        code: roleCheck.error.code || null,
-        message: roleCheck.error.message,
+        code: safeErrorCode(roleCheck.error),
+        message: safeErrorMessage(roleCheck.error) || "unknown role storage error",
       };
     }
   }
@@ -204,8 +223,8 @@ async function checkStorageCompatibility() {
       required: item.required,
       ok: !error,
       status: status ?? (error ? 500 : 200),
-      code: error?.code || null,
-      message: error?.message || null,
+      code: safeErrorCode(error),
+      message: safeErrorMessage(error),
     });
   }
   return {

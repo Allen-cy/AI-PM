@@ -25,8 +25,9 @@ const tableLabels: Record<FeishuTableKey, string> = {
   syncLedger: "同步流水表ID",
 };
 
-const baseConnectionSelect = "app_id,app_secret,app_secret_encrypted,app_secret_last4,base_token,base_token_encrypted,base_token_last4,table_mapping,status";
-const connectionSelectWithNotification = `${baseConnectionSelect},notification_receive_id_type,notification_receive_id`;
+const encryptedConnectionSelect = "app_id,app_secret,app_secret_encrypted,app_secret_last4,base_token,base_token_encrypted,base_token_last4,table_mapping,status";
+const legacyConnectionSelect = "app_id,app_secret,base_token,table_mapping,status";
+const connectionSelectWithNotification = `${encryptedConnectionSelect},notification_receive_id_type,notification_receive_id`;
 
 function isNotificationColumnMissing(message: string | undefined): boolean {
   return /notification_receive_id|schema cache|Could not find.*column/i.test(message || "");
@@ -88,19 +89,32 @@ async function readConnection(supabase: ReturnType<typeof getAuthSupabase>, user
     .eq("user_id", userId)
     .maybeSingle();
   if (!preferred.error) return { data: preferred.data, error: null, notificationStorageAvailable: true };
-  if (!isNotificationColumnMissing(preferred.error.message)) return { data: null, error: preferred.error, notificationStorageAvailable: true };
-  const fallback = await supabase
+  const encryptedFallback = await supabase
     .from("user_feishu_connections")
-    .select(baseConnectionSelect)
+    .select(encryptedConnectionSelect)
     .eq("user_id", userId)
     .maybeSingle();
-  return { data: fallback.data, error: fallback.error, notificationStorageAvailable: false };
+  if (!encryptedFallback.error) return { data: encryptedFallback.data, error: null, notificationStorageAvailable: false };
+  const legacyFallback = await supabase
+    .from("user_feishu_connections")
+    .select(legacyConnectionSelect)
+    .eq("user_id", userId)
+    .maybeSingle();
+  return { data: legacyFallback.data, error: legacyFallback.error, notificationStorageAvailable: false };
 }
 
 async function notificationColumnsAvailable(supabase: ReturnType<typeof getAuthSupabase>): Promise<boolean> {
   const { error } = await supabase
     .from("user_feishu_connections")
     .select("notification_receive_id_type,notification_receive_id", { head: true })
+    .limit(1);
+  return !error;
+}
+
+async function encryptedColumnsAvailable(supabase: ReturnType<typeof getAuthSupabase>): Promise<boolean> {
+  const { error } = await supabase
+    .from("user_feishu_connections")
+    .select("app_secret_encrypted,app_secret_last4,app_secret_key_version,base_token_encrypted,base_token_last4,base_token_key_version", { head: true })
     .limit(1);
   return !error;
 }
@@ -151,6 +165,10 @@ export async function PUT(request: Request) {
 
   const supabase = getAuthSupabase();
   const canStoreNotification = await notificationColumnsAvailable(supabase);
+  const canStoreEncryptedCredentials = await encryptedColumnsAvailable(supabase);
+  if (!canStoreEncryptedCredentials) {
+    return NextResponse.json({ error: "FEISHU_ENCRYPTED_STORAGE_NOT_CONFIGURED", detail: "请先执行 P25 用户敏感配置加密迁移，补齐 user_feishu_connections 的加密凭据字段。" }, { status: 503 });
+  }
   if (!canStoreNotification && (notificationReceiveIdType || notificationReceiveId)) {
     return NextResponse.json({ error: "FEISHU_NOTIFICATION_STORAGE_NOT_CONFIGURED", detail: "请先执行 P21 决策治理迁移，补齐 user_feishu_connections 的通知接收字段。" }, { status: 503 });
   }
