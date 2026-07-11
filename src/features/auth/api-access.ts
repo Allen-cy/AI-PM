@@ -13,6 +13,7 @@ const PUBLIC_REQUEST_PATHS: readonly string[] = [
   "/api/cron/decision-sla",
   "/api/internal/p17-p25-audit",
   "/api/rag/health",
+  "/api/version",
 ];
 
 export function isPublicRequestPath(pathname: string): boolean {

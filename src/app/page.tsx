@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { APP_VERSION_INFO } from "@/lib/app-version";
 
 const PHASE_MODULES = [
   {
@@ -396,7 +397,12 @@ export default function Home() {
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <span style={{ fontSize: "1.4rem" }}>🏗️</span>
           <span style={{ fontWeight: 800, fontSize: "1.05rem" }}>AI项目管理助手</span>
-          <span className="tag tag-blue">V5.3.21</span>
+          <span
+            className="tag tag-blue"
+            title={`代码版本 ${APP_VERSION_INFO.version}，构建提交 ${APP_VERSION_INFO.commit}`}
+          >
+            {APP_VERSION_INFO.label}
+          </span>
         </div>
         <div style={{ display: "flex", gap: 16, fontSize: "0.8rem", color: "var(--text2)", alignItems: "center" }}>
           <span>作者：柴春宇</span>
@@ -581,7 +587,7 @@ export default function Home() {
         fontSize: "0.75rem",
         background: "var(--surface)",
       }}>
-        AI项目管理助手 V5.3.0 · 基于 PMBOK 7th 与 PRINCE2 2017 · 飞书底座 + Vercel AI增强层混合架构
+        AI项目管理助手 {APP_VERSION_INFO.label} · 基于 PMBOK 7th 与 PRINCE2 2017 · 飞书底座 + Vercel AI增强层混合架构
       </footer>
     </div>
   );

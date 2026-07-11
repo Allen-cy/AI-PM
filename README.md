@@ -35,6 +35,12 @@ The easiest way to deploy your Next.js app is to use the [Vercel Platform](https
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
 
+## AI-PMO System V6.0.10
+
+V6.0.10 收口版本与发布治理：将 P17-P25 经营操作系统正式并入 `main`，并以 `package.json` 作为唯一产品版本源。首页页头与页脚不再维护独立的硬编码版号，构建时自动注入版本号和 Git 短提交号，统一显示为 `V6.0.10 · <commit>`。
+
+本版本新增匿名只读的 `GET /api/version`，用于验证线上版本、构建提交、Vercel 环境和来源分支；接口使用 `no-store`，不返回任何密钥、账号或环境变量值。发布门禁会同时校验 `package.json`、`package-lock.json`、首页和版本 API 的一致性，防止再出现代码版本、文档版本和页面版号相互漂移。
+
 ## AI-PMO System V4.0
 
 V4.0 将知识问答从演示 Mock 切换为真实、可追溯的项目管理知识快照。首批语料来自 AI-PMO-SYS 中10篇 `reviewed` 综合知识页。

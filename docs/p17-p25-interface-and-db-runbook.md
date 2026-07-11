@@ -2,7 +2,7 @@
 
 日期：2026-07-11
 
-当前代码版本：6.0.0
+当前代码版本：6.0.10
 
 状态：本地质量门已通过；Vercel Production 环境变量补齐、部署、Git Tag 和 GitHub Release 已完成。生产完成仍依赖 Supabase Production 执行/确认 SQL，以及使用真实管理员账号完成线上飞书/真实业务数据冒烟。
 
@@ -340,3 +340,23 @@ v6.0.9 已发布并部署到 Production：
 
 1. 在 Supabase SQL Editor 手动执行 `supabase/migrations/20260711102000_p17_p25_production_repair.sql`。
 2. 提供可用的 Supabase access token，由本机 `npx supabase` 执行迁移。
+
+## 11. 2026-07-11 v6.0.10 版本与发布治理
+
+V6.0.10 将 P17-P25 分支收口到正式 `main` 发布链，并统一了以下版本证据：
+
+1. `package.json` 是唯一产品版本源，`package-lock.json` 只作为机械同步副本。
+2. `next.config.ts` 在构建阶段注入产品版本和 Vercel Git 提交号，本地构建使用当前 Git HEAD 兜底。
+3. 首页页头与页脚共用 `APP_VERSION_INFO.label`，不再存在 `V5.3.21` / `V5.3.0` 硬编码。
+4. `GET /api/version` 匿名只读、`Cache-Control: no-store`，返回版本、短提交号、环境和来源分支，不包含密钥或账号信息。
+5. `tests/app-version.test.ts` 固化了 package/lockfile/首页/API/匿名访问五项一致性门禁。
+
+正式发布验收时必须满足：
+
+```text
+origin/main
+= v6.0.10^{}
+= GitHub Release v6.0.10
+= Vercel Production githubCommitSha
+= /api/version.commit 对应的完整提交
+```
