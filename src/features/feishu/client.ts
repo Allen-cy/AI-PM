@@ -23,6 +23,7 @@ interface RecordSearchResponse {
     items?: Array<{
       record_id: string;
       fields?: Record<string, unknown>;
+      last_modified_time?: string | number;
     }>;
   };
 }
@@ -42,6 +43,7 @@ interface RecordListResponse {
     items?: Array<{
       record_id: string;
       fields?: Record<string, unknown>;
+      last_modified_time?: string | number;
     }>;
     page_token?: string;
     has_more?: boolean;
@@ -106,6 +108,12 @@ export interface FeishuRecordItem {
   updatedAt?: string;
 }
 
+export interface FeishuRecordPage {
+  records: FeishuRecordItem[];
+  nextPageToken?: string;
+  hasMore: boolean;
+}
+
 export interface FeishuFieldItem {
   fieldId: string;
   name: string;
@@ -145,6 +153,12 @@ function toFeishuTimestamp(value: string | number | Date): number {
     throw new FeishuApiError('Invalid datetime value for Feishu Base.', 'FEISHU_INVALID_DATETIME');
   }
   return date.getTime();
+}
+
+function fromFeishuTimestamp(value: string | number | undefined): string | undefined {
+  const timestamp = Number(value);
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return undefined;
+  return new Date(timestamp < 100000000000 ? timestamp * 1000 : timestamp).toISOString();
 }
 
 function removeEmptyFields(fields: Record<string, unknown>): Record<string, unknown> {
@@ -288,38 +302,58 @@ export class FeishuBaseClient {
   }
 
   async listRecords(tableKey: FeishuTableKey, limit = 500): Promise<FeishuRecordItem[]> {
+    const output: FeishuRecordItem[] = [];
+    let pageToken: string | undefined;
+    do {
+      const page = await this.listRecordsPage(tableKey, {
+        pageToken,
+        pageSize: Math.min(100, Math.max(1, limit - output.length)),
+      });
+      output.push(...page.records);
+      pageToken = page.hasMore ? page.nextPageToken : undefined;
+    } while (pageToken && output.length < limit);
+
+    return output.slice(0, limit);
+  }
+
+  async listRecordsPage(
+    tableKey: FeishuTableKey,
+    options: { pageToken?: string; pageSize?: number } = {},
+  ): Promise<FeishuRecordPage> {
     const tableId = this.config.tables[tableKey];
     if (!tableId) {
       throw new FeishuApiError(`Feishu table ${tableKey} is not configured.`, 'FEISHU_TABLE_NOT_CONFIGURED');
     }
+    const pageSize = options.pageSize ?? 100;
+    if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) {
+      throw new FeishuApiError('Feishu record page size must be between 1 and 100.', 'FEISHU_PAGE_SIZE_INVALID');
+    }
 
     const token = await this.getTenantToken();
-    const output: FeishuRecordItem[] = [];
-    let pageToken: string | undefined;
-    do {
-      const url = new URL(
-        `https://open.feishu.cn/open-apis/bitable/v1/apps/${encodeURIComponent(this.config.baseToken)}/tables/${encodeURIComponent(tableId)}/records`,
-      );
-      url.searchParams.set('page_size', String(Math.min(100, Math.max(1, limit - output.length))));
-      if (pageToken) url.searchParams.set('page_token', pageToken);
-      const response = await this.fetcher(url, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!response.ok) {
-        throw new FeishuApiError('Feishu Base record list request failed.', 'FEISHU_RECORD_LIST_HTTP_ERROR');
-      }
-      const payload = await response.json() as RecordListResponse;
-      if (payload.code !== 0) {
-        throw new FeishuApiError('Feishu Base record list was rejected.', `FEISHU_RECORD_LIST_${payload.code}`);
-      }
-      output.push(...(payload.data?.items ?? []).map(item => ({
+    const url = new URL(
+      `https://open.feishu.cn/open-apis/bitable/v1/apps/${encodeURIComponent(this.config.baseToken)}/tables/${encodeURIComponent(tableId)}/records`,
+    );
+    url.searchParams.set('page_size', String(pageSize));
+    if (options.pageToken) url.searchParams.set('page_token', options.pageToken);
+    const response = await this.fetcher(url, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!response.ok) {
+      throw new FeishuApiError('Feishu Base record list request failed.', 'FEISHU_RECORD_LIST_HTTP_ERROR');
+    }
+    const payload = await response.json() as RecordListResponse;
+    if (payload.code !== 0) {
+      throw new FeishuApiError('Feishu Base record list was rejected.', `FEISHU_RECORD_LIST_${payload.code}`);
+    }
+    return {
+      records: (payload.data?.items ?? []).map(item => ({
         recordId: item.record_id,
         fields: item.fields ?? {},
-      })));
-      pageToken = payload.data?.has_more ? payload.data.page_token : undefined;
-    } while (pageToken && output.length < limit);
-
-    return output.slice(0, limit);
+        updatedAt: fromFeishuTimestamp(item.last_modified_time),
+      })),
+      hasMore: payload.data?.has_more === true,
+      nextPageToken: payload.data?.has_more ? payload.data.page_token : undefined,
+    };
   }
 
   async getRecord(tableKey: FeishuTableKey, recordId: string): Promise<FeishuRecordItem> {
@@ -335,8 +369,7 @@ export class FeishuBaseClient {
     const payload = await response.json() as RecordGetResponse;
     const record = payload.data?.record;
     if (payload.code !== 0 || !record) throw new FeishuApiError('Feishu Base record was not found or not accessible.', `FEISHU_RECORD_GET_${payload.code}`);
-    const modified = Number(record.last_modified_time);
-    const updatedAt = Number.isFinite(modified) && modified > 0 ? new Date(modified < 100000000000 ? modified * 1000 : modified).toISOString() : undefined;
+    const updatedAt = fromFeishuTimestamp(record.last_modified_time);
     return { recordId: record.record_id, fields: record.fields ?? {}, updatedAt };
   }
 

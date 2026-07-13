@@ -35,6 +35,14 @@ The easiest way to deploy your Next.js app is to use the [Vercel Platform](https
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
 
+## AI-PMO System V6.2.0
+
+V6.2.0 建立“飞书业务事实源 → Supabase 受治理镜像”的统一真实数据底座。项目、里程碑、任务、风险、合同、回款、成本和同步账本八类数据支持人工触发与每日定时对账，按飞书记录 ID 或项目编号形成稳定 UUID，禁止按项目名称关联；重复请求通过幂等键复用同一批次，源端删除只生成软删除标记，不物理删除历史事实。
+
+新增同步批次、明细账本、隔离队列、游标与里程碑镜像，旧业务表补齐组织、项目、数据分类、来源记录、更新时间、行哈希和版本字段。正式、样例、测试、诊断数据空间强制隔离，字段缺失、项目关联不明或跨空间记录进入治理队列。数据与集成中心可查看数据来源、最近更新时间、质量状态和八类表记录数，并由 PMO/运营角色人工确认后发起完整对账。
+
+本版本新增 `POST/GET /api/integrations/feishu/reconcile` 与 `/api/cron/feishu-reconcile`，统一返回业务上下文、来源、数据分类、生成时间、警告和数据载荷。Supabase 已应用 `20260713210000_v62_feishu_real_data_foundation.sql` 与 `20260713213000_v62_reconcile_trigger_security_fix.sql`；数据库安全审计为 0 项违规。详细契约见 `docs/v62-feishu-real-data-reconcile.md`。
+
 ## AI-PMO System V6.1.0
 
 V6.1.0 建立“安全与数据库治理门禁”：所有应用自有 `public` 表启用 RLS，撤销 `PUBLIC`/`anon`/`authenticated` 业务读写权，并把表、函数、序列、策略和 `service_role` 必需权限纳入自动审计。新建数据库对象默认不再暴露到 Data API，后续 migration 必须显式声明服务端权限。

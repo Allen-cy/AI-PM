@@ -2,9 +2,11 @@
 
 日期：2026-07-11
 
-当前代码版本：6.1.0
+当前代码版本：6.2.0
 
 > V6.1.0 增量 migration 为 `20260711140000_v61_security_gate.sql`、`20260711150000_v61_risk_scope_quarantine.sql`和`20260711160000_v61_issue_action_scope.sql`。旧 P17–P25 migration 已通过对象、字段和约束对账，只标记迁移历史，不重复执行。
+
+> V6.2.0 增量 migration 为 `20260713210000_v62_feishu_real_data_foundation.sql` 与 `20260713213000_v62_reconcile_trigger_security_fix.sql`。八类飞书事实对账接口和运维契约见 `docs/v62-feishu-real-data-reconcile.md`。
 
 状态：本地质量门已通过；Vercel Production 环境变量补齐、部署、Git Tag 和 GitHub Release 已完成。生产完成仍依赖 Supabase Production 执行/确认 SQL，以及使用真实管理员账号完成线上飞书/真实业务数据冒烟。
 

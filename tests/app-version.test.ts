@@ -5,7 +5,7 @@ import { isPublicRequestPath, resolveRequestAccess } from "../src/features/auth/
 
 const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
-test("V6.1.0 release derives browser version metadata from package.json", () => {
+test("V6.2.0 release derives browser version metadata from package.json", () => {
   const packageMetadata = JSON.parse(read("package.json")) as { version: string };
   const packageLock = JSON.parse(read("package-lock.json")) as {
     version: string;
@@ -13,7 +13,7 @@ test("V6.1.0 release derives browser version metadata from package.json", () => 
   };
   const nextConfig = read("next.config.ts");
 
-  assert.equal(packageMetadata.version, "6.1.0");
+  assert.equal(packageMetadata.version, "6.2.0");
   assert.equal(packageLock.version, packageMetadata.version);
   assert.equal(packageLock.packages[""]?.version, packageMetadata.version);
   assert.match(nextConfig, /packageMetadata\.version/);
@@ -36,12 +36,12 @@ test("version resolver normalizes the public version and short commit label", as
   };
 
   assert.deepEqual(resolveAppVersion({
-    NEXT_PUBLIC_APP_VERSION: "6.1.0",
+    NEXT_PUBLIC_APP_VERSION: "6.2.0",
     NEXT_PUBLIC_GIT_COMMIT_SHA: "0123456789abcdef",
   }), {
-    version: "6.1.0",
+    version: "6.2.0",
     commit: "0123456",
-    label: "V6.1.0 · 0123456",
+    label: "V6.2.0 · 0123456",
   });
 
   assert.deepEqual(resolveAppVersion({}), {
@@ -73,12 +73,12 @@ test("homepage and version API consume the shared build label without stale hard
   }), "next");
 });
 
-test("README leads with the V6.1.0 release instead of the V6.0.10 release line", () => {
+test("README leads with the V6.2.0 release instead of V6.1.0", () => {
   const readme = read("README.md");
+  const v620 = readme.indexOf("## AI-PMO System V6.2.0");
   const v610 = readme.indexOf("## AI-PMO System V6.1.0");
-  const v6010 = readme.indexOf("## AI-PMO System V6.0.10");
 
+  assert.notEqual(v620, -1);
   assert.notEqual(v610, -1);
-  assert.notEqual(v6010, -1);
-  assert.ok(v610 < v6010, "V6.1.0 release notes must appear before V6.0.10");
+  assert.ok(v620 < v610, "V6.2.0 release notes must appear before V6.1.0");
 });

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { IntegrationStatusPanel, type IntegrationStatusItem } from "@/components/IntegrationStatusPanel";
+import { loadCurrentBusinessContextSearchParams } from "@/features/operating-model/client-context";
 
 type Snapshot = {
   checked_at: string;
@@ -75,6 +76,50 @@ type SyncLogSnapshot = {
     remediation?: string;
     createdAt: string;
   }>;
+};
+
+type FeishuReconcileSnapshot = {
+  status: string;
+  error?: string;
+  detail?: string;
+  source?: { type?: string; label?: string; mirror?: string };
+  data_class?: string;
+  generated_at?: string;
+  warnings?: string[];
+  data?: {
+    latest_batch?: {
+      id: string;
+      status: string;
+      requested_domains: string[];
+      completed_domains: string[];
+      total_records: number;
+      inserted_records: number;
+      updated_records: number;
+      unchanged_records: number;
+      tombstoned_records: number;
+      quarantined_records: number;
+      failed_records: number;
+      completed_at?: string | null;
+      updated_at?: string | null;
+    } | null;
+    cursors?: Array<{
+      domain: string;
+      source_record_count: number;
+      last_source_updated_at?: string | null;
+      last_succeeded_at?: string | null;
+    }>;
+    quality?: {
+      status: string;
+      pending_quarantine_count: number;
+    };
+    freshness?: {
+      latest_source_updated_at?: string | null;
+      last_succeeded_at?: string | null;
+    };
+    batch_id?: string;
+    counts?: Record<string, number>;
+    domains?: Array<{ domain: string; source_records: number; quarantined: number }>;
+  };
 };
 
 type FeishuActionConfirmationSnapshot = {
@@ -211,6 +256,9 @@ export default function IntegrationCenterPage() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [logs, setLogs] = useState<SyncLogSnapshot | null>(null);
   const [confirmations, setConfirmations] = useState<FeishuActionConfirmationSnapshot | null>(null);
+  const [reconcile, setReconcile] = useState<FeishuReconcileSnapshot | null>(null);
+  const [reconcileBusy, setReconcileBusy] = useState(false);
+  const [reconcileMessage, setReconcileMessage] = useState("");
   const [confirmationBusyId, setConfirmationBusyId] = useState("");
   const [confirmationStatusFilter, setConfirmationStatusFilter] = useState("all");
   const [confirmationSearch, setConfirmationSearch] = useState(() => (
@@ -232,20 +280,27 @@ export default function IntegrationCenterPage() {
     let cancelled = false;
     async function load() {
       try {
-        const [integrationResponse, logsResponse, confirmationsResponse] = await Promise.all([
+        const context = await loadCurrentBusinessContextSearchParams({ preferredRole: "pmo", preferredSubjectScope: "organization" });
+        context.set("business_role", context.get("role") || "pmo");
+        context.delete("role");
+        context.delete("project_id");
+        const [integrationResponse, logsResponse, confirmationsResponse, reconcileResponse] = await Promise.all([
           fetch("/api/operating-system/integrations", { cache: "no-store" }),
           fetch("/api/operating-system/sync-logs", { cache: "no-store" }),
           fetch("/api/integrations/feishu/actions/confirmations?status=all&limit=20", { cache: "no-store" }),
+          fetch(`/api/integrations/feishu/reconcile?${context.toString()}`, { cache: "no-store" }),
         ]);
-        const [integrationData, logsData, confirmationData] = await Promise.all([
+        const [integrationData, logsData, confirmationData, reconcileData] = await Promise.all([
           integrationResponse.json(),
           logsResponse.json(),
           confirmationsResponse.json(),
+          reconcileResponse.json(),
         ]);
         if (!cancelled) {
           setSnapshot(integrationData);
           setLogs(logsData);
           setConfirmations(confirmationData);
+          setReconcile(reconcileData);
           setSelectedConfirmationIds([]);
         }
       } catch {
@@ -257,6 +312,51 @@ export default function IntegrationCenterPage() {
       cancelled = true;
     };
   }, []);
+
+  async function runReconcile() {
+    if (!window.confirm("系统将从飞书八类业务表读取完整快照，与 Supabase 镜像做幂等对账；飞书原记录不会被修改。是否继续？")) return;
+    setReconcileBusy(true);
+    setReconcileMessage("");
+    try {
+      const context = await loadCurrentBusinessContextSearchParams({ preferredRole: "pmo", preferredSubjectScope: "organization" });
+      const idempotencyKey = `manual:${crypto.randomUUID()}`;
+      const response = await fetch("/api/integrations/feishu/reconcile", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          org_id: context.get("org_id"),
+          subject_scope: context.get("subject_scope"),
+          subject_id: context.get("subject_id"),
+          business_role: context.get("role"),
+          data_class: context.get("data_class") || "production",
+          idempotency_key: idempotencyKey,
+          expected_version: 0,
+          source_checkpoint: idempotencyKey,
+          domains: ["project", "milestone", "task", "risk", "contract", "payment", "cost", "syncLedger"],
+        }),
+      });
+      const data = await response.json() as FeishuReconcileSnapshot;
+      if (response.ok) {
+        const refresh = new URLSearchParams({
+          org_id: context.get("org_id") || "",
+          subject_scope: context.get("subject_scope") || "",
+          subject_id: context.get("subject_id") || "",
+          business_role: context.get("role") || "",
+          data_class: context.get("data_class") || "production",
+        });
+        const refreshed = await fetch(`/api/integrations/feishu/reconcile?${refresh.toString()}`, { cache: "no-store" });
+        setReconcile(await refreshed.json());
+        setReconcileMessage("飞书真实数据对账已完成。");
+      } else {
+        setReconcile(data);
+        setReconcileMessage(data.detail || "飞书真实数据对账失败。");
+      }
+    } catch {
+      setReconcileMessage("飞书真实数据对账请求失败，请稍后重试。");
+    } finally {
+      setReconcileBusy(false);
+    }
+  }
 
   async function confirmFeishuAction(item: FeishuActionConfirmationSnapshot["confirmations"][number]) {
     const riskReview = item.riskReview;
@@ -486,6 +586,59 @@ export default function IntegrationCenterPage() {
         ) : (
           <>
             <IntegrationStatusPanel items={statusItems} checkedAt={snapshot.checked_at} />
+
+            <section className="card" style={{ marginBottom: 18, borderColor: reconcile?.data?.quality?.status === "attention" ? "rgba(245,158,11,0.38)" : "var(--border)" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 14, alignItems: "flex-start", flexWrap: "wrap" }}>
+                <div>
+                  <div className="section-title">🔄 飞书真实数据对账</div>
+                  <p style={{ color: "var(--text2)", lineHeight: 1.7, fontSize: "0.84rem", maxWidth: 760 }}>
+                    飞书是业务事实源，Supabase 是稳定镜像、权限、审计与分析底座。对账覆盖项目、里程碑、任务、风险、合同、回款、成本和同步账本，不按项目名称关联。
+                  </p>
+                </div>
+                <button className="btn-primary" type="button" disabled={reconcileBusy} onClick={() => void runReconcile()}>
+                  {reconcileBusy ? "正在对账..." : "立即从飞书对账"}
+                </button>
+              </div>
+              {reconcileMessage && <p style={{ marginTop: 12, color: reconcileMessage.includes("失败") ? "var(--red)" : "var(--accent2)" }}>{reconcileMessage}</p>}
+              {!reconcile ? (
+                <p style={{ color: "var(--text2)", marginTop: 14 }}>正在读取最近对账状态...</p>
+              ) : reconcile.status === "failed" ? (
+                <p style={{ color: "var(--red)", marginTop: 14, lineHeight: 1.7 }}>对账底座尚不可用：{reconcile.detail || reconcile.error || "请检查 V6.2 数据库迁移和业务身份。"}</p>
+              ) : (
+                <div style={{ marginTop: 16, display: "grid", gap: 14 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
+                    {[
+                      ["数据来源", `${reconcile.source?.label || "飞书多维表格"} → ${reconcile.source?.mirror || "Supabase受治理镜像"}`],
+                      ["最近更新时间", reconcile.data?.freshness?.last_succeeded_at ? new Date(reconcile.data.freshness.last_succeeded_at).toLocaleString("zh-CN") : "尚未完成同步"],
+                      ["源数据时间", reconcile.data?.freshness?.latest_source_updated_at ? new Date(reconcile.data.freshness.latest_source_updated_at).toLocaleString("zh-CN") : "飞书未提供"],
+                      ["数据质量", reconcile.data?.quality?.status === "attention" ? `需治理 · ${reconcile.data.quality.pending_quarantine_count} 条隔离` : reconcile.data?.quality?.status === "ready" ? "通过" : "尚未同步"],
+                    ].map(([label, value]) => (
+                      <div key={label} style={{ padding: "12px 14px", borderRadius: 12, background: "var(--bg2)", border: "1px solid var(--border)" }}>
+                        <div style={{ color: "var(--text2)", fontSize: "0.78rem" }}>{label}</div>
+                        <div style={{ marginTop: 6, fontWeight: 700, lineHeight: 1.45 }}>{value}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(126px, 1fr))", gap: 8 }}>
+                    {["project", "milestone", "task", "risk", "contract", "payment", "cost", "syncLedger"].map(domain => {
+                      const cursor = reconcile.data?.cursors?.find(item => item.domain === domain);
+                      const labels: Record<string, string> = { project: "项目", milestone: "里程碑", task: "任务", risk: "风险", contract: "合同", payment: "回款", cost: "成本", syncLedger: "同步账本" };
+                      return (
+                        <div key={domain} style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid var(--border)", textAlign: "center" }}>
+                          <div style={{ fontWeight: 700 }}>{labels[domain]}</div>
+                          <div style={{ color: "var(--text2)", fontSize: "0.78rem", marginTop: 4 }}>{cursor ? `${cursor.source_record_count} 条` : "未同步"}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {reconcile.data?.latest_batch && (
+                    <p style={{ color: "var(--text2)", fontSize: "0.82rem", lineHeight: 1.65 }}>
+                      最近批次：{reconcile.data.latest_batch.status}；读取 {reconcile.data.latest_batch.total_records} 条，新增 {reconcile.data.latest_batch.inserted_records} 条，更新 {reconcile.data.latest_batch.updated_records} 条，未变化 {reconcile.data.latest_batch.unchanged_records} 条，软删除标记 {reconcile.data.latest_batch.tombstoned_records} 条，隔离 {reconcile.data.latest_batch.quarantined_records} 条。
+                    </p>
+                  )}
+                </div>
+              )}
+            </section>
 
             <section className="card" style={{ marginBottom: 18, borderColor: confirmations?.status === "not_configured" ? "rgba(245,158,11,0.38)" : "var(--border)" }}>
               <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap", marginBottom: 12 }}>

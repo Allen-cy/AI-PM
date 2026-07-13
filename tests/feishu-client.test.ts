@@ -92,6 +92,36 @@ test('reports missing required table IDs as degraded', async () => {
   assert.deepEqual(health.missing_required_tables, ['syncLedger']);
 });
 
+test('lists one cursor page with source update timestamps for reconciliation', async () => {
+  const calls: string[] = [];
+  const fakeFetch: typeof fetch = async input => {
+    const url = String(input);
+    calls.push(url);
+    if (url.includes('/auth/')) return Response.json({ code: 0, tenant_access_token: 'tenant-token', expire: 7200 });
+    return Response.json({
+      code: 0,
+      data: {
+        items: [{ record_id: 'rec-project-1', fields: { 项目名称: '真实项目' }, last_modified_time: '1783872000000' }],
+        has_more: true,
+        page_token: 'next-page',
+      },
+    });
+  };
+  const config = readFeishuConfig({
+    FEISHU_APP_ID: 'cli_test', FEISHU_APP_SECRET: 'secret-value', FEISHU_BASE_TOKEN: 'base-token', FEISHU_PROJECT_TABLE_ID: 'tbl-project',
+  });
+  assert.ok(config);
+
+  const page = await new FeishuBaseClient(config, fakeFetch).listRecordsPage('project', { pageToken: 'page-1', pageSize: 80 });
+
+  assert.equal(page.records.length, 1);
+  assert.equal(page.records[0].updatedAt, '2026-07-12T16:00:00.000Z');
+  assert.equal(page.nextPageToken, 'next-page');
+  assert.equal(page.hasMore, true);
+  assert.match(calls.at(-1)!, /page_size=80/);
+  assert.match(calls.at(-1)!, /page_token=page-1/);
+});
+
 test('creates a project ledger record with initiation fields', async () => {
   const calls: Array<{ url: string; init?: RequestInit }> = [];
   const fakeFetch: typeof fetch = async (input, init) => {
