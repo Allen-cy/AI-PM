@@ -39,6 +39,7 @@ test("human workflow owns submission and approval transitions", () => {
   assert.equal(transition("submitted", "approve", "sponsor"), "approved");
   assert.equal(transition("submitted", "request_changes", "pmo"), "changes_requested");
   assert.equal(transition("changes_requested", "revise", "pm"), "draft");
+  assert.equal(transition("approved", "supersede", "pmo"), "superseded");
   assert.throws(() => transition("submitted", "approve", "pm"), /ROLE_FORBIDDEN/);
   assert.throws(() => transition("draft", "approve", "sponsor"), /STATUS_CONFLICT/);
 });
@@ -84,6 +85,8 @@ test("initiation and planning APIs use scoped Supabase transactions and return s
     assert.match(source, /idempotency_key/);
     assert.match(source, /expected_version/);
     assert.match(source, /source:\s*\{[\s\S]*?type:\s*["']supabase["']/);
+    assert.match(source, /data_class:/);
+    assert.match(source, /data:/);
   }
   assert.match(initiation, /save_project_initiation_tx/);
   assert.match(initiation, /save_project_governance_artifact_tx/);
@@ -100,11 +103,13 @@ test("formal initiation and planning pages reload persisted outputs instead of p
   assert.match(initiation, /save_business_case/);
   assert.match(initiation, /save_charter/);
   assert.match(initiation, /transition_artifact/);
+  assert.match(initiation, /supersede/);
   assert.doesNotMatch(initiation, /disabled\s*\n\s*title="章程审批流尚未接入/);
   assert.match(planning, /loadCurrentBusinessContextSearchParams/);
   assert.match(planning, /save_management_plan/);
   assert.match(planning, /save_baseline/);
   assert.match(planning, /transition_baseline/);
+  assert.match(planning, /supersede/);
   assert.doesNotMatch(planning, /项目名称:\s*['"]示例项目['"]/);
   assert.doesNotMatch(planning, /后续可接入飞书或Supabase保存正式基准版本/);
 });

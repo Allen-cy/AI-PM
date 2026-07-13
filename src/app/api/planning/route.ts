@@ -75,7 +75,7 @@ export async function GET(request: Request) {
   if (!project.data) return json({ error: "PROJECT_NOT_FOUND", request_id: requestId }, 404, requestId);
   const updatedAt = [project.data.updated_at, ...(plans.data ?? []).map(item => item.updated_at), ...(baselines.data ?? []).map(item => item.updated_at)].filter(Boolean).sort().at(-1) ?? null;
   return json({
-    status: "succeeded", request_id: requestId,
+    status: "succeeded", data_class: resolved.dataClass, request_id: requestId,
     context: { org_id: resolved.scope.orgId, subject_scope: "project", subject_id: resolved.projectId, project_id: resolved.projectId, business_role: resolved.businessRole, data_class: resolved.dataClass },
     project: project.data, plans: plans.data ?? [], baselines: baselines.data ?? [], decisions: decisions.data ?? [], events: events.data ?? [],
     data: { project: project.data, plans: plans.data ?? [], baselines: baselines.data ?? [] },
@@ -107,7 +107,7 @@ export async function POST(request: Request) {
       const result = await llmComplete("planning", systemPrompt, `项目ID：${resolved.projectId}\n项目名称：${project.data.name}\n项目编码：${project.data.oa_no || "未设置"}\n项目类型：${projectType}\n知识领域：${knowledgeArea}\n用户输入：${JSON.stringify(context)}`, { temperature: 0.2 });
       const match = result.content.match(/\{[\s\S]*\}/);
       const parsed = object(JSON.parse(match?.[0] ?? result.content), "LLM返回结果");
-      return json({ status: "succeeded", request_id: requestId, context: responseContext, data: parsed, ...parsed, model: result.model, source: { type: "llm+supabase", fallback_used: false, data_class: resolved.dataClass }, generated_at: new Date().toISOString(), warnings: ["规划建议必须经用户确认并保存，AI不会代替审批。"] }, 200, requestId);
+      return json({ status: "succeeded", data_class: resolved.dataClass, request_id: requestId, context: responseContext, data: parsed, ...parsed, model: result.model, source: { type: "llm+supabase", fallback_used: false, data_class: resolved.dataClass }, generated_at: new Date().toISOString(), warnings: ["规划建议必须经用户确认并保存，AI不会代替审批。"] }, 200, requestId);
     } catch (error) {
       return json({ error: "PLANNING_AI_FAILED", detail: errorMessage(error), request_id: requestId, source: { type: "llm+supabase", fallback_used: false, data_class: resolved.dataClass } }, 503, requestId);
     }
@@ -125,22 +125,22 @@ export async function POST(request: Request) {
     if (operation === "save_management_plan") {
       const result = await supabase.rpc("save_project_governance_artifact_tx", { ...common, p_artifact_type: "management_plan", p_title: text(body.title, "管理计划标题", 240), p_content: object(body.content, "管理计划内容"), p_source_type: String(body.source_type || "human_input") });
       if (result.error) throw result.error;
-      return json({ status: "succeeded", request_id: requestId, context: responseContext, data: result.data, source: source(resolved.dataClass, String(result.data?.updated_at ?? "")), generated_at: new Date().toISOString(), warnings: [] }, 200, requestId);
+      return json({ status: "succeeded", data_class: resolved.dataClass, request_id: requestId, context: responseContext, data: result.data, source: source(resolved.dataClass, String(result.data?.updated_at ?? "")), generated_at: new Date().toISOString(), warnings: [] }, 200, requestId);
     }
     if (operation === "transition_artifact") {
       const result = await supabase.rpc("transition_project_governance_artifact_tx", { ...common, p_artifact_id: text(body.artifact_id, "管理计划ID", 80), p_operation: text(body.transition, "状态动作", 40), p_comment: String(body.comment ?? "").trim() || null });
       if (result.error) throw result.error;
-      return json({ status: "succeeded", request_id: requestId, context: responseContext, data: result.data, source: source(resolved.dataClass, String(result.data?.updated_at ?? "")), generated_at: new Date().toISOString(), warnings: [] }, 200, requestId);
+      return json({ status: "succeeded", data_class: resolved.dataClass, request_id: requestId, context: responseContext, data: result.data, source: source(resolved.dataClass, String(result.data?.updated_at ?? "")), generated_at: new Date().toISOString(), warnings: [] }, 200, requestId);
     }
     if (operation === "save_baseline") {
       const result = await supabase.rpc("save_project_plan_baseline_tx", { ...common, p_baseline_type: text(body.baseline_type, "基准类型", 30), p_title: text(body.title, "基准标题", 240), p_content: object(body.content, "基准内容"), p_baseline_value: body.baseline_value === null || body.baseline_value === undefined || body.baseline_value === "" ? null : Number(body.baseline_value), p_currency: String(body.currency ?? "").trim() || null, p_effective_date: String(body.effective_date ?? "").trim() || null });
       if (result.error) throw result.error;
-      return json({ status: "succeeded", request_id: requestId, context: responseContext, data: result.data, source: source(resolved.dataClass, String(result.data?.updated_at ?? "")), generated_at: new Date().toISOString(), warnings: [] }, 200, requestId);
+      return json({ status: "succeeded", data_class: resolved.dataClass, request_id: requestId, context: responseContext, data: result.data, source: source(resolved.dataClass, String(result.data?.updated_at ?? "")), generated_at: new Date().toISOString(), warnings: [] }, 200, requestId);
     }
     if (operation === "transition_baseline") {
       const result = await supabase.rpc("transition_project_plan_baseline_tx", { ...common, p_baseline_id: text(body.baseline_id, "基准ID", 80), p_operation: text(body.transition, "状态动作", 40), p_comment: String(body.comment ?? "").trim() || null });
       if (result.error) throw result.error;
-      return json({ status: "succeeded", request_id: requestId, context: responseContext, data: result.data, source: source(resolved.dataClass, String(result.data?.updated_at ?? "")), generated_at: new Date().toISOString(), warnings: [] }, 200, requestId);
+      return json({ status: "succeeded", data_class: resolved.dataClass, request_id: requestId, context: responseContext, data: result.data, source: source(resolved.dataClass, String(result.data?.updated_at ?? "")), generated_at: new Date().toISOString(), warnings: [] }, 200, requestId);
     }
     return json({ error: "PLANNING_OPERATION_INVALID", request_id: requestId }, 400, requestId);
   } catch (error) {

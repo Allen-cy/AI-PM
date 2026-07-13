@@ -513,7 +513,7 @@ export default function PlanningPage() {
                 <button
                   className="btn-primary"
                   onClick={() => void handleCreatePlan()}
-                  disabled={Boolean(saving) || Boolean(managementPlan && !['draft', 'changes_requested', 'rejected'].includes(managementPlan.status))}
+                  disabled={Boolean(saving) || Boolean(managementPlan && !['draft', 'changes_requested', 'rejected', 'superseded'].includes(managementPlan.status))}
                   style={{
                     width: '100%',
                     background: 'var(--purple)',
@@ -543,6 +543,7 @@ export default function PlanningPage() {
                     <button className="btn-secondary" onClick={() => void transitionPlan('request_changes')} disabled={Boolean(saving) || managementPlan?.status !== 'submitted'} style={{ color: 'var(--amber)' }}>退回修改</button>
                     <button className="btn-secondary" onClick={() => void transitionPlan('reject')} disabled={Boolean(saving) || managementPlan?.status !== 'submitted'} style={{ color: 'var(--red)' }}>拒绝</button>
                     <button className="btn-secondary" onClick={() => void transitionPlan('revise')} disabled={Boolean(saving) || !managementPlan || !['changes_requested', 'rejected'].includes(managementPlan.status)}>重新修订</button>
+                    <button className="btn-secondary" onClick={() => void transitionPlan('supersede')} disabled={Boolean(saving) || managementPlan?.status !== 'approved'}>发起新版本</button>
                   </div>
                 </div>
 
@@ -644,7 +645,7 @@ export default function PlanningPage() {
               <button
                 className="btn-secondary"
                 onClick={() => void handleSetBaseline(baselineType)}
-                disabled={Boolean(saving) || Boolean(baselines[baselineType] && !['draft', 'changes_requested', 'rejected'].includes(baselines[baselineType].status))}
+                disabled={Boolean(saving) || Boolean(baselines[baselineType] && !['draft', 'changes_requested', 'rejected', 'superseded'].includes(baselines[baselineType].status))}
                 style={{
                   width: '100%',
                   borderColor: 'var(--purple)',
@@ -660,6 +661,7 @@ export default function PlanningPage() {
                 <button className="btn-secondary" onClick={() => void transitionBaseline(baselineType, 'request_changes')} disabled={Boolean(saving) || baselines[baselineType]?.status !== 'submitted'} style={{ color: 'var(--amber)' }}>退回</button>
                 <button className="btn-secondary" onClick={() => void transitionBaseline(baselineType, 'reject')} disabled={Boolean(saving) || baselines[baselineType]?.status !== 'submitted'} style={{ color: 'var(--red)' }}>拒绝</button>
                 <button className="btn-secondary" onClick={() => void transitionBaseline(baselineType, 'revise')} disabled={Boolean(saving) || !baselines[baselineType] || !['changes_requested', 'rejected'].includes(baselines[baselineType].status)}>修订</button>
+                <button className="btn-secondary" onClick={() => void transitionBaseline(baselineType, 'supersede')} disabled={Boolean(saving) || baselines[baselineType]?.status !== 'approved'}>发起新版本</button>
               </div>
             </div>
           ))}

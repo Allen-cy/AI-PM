@@ -195,7 +195,7 @@ begin
   select * into v_existing from public.project_initiation_records where org_id=p_org_id and project_id=p_project_id and data_class=p_data_class for update;
   if found and v_existing.version <> p_expected_version then raise exception 'VERSION_CONFLICT'; end if;
   if not found and p_expected_version <> 0 then raise exception 'VERSION_CONFLICT'; end if;
-  if found and v_existing.status not in ('draft','changes_requested','rejected') then raise exception 'STATUS_CONFLICT'; end if;
+  if found and v_existing.status not in ('draft','changes_requested','rejected','superseded') then raise exception 'STATUS_CONFLICT'; end if;
   v_project_type := trim(coalesce(p_content->>'project_type',''));
   v_project_level := trim(coalesce(p_content->>'project_level',''));
   v_sponsor := trim(coalesce(p_content->>'sponsor',''));
@@ -254,7 +254,7 @@ begin
   select * into v_existing from public.project_governance_artifacts where org_id=p_org_id and project_id=p_project_id and data_class=p_data_class and artifact_type=p_artifact_type for update;
   if found and v_existing.version <> p_expected_version then raise exception 'VERSION_CONFLICT'; end if;
   if not found and p_expected_version <> 0 then raise exception 'VERSION_CONFLICT'; end if;
-  if found and v_existing.status not in ('draft','changes_requested','rejected') then raise exception 'STATUS_CONFLICT'; end if;
+  if found and v_existing.status not in ('draft','changes_requested','rejected','superseded') then raise exception 'STATUS_CONFLICT'; end if;
   if found then
     update public.project_governance_artifacts set title=trim(p_title),content=p_content,source_type=p_source_type,status='draft',version=version+1,updated_by=p_actor_user_id,updated_at=now()
     where id=v_existing.id returning * into v_result;
@@ -413,6 +413,12 @@ begin
   select * into v_existing from public.project_plan_baselines where id=p_baseline_id and org_id=p_org_id and project_id=p_project_id and data_class=p_data_class for update;
   if not found then raise exception 'BASELINE_NOT_FOUND'; end if;
   if v_existing.version <> p_expected_version then raise exception 'VERSION_CONFLICT'; end if;
+  if p_operation in ('approve','reject','request_changes')
+    and not (p_business_role in ('pmo','sponsor','business_owner') or (v_existing.baseline_type='cost' and p_business_role='finance'))
+    then raise exception 'ROLE_FORBIDDEN';
+  end if;
+  if p_operation in ('submit','revise') and p_business_role not in ('pm','operations','pmo','business_owner','finance') then raise exception 'ROLE_FORBIDDEN'; end if;
+  if p_operation='supersede' and p_business_role not in ('pmo','sponsor','business_owner') then raise exception 'ROLE_FORBIDDEN'; end if;
   if p_operation='submit' and v_existing.status='draft' and p_business_role in ('pm','operations','pmo','business_owner','finance') then v_target:='submitted';
   elsif p_operation in ('approve','reject','request_changes') and v_existing.status='submitted'
     and (p_business_role in ('pmo','sponsor','business_owner') or (v_existing.baseline_type='cost' and p_business_role='finance')) then

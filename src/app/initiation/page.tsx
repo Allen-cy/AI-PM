@@ -452,7 +452,7 @@ export default function InitiationPage() {
     finally { setGovernanceSaving(null); }
   };
 
-  const handleTransitionArtifact = async (kind: "business" | "charter", transition: "submit" | "approve" | "reject" | "request_changes" | "revise") => {
+  const handleTransitionArtifact = async (kind: "business" | "charter", transition: "submit" | "approve" | "reject" | "request_changes" | "revise" | "supersede") => {
     const record = kind === "business" ? businessArtifact : charterArtifact;
     if (!record) { setBusinessEvidenceActionMessage("请先保存正式草稿。"); return; }
     const context = currentGovernanceContext(record.version);
@@ -1105,6 +1105,7 @@ export default function InitiationPage() {
                 <button className="btn-secondary" onClick={() => void handleTransitionArtifact("business", "request_changes")} disabled={Boolean(governanceSaving) || businessArtifact?.status !== "submitted"} style={{ color: "var(--amber)" }}>退回修改</button>
                 <button className="btn-secondary" onClick={() => void handleTransitionArtifact("business", "reject")} disabled={Boolean(governanceSaving) || businessArtifact?.status !== "submitted"} style={{ color: "var(--red)" }}>拒绝</button>
                 <button className="btn-secondary" onClick={() => void handleTransitionArtifact("business", "revise")} disabled={Boolean(governanceSaving) || !businessArtifact || !["changes_requested", "rejected"].includes(businessArtifact.status)}>重新修订</button>
+                <button className="btn-secondary" onClick={() => void handleTransitionArtifact("business", "supersede")} disabled={Boolean(governanceSaving) || businessArtifact?.status !== "approved"}>发起新版本</button>
               </div>
               <div style={{ marginTop: 10, color: "var(--text2)", fontSize: "0.75rem" }}>项目成员负责输入和提交；PMO、发起人或业务负责人负责审批。所有动作均校验角色、版本并写入审计记录。</div>
             </SectionCard>
@@ -1261,6 +1262,7 @@ export default function InitiationPage() {
                   <button className="btn-secondary" onClick={() => void handleTransitionArtifact("charter", "request_changes")} disabled={Boolean(governanceSaving) || charterArtifact?.status !== "submitted"} style={{ color: "var(--amber)" }}>退回修改</button>
                   <button className="btn-secondary" onClick={() => void handleTransitionArtifact("charter", "reject")} disabled={Boolean(governanceSaving) || charterArtifact?.status !== "submitted"} style={{ color: "var(--red)" }}>❌ 拒绝</button>
                   <button className="btn-secondary" onClick={() => void handleTransitionArtifact("charter", "revise")} disabled={Boolean(governanceSaving) || !charterArtifact || !["changes_requested", "rejected"].includes(charterArtifact.status)}>重新修订</button>
+                  <button className="btn-secondary" onClick={() => void handleTransitionArtifact("charter", "supersede")} disabled={Boolean(governanceSaving) || charterArtifact?.status !== "approved"}>发起新版本</button>
                 </div>
                 <div style={{ marginTop: 10, color: "var(--text2)", fontSize: "0.75rem" }}>只有具备当前项目审批角色的用户可签发，前端按钮不会绕过服务端权限。</div>
               </div>
