@@ -15,6 +15,7 @@ import {
 import type { ChangeCreateInput, IssueCreateInput, UnifiedActionCreateInput } from "@/features/issue-change/model";
 import { writeIntegrationSyncLog } from "@/features/operating-system/sync-logs";
 import type { Risk } from "@/lib/risk";
+import { authorizeRiskRequest, type RiskAccessOperation } from "@/features/risk/access";
 
 export const runtime = "nodejs";
 
@@ -42,12 +43,18 @@ function statusCode(status?: string): number {
   return 400;
 }
 
-export async function GET(): Promise<Response> {
+function operationAccessOperation(operation: OperationBody["operation"]): RiskAccessOperation {
+  return operation === "transition_issue" || operation === "transition_change" || operation === "close_action"
+    ? "transition"
+    : "create";
+}
+
+export async function GET(request: Request): Promise<Response> {
   const requestId = crypto.randomUUID();
-  const user = await requireAuthenticatedApiUser();
-  if (!user) return jsonResponse({ request_id: requestId, status: "unauthorized" }, 401, requestId);
-  const result = await listIssueChangeChain();
-  return jsonResponse({ request_id: requestId, ...result }, statusCode(result.status), requestId);
+  const access = await authorizeRiskRequest(request, "read");
+  if (!access.ok) return jsonResponse({ request_id: requestId, status: "forbidden", warning: access.error, detail: access.detail }, access.status, requestId);
+  const result = await listIssueChangeChain(access.scope);
+  return jsonResponse({ request_id: requestId, context: access.scope, data_class: access.scope.dataClass, ...result }, statusCode(result.status), requestId);
 }
 
 export async function POST(request: Request): Promise<Response> {
@@ -68,6 +75,12 @@ export async function POST(request: Request): Promise<Response> {
     return jsonResponse({ request_id: requestId, status: "failed", warning: "请求 JSON 格式错误。" }, 400, requestId);
   }
 
+  const operation = operationAccessOperation(body.operation);
+  const access = await authorizeRiskRequest(request, operation);
+  if (!access.ok) {
+    return jsonResponse({ request_id: requestId, status: "forbidden", warning: access.error, detail: access.detail }, access.status, requestId);
+  }
+
   let result:
     | Awaited<ReturnType<typeof createIssue>>
     | Awaited<ReturnType<typeof createIssueFromRisk>>
@@ -80,43 +93,43 @@ export async function POST(request: Request): Promise<Response> {
   let summary = "P5链路动作已处理。";
 
   if (body.operation === "create_issue") {
-    result = await createIssue(body, user);
+    result = await createIssue(body, user, access.scope);
     eventType = "issue_created";
     summary = result.status === "succeeded" && "issue" in result && result.issue
       ? `问题已创建：${result.issue.projectName} / ${result.issue.title}`
       : "问题创建失败。";
   } else if (body.operation === "escalate_risk") {
-    result = await createIssueFromRisk({ riskId: body.riskId, risk: body.risk, actionItems: body.actionItems }, user);
+    result = await createIssueFromRisk({ riskId: body.riskId, risk: body.risk, actionItems: body.actionItems }, user, access.scope);
     eventType = "risk_escalated_to_issue";
     summary = result.status === "succeeded" && "issue" in result && result.issue
       ? `风险已升级为问题：${result.issue.projectName} / ${result.issue.title}`
       : "风险升级为问题失败。";
   } else if (body.operation === "transition_issue") {
-    result = await transitionIssue(body, user);
+    result = await transitionIssue(body, user, access.scope);
     eventType = "issue_transition";
     summary = result.status === "succeeded" && "issue" in result && result.issue
       ? `问题已流转：${result.issue.projectName} / ${result.issue.title} / ${result.issue.status}`
       : "问题流转失败。";
   } else if (body.operation === "create_change") {
-    result = await createChange(body, user);
+    result = await createChange(body, user, access.scope);
     eventType = "change_created";
     summary = result.status === "succeeded" && "change" in result && result.change
       ? `变更已创建：${result.change.projectName} / ${result.change.title}`
       : "变更创建失败。";
   } else if (body.operation === "transition_change") {
-    result = await transitionChange(body, user);
+    result = await transitionChange(body, user, access.scope);
     eventType = "change_transition";
     summary = result.status === "succeeded" && "change" in result && result.change
       ? `变更已流转：${result.change.projectName} / ${result.change.title} / ${result.change.status}`
       : "变更流转失败。";
   } else if (body.operation === "close_action") {
-    result = await closeUnifiedAction(body, user);
+    result = await closeUnifiedAction(body, user, access.scope);
     eventType = "action_closed";
     summary = result.status === "succeeded" && "action" in result && result.action
       ? `行动项已关闭：${result.action.title}`
       : "行动项关闭失败。";
   } else if (body.operation === "create_action") {
-    result = await createUnifiedAction(body, user);
+    result = await createUnifiedAction(body, user, access.scope);
     eventType = "ai_suggestion_action_created";
     summary = result.status === "succeeded" && "action" in result && result.action
       ? `AI建议已转行动项：${result.action.title}`
@@ -138,5 +151,5 @@ export async function POST(request: Request): Promise<Response> {
     });
   }
 
-  return jsonResponse({ request_id: requestId, ...result }, statusCode(result.status), requestId);
+  return jsonResponse({ request_id: requestId, context: access.scope, data_class: access.scope.dataClass, ...result }, statusCode(result.status), requestId);
 }

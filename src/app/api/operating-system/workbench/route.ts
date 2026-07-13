@@ -38,7 +38,11 @@ export async function GET(request: Request): Promise<Response> {
     externalProjectCodes: mappings.map(item => item.externalProjectCode).filter((value): value is string => Boolean(value)),
     dataClass: requestedDataClass,
   };
-  const followupResult = await listRiskRetrospectiveGovernanceFollowups(80);
+  const followupResult = await listRiskRetrospectiveGovernanceFollowups(80, {
+    orgId: context.orgId,
+    dataClass: requestedDataClass,
+    projectIds: businessScope.canonicalProjectIds,
+  });
   if (!effective.config) {
     return Response.json({
       status: "not_configured",

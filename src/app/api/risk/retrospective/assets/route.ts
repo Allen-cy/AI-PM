@@ -1,4 +1,5 @@
 import { getCurrentUser } from "@/features/auth/server";
+import { authorizeRiskRequest } from "@/features/risk/access";
 import {
   buildRiskRetrospectiveAssetDuplicateWarnings,
   confirmRiskRetrospectiveAsset,
@@ -26,9 +27,11 @@ function isKnownStatus(status: unknown): status is RiskRetrospectiveAssetStatus 
 
 export async function GET(request: Request): Promise<Response> {
   const requestId = crypto.randomUUID();
+  const access = await authorizeRiskRequest(request, "read");
+  if (!access.ok) return jsonResponse({ request_id: requestId, error: access.error, detail: access.detail }, access.status, requestId);
   const url = new URL(request.url);
   const status = url.searchParams.get("status") as RiskRetrospectiveAssetStatus | "all" | null;
-  const result = await listRiskRetrospectiveAssets(status || "all");
+  const result = await listRiskRetrospectiveAssets(status || "all", 50, access.scope);
   return jsonResponse({
     request_id: requestId,
     status: result.status,
@@ -40,11 +43,6 @@ export async function GET(request: Request): Promise<Response> {
 
 export async function POST(request: Request): Promise<Response> {
   const requestId = crypto.randomUUID();
-  const user = await getCurrentUser();
-  if (process.env.AUTH_REQUIRED === "true" && !user) {
-    return jsonResponse({ request_id: requestId, status: "unauthorized", error: "请先登录后再管理风险复盘资产。" }, 401, requestId);
-  }
-
   let body: {
     action?: "confirm" | "publish" | "archive" | "review" | "update" | "merge";
     card?: RiskRetrospectiveKnowledgeCard;
@@ -57,19 +55,24 @@ export async function POST(request: Request): Promise<Response> {
   } catch {
     return jsonResponse({ request_id: requestId, status: "failed", error: "请求 JSON 格式错误。" }, 400, requestId);
   }
+  const access = body.action === "confirm"
+    ? await authorizeRiskRequest(request, "create")
+    : await authorizeRiskRequest(request, "transition");
+  if (!access.ok) return jsonResponse({ request_id: requestId, error: access.error, detail: access.detail }, access.status, requestId);
+  const user = await getCurrentUser();
 
   if (body.action === "confirm") {
     if (!body.card?.sourceRiskId) {
       return jsonResponse({ request_id: requestId, status: "failed", error: "缺少风险复盘知识卡。" }, 400, requestId);
     }
-    const result = await confirmRiskRetrospectiveAsset(body.card, user);
+    const result = await confirmRiskRetrospectiveAsset(body.card, user, access.scope);
     return jsonResponse({
       request_id: requestId,
       status: result.status,
       asset: result.status === "succeeded" ? result.asset : undefined,
       governance_warning: result.status === "succeeded" ? result.warning : undefined,
       duplicate_warnings: result.status === "succeeded"
-        ? buildRiskRetrospectiveAssetDuplicateWarnings((await listRiskRetrospectiveAssets("all", 100)).assets)
+        ? buildRiskRetrospectiveAssetDuplicateWarnings((await listRiskRetrospectiveAssets("all", 100, access.scope)).assets)
         : [],
       warning: result.status !== "succeeded" ? result.warning : undefined,
     }, result.status === "failed" ? 500 : result.status === "not_configured" ? 503 : 200, requestId);
@@ -79,14 +82,14 @@ export async function POST(request: Request): Promise<Response> {
     if (!body.id || !body.patch) {
       return jsonResponse({ request_id: requestId, status: "failed", error: "缺少资产 ID 或编辑内容。" }, 400, requestId);
     }
-    const result = await updateRiskRetrospectiveAssetDetails({ id: body.id, patch: body.patch, user, requestId });
+    const result = await updateRiskRetrospectiveAssetDetails({ id: body.id, patch: body.patch, user, requestId, scope: access.scope });
     return jsonResponse({
       request_id: requestId,
       status: result.status,
       asset: result.status === "succeeded" ? result.asset : undefined,
       governance_warning: result.status === "succeeded" ? result.warning : undefined,
       duplicate_warnings: result.status === "succeeded"
-        ? buildRiskRetrospectiveAssetDuplicateWarnings((await listRiskRetrospectiveAssets("all", 100)).assets)
+        ? buildRiskRetrospectiveAssetDuplicateWarnings((await listRiskRetrospectiveAssets("all", 100, access.scope)).assets)
         : [],
       warning: result.status !== "succeeded" ? result.warning : undefined,
     }, result.status === "failed" ? 500 : result.status === "not_configured" ? 503 : 200, requestId);
@@ -96,7 +99,7 @@ export async function POST(request: Request): Promise<Response> {
     if (!body.id || !body.targetId) {
       return jsonResponse({ request_id: requestId, status: "failed", error: "缺少源资产 ID 或主资产 ID。" }, 400, requestId);
     }
-    const result = await mergeRiskRetrospectiveAssets({ sourceAssetId: body.id, targetAssetId: body.targetId, user, requestId });
+    const result = await mergeRiskRetrospectiveAssets({ sourceAssetId: body.id, targetAssetId: body.targetId, user, requestId, scope: access.scope });
     return jsonResponse({
       request_id: requestId,
       status: result.status,
@@ -104,7 +107,7 @@ export async function POST(request: Request): Promise<Response> {
       target_asset: result.status === "succeeded" ? result.targetAsset : undefined,
       governance_warning: result.status === "succeeded" ? result.warning : undefined,
       duplicate_warnings: result.status === "succeeded"
-        ? buildRiskRetrospectiveAssetDuplicateWarnings((await listRiskRetrospectiveAssets("all", 100)).assets)
+        ? buildRiskRetrospectiveAssetDuplicateWarnings((await listRiskRetrospectiveAssets("all", 100, access.scope)).assets)
         : [],
       warning: result.status !== "succeeded" ? result.warning : undefined,
     }, result.status === "failed" ? 500 : result.status === "not_configured" ? 503 : 200, requestId);
@@ -121,14 +124,14 @@ export async function POST(request: Request): Promise<Response> {
     return jsonResponse({ request_id: requestId, status: "failed", error: "缺少资产 ID 或有效动作。" }, 400, requestId);
   }
 
-  const result = await updateRiskRetrospectiveAssetStatus(body.id, nextStatus, user);
+  const result = await updateRiskRetrospectiveAssetStatus(body.id, nextStatus, user, access.scope);
   return jsonResponse({
     request_id: requestId,
     status: result.status,
     asset: result.status === "succeeded" ? result.asset : undefined,
     governance_warning: result.status === "succeeded" ? result.warning : undefined,
     duplicate_warnings: result.status === "succeeded"
-      ? buildRiskRetrospectiveAssetDuplicateWarnings((await listRiskRetrospectiveAssets("all", 100)).assets)
+      ? buildRiskRetrospectiveAssetDuplicateWarnings((await listRiskRetrospectiveAssets("all", 100, access.scope)).assets)
       : [],
     warning: result.status !== "succeeded" ? result.warning : undefined,
   }, result.status === "failed" ? 500 : result.status === "not_configured" ? 503 : 200, requestId);

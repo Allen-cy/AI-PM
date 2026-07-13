@@ -22,6 +22,7 @@ import {
 export interface GovernanceCreateInput {
   workflowId: string;
   projectId?: string;
+  canonicalProjectId?: string;
   projectName: string;
   title?: string;
   triggerSummary?: string;
@@ -309,6 +310,7 @@ export async function createGovernanceInstance(input: GovernanceCreateInput, use
         workflow_name: workflow.name,
         stage: workflow.stage,
         project_id: input.projectId || null,
+        canonical_project_id: input.canonicalProjectId || null,
         project_name: input.projectName.trim(),
         title: input.title?.trim() || `${input.projectName.trim()}-${workflow.name}`,
         trigger_summary: input.triggerSummary?.trim() || workflow.trigger,

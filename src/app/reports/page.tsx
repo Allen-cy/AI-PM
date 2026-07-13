@@ -16,6 +16,7 @@ import {
   type ReportRequest,
   type ReportType,
 } from "@/lib/reports";
+import { loadCurrentBusinessContextSearchParams } from "@/features/operating-model/client-context";
 
 const PROJECTS = [
   "PMO项目组合",
@@ -117,7 +118,8 @@ export default function ReportsPage() {
       tone,
     };
     try {
-      const response = await fetch("/api/reports", {
+      const businessContext = await loadCurrentBusinessContextSearchParams();
+      const response = await fetch(`/api/reports?${businessContext.toString()}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(request),
@@ -147,7 +149,8 @@ export default function ReportsPage() {
     setSavingAction(key);
     setMessage("");
     try {
-      const response = await fetch("/api/issue-change", {
+      const businessContext = await loadCurrentBusinessContextSearchParams();
+      const response = await fetch(`/api/issue-change?${businessContext.toString()}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

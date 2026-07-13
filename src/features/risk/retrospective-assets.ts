@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import type { RagCitation, RagDocument } from "../rag/types.ts";
 import type { Risk } from "../../lib/risk.ts";
 import type { RiskRetrospectiveKnowledgeCard } from "./retrospective.ts";
+import { resolveRequestedRiskProjectIds, type RiskDataScope } from "./scope.ts";
 
 interface AssetActor {
   id?: string | null;
@@ -15,6 +16,9 @@ export type RiskRetrospectiveAssetStatus = "draft" | "reviewed" | "published" | 
 
 export interface RiskRetrospectiveAssetRecord extends RiskRetrospectiveKnowledgeCard {
   id: string;
+  orgId: string;
+  projectId: string;
+  dataClass: RiskDataScope["dataClass"];
   assetKey: string;
   sourceRiskCode?: string;
   status: RiskRetrospectiveAssetStatus;
@@ -177,6 +181,9 @@ function isMissingGovernanceLogTableError(message?: string): boolean {
 function baseSelectColumns(): string[] {
   return [
     "id",
+    "org_id",
+    "project_id",
+    "data_class",
     "asset_key",
     "source_risk_id",
     "source_risk_code",
@@ -264,6 +271,9 @@ function duplicateWarningsBy(
 function mapAsset(row: Record<string, unknown>): RiskRetrospectiveAssetRecord {
   return {
     id: String(row.id),
+    orgId: String(row.org_id ?? ""),
+    projectId: String(row.project_id ?? ""),
+    dataClass: String(row.data_class ?? "unclassified") as RiskDataScope["dataClass"],
     assetKey: String(row.asset_key ?? ""),
     sourceRiskId: String(row.source_risk_id ?? ""),
     sourceRiskCode: row.source_risk_code ? String(row.source_risk_code) : undefined,
@@ -301,6 +311,9 @@ function mapAsset(row: Record<string, unknown>): RiskRetrospectiveAssetRecord {
 export function buildRiskRetrospectiveAssetDraft(
   card: RiskRetrospectiveKnowledgeCard,
   input?: {
+    orgId?: string;
+    projectId?: string;
+    dataClass?: RiskDataScope["dataClass"];
     sourceRiskCode?: string;
     status?: RiskRetrospectiveAssetStatus;
     applicability?: string;
@@ -318,6 +331,9 @@ export function buildRiskRetrospectiveAssetDraft(
   return {
     ...card,
     id: card.id,
+    orgId: input?.orgId ?? "",
+    projectId: input?.projectId ?? "",
+    dataClass: input?.dataClass ?? "unclassified",
     assetKey: assetKey(card.sourceRiskId),
     sourceRiskCode: input?.sourceRiskCode,
     status: input?.status ?? "reviewed",
@@ -377,10 +393,23 @@ export function riskRetrospectiveAssetToRagDocument(asset: RiskRetrospectiveAsse
   };
 }
 
-function payloadFromCard(card: RiskRetrospectiveKnowledgeCard, user: AssetActor | null, status: RiskRetrospectiveAssetStatus) {
+function scopedProjectIds(scope: RiskDataScope): string[] {
+  return resolveRequestedRiskProjectIds(scope, scope.requestedProjectId);
+}
+
+function singleWritableProjectId(scope: RiskDataScope): string {
+  const ids = scopedProjectIds(scope);
+  if (ids.length !== 1) throw new Error("PROJECT_ID_REQUIRED");
+  return ids[0];
+}
+
+function payloadFromCard(card: RiskRetrospectiveKnowledgeCard, user: AssetActor | null, status: RiskRetrospectiveAssetStatus, scope: RiskDataScope, projectId: string) {
   const name = actorName(user);
   const now = new Date().toISOString();
   return {
+    org_id: scope.orgId,
+    project_id: projectId,
+    data_class: scope.dataClass,
     asset_key: assetKey(card.sourceRiskId),
     source_risk_id: card.sourceRiskId,
     project_name: card.projectName,
@@ -414,7 +443,11 @@ function payloadFromCard(card: RiskRetrospectiveKnowledgeCard, user: AssetActor 
 export async function listRiskRetrospectiveAssets(
   status?: RiskRetrospectiveAssetStatus | "all",
   limit = 50,
+  scope?: RiskDataScope,
 ): Promise<RiskRetrospectiveAssetListResult> {
+  if (!scope) return { status: "failed", assets: [], warning: "RISK_DATA_SCOPE_REQUIRED" };
+  const projectIds = scopedProjectIds(scope);
+  if (projectIds.length === 0) return { status: "succeeded", assets: [] };
   if (!isRiskRetrospectiveAssetStorageConfigured()) {
     return { status: "not_configured", assets: [], warning: "Supabase 未配置，无法读取风险复盘资产。" };
   }
@@ -425,6 +458,9 @@ export async function listRiskRetrospectiveAssets(
       let query = supabase
         .from("risk_retrospective_assets")
         .select(selectColumns(includeValueMetrics))
+        .eq("org_id", scope.orgId)
+        .eq("data_class", scope.dataClass)
+        .in("project_id", projectIds)
         .order("updated_at", { ascending: false })
         .limit(limit);
       if (status && status !== "all") query = query.eq("status", status);
@@ -467,12 +503,17 @@ export async function listRiskRetrospectiveAssets(
   }
 }
 
-async function selectAssetById(id: string, includeValueMetrics = true): Promise<RiskRetrospectiveAssetRecord | null> {
+async function selectAssetById(id: string, scope: RiskDataScope, includeValueMetrics = true): Promise<RiskRetrospectiveAssetRecord | null> {
+  const projectIds = scopedProjectIds(scope);
+  if (projectIds.length === 0) return null;
   const supabase = getRiskRetrospectiveAssetSupabase();
   const { data, error } = await supabase
     .from("risk_retrospective_assets")
     .select(selectColumns(includeValueMetrics))
     .eq("id", id)
+    .eq("org_id", scope.orgId)
+    .eq("data_class", scope.dataClass)
+    .in("project_id", projectIds)
     .maybeSingle();
   if (error || !data) return null;
   return mapAsset(data as unknown as Record<string, unknown>);
@@ -481,6 +522,7 @@ async function selectAssetById(id: string, includeValueMetrics = true): Promise<
 export async function confirmRiskRetrospectiveAsset(
   card: RiskRetrospectiveKnowledgeCard,
   user: AssetActor | null,
+  scope: RiskDataScope,
 ): Promise<RiskRetrospectiveAssetMutationResult> {
   if (!isRiskRetrospectiveAssetStorageConfigured()) {
     return { status: "not_configured", warning: "Supabase 未配置，无法保存风险复盘资产。" };
@@ -488,9 +530,10 @@ export async function confirmRiskRetrospectiveAsset(
 
   try {
     const supabase = getRiskRetrospectiveAssetSupabase();
+    const projectId = singleWritableProjectId(scope);
     const { data, error } = await supabase
       .from("risk_retrospective_assets")
-      .upsert(payloadFromCard(card, user, "reviewed"), { onConflict: "asset_key" })
+      .upsert(payloadFromCard(card, user, "reviewed", scope, projectId), { onConflict: "org_id,data_class,project_id,asset_key" })
       .select(selectColumns(false))
       .single();
 
@@ -515,6 +558,7 @@ export async function updateRiskRetrospectiveAssetStatus(
   id: string,
   status: RiskRetrospectiveAssetStatus,
   user: AssetActor | null,
+  scope: RiskDataScope,
 ): Promise<RiskRetrospectiveAssetMutationResult> {
   if (!isRiskRetrospectiveAssetStorageConfigured()) {
     return { status: "not_configured", warning: "Supabase 未配置，无法更新风险复盘资产。" };
@@ -531,12 +575,17 @@ export async function updateRiskRetrospectiveAssetStatus(
   }
 
   try {
-    const before = await selectAssetById(id, false);
+    const projectIds = scopedProjectIds(scope);
+    if (projectIds.length === 0) return { status: "failed", warning: "PROJECT_OUTSIDE_CONTEXT" };
+    const before = await selectAssetById(id, scope, false);
     const supabase = getRiskRetrospectiveAssetSupabase();
     const { data, error } = await supabase
       .from("risk_retrospective_assets")
       .update(update)
       .eq("id", id)
+      .eq("org_id", scope.orgId)
+      .eq("data_class", scope.dataClass)
+      .in("project_id", projectIds)
       .select(selectColumns(false))
       .single();
 
@@ -557,6 +606,7 @@ export async function updateRiskRetrospectiveAssetStatus(
         beforeSnapshot: before,
         afterSnapshot: asset,
         user,
+        scope,
       })
       : null;
     return { status: "succeeded", asset, warning: warning ?? undefined };
@@ -577,12 +627,16 @@ async function persistGovernanceLog(input: {
   afterSnapshot: unknown;
   user: AssetActor | null;
   requestId?: string;
+  scope: RiskDataScope;
 }): Promise<string | null> {
   try {
     const supabase = getRiskRetrospectiveAssetSupabase();
     const { error } = await supabase
       .from("risk_retrospective_asset_governance_logs")
       .insert({
+        org_id: input.scope.orgId,
+        project_id: singleWritableProjectId(input.scope),
+        data_class: input.scope.dataClass,
         asset_id: input.assetId,
         target_asset_id: input.targetAssetId ?? null,
         action: input.action,
@@ -607,6 +661,7 @@ export async function updateRiskRetrospectiveAssetDetails(input: {
   patch: RiskRetrospectiveAssetEditPatch;
   user: AssetActor | null;
   requestId?: string;
+  scope: RiskDataScope;
 }): Promise<RiskRetrospectiveAssetGovernanceResult> {
   if (!isRiskRetrospectiveAssetStorageConfigured()) {
     return { status: "not_configured", warning: "Supabase 未配置，无法编辑风险复盘资产。" };
@@ -617,13 +672,18 @@ export async function updateRiskRetrospectiveAssetDetails(input: {
   }
 
   try {
-    const before = await selectAssetById(input.id, false);
+    const projectIds = scopedProjectIds(input.scope);
+    if (projectIds.length === 0) return { status: "failed", warning: "PROJECT_OUTSIDE_CONTEXT" };
+    const before = await selectAssetById(input.id, input.scope, false);
     if (!before) return { status: "failed", warning: "未找到要编辑的风险复盘资产。" };
     const supabase = getRiskRetrospectiveAssetSupabase();
     const { data, error } = await supabase
       .from("risk_retrospective_assets")
       .update(update)
       .eq("id", input.id)
+      .eq("org_id", input.scope.orgId)
+      .eq("data_class", input.scope.dataClass)
+      .in("project_id", projectIds)
       .select(selectColumns(false))
       .single();
     if (error) {
@@ -643,6 +703,7 @@ export async function updateRiskRetrospectiveAssetDetails(input: {
       afterSnapshot: asset,
       user: input.user,
       requestId: input.requestId,
+      scope: input.scope,
     });
     return { status: "succeeded", asset, warning: warning ?? undefined };
   } catch (error) {
@@ -658,6 +719,7 @@ export async function mergeRiskRetrospectiveAssets(input: {
   targetAssetId: string;
   user: AssetActor | null;
   requestId?: string;
+  scope: RiskDataScope;
 }): Promise<RiskRetrospectiveAssetGovernanceResult> {
   if (!isRiskRetrospectiveAssetStorageConfigured()) {
     return { status: "not_configured", warning: "Supabase 未配置，无法合并风险复盘资产。" };
@@ -667,8 +729,10 @@ export async function mergeRiskRetrospectiveAssets(input: {
   }
 
   try {
-    const source = await selectAssetById(input.sourceAssetId, false);
-    const target = await selectAssetById(input.targetAssetId, false);
+    const projectIds = scopedProjectIds(input.scope);
+    if (projectIds.length === 0) return { status: "failed", warning: "PROJECT_OUTSIDE_CONTEXT" };
+    const source = await selectAssetById(input.sourceAssetId, input.scope, false);
+    const target = await selectAssetById(input.targetAssetId, input.scope, false);
     if (!source || !target) return { status: "failed", warning: "未找到要合并的风险复盘资产。" };
     const preview = buildRiskRetrospectiveAssetMergePreview(source, target);
     const supabase = getRiskRetrospectiveAssetSupabase();
@@ -679,6 +743,9 @@ export async function mergeRiskRetrospectiveAssets(input: {
         applicability: target.applicability || source.applicability,
       })
       .eq("id", target.id)
+      .eq("org_id", input.scope.orgId)
+      .eq("data_class", input.scope.dataClass)
+      .in("project_id", projectIds)
       .select(selectColumns(false))
       .single();
     if (targetError) return { status: "failed", warning: targetError.message };
@@ -691,6 +758,9 @@ export async function mergeRiskRetrospectiveAssets(input: {
         applicability: `${source.applicability || "已合并"}\n\n已合并到主资产：${target.title}`,
       })
       .eq("id", source.id)
+      .eq("org_id", input.scope.orgId)
+      .eq("data_class", input.scope.dataClass)
+      .in("project_id", projectIds)
       .select(selectColumns(false))
       .single();
     if (sourceError) return { status: "failed", warning: sourceError.message };
@@ -706,6 +776,7 @@ export async function mergeRiskRetrospectiveAssets(input: {
       afterSnapshot: { source: archivedSource, target: updatedTarget },
       user: input.user,
       requestId: input.requestId,
+      scope: input.scope,
     });
     return { status: "succeeded", asset: archivedSource, targetAsset: updatedTarget, warning: warning ?? undefined };
   } catch (error) {
@@ -716,8 +787,8 @@ export async function mergeRiskRetrospectiveAssets(input: {
   }
 }
 
-export async function listPublishedRiskRetrospectiveRagDocuments(): Promise<RiskRetrospectiveRagDocumentsResult> {
-  const result = await listRiskRetrospectiveAssets("published", 100);
+export async function listPublishedRiskRetrospectiveRagDocuments(scope?: RiskDataScope): Promise<RiskRetrospectiveRagDocumentsResult> {
+  const result = await listRiskRetrospectiveAssets("published", 100, scope);
   if (result.status !== "succeeded") {
     return { status: result.status, documents: [], warning: result.warning };
   }
@@ -796,9 +867,11 @@ export async function recordRiskRetrospectiveRagUsage(input: {
   citations: RagCitation[];
   requestId: string;
   user?: AssetActor | null;
+  scope?: RiskDataScope;
 }): Promise<RiskRetrospectiveAssetUsageResult> {
   const citations = input.citations.filter(citation => citation.page_id.startsWith("RISK-RETRO-"));
   if (citations.length === 0) return { status: "succeeded", recorded: 0 };
+  if (!input.scope) return { status: "skipped", warning: "RISK_DATA_SCOPE_REQUIRED", recorded: 0 };
   if (!isRiskRetrospectiveAssetStorageConfigured()) {
     return { status: "skipped", warning: "Supabase 未配置，无法记录风险复盘资产 RAG 引用。", recorded: 0 };
   }
@@ -810,7 +883,7 @@ export async function recordRiskRetrospectiveRagUsage(input: {
       const assetId = citationAssetId(citation);
       const assetKeyRef = citation.source_ids.find(source => source.startsWith("risk-retrospective:")) ?? null;
       if (!assetId) continue;
-      const current = await selectAssetById(assetId);
+      const current = await selectAssetById(assetId, input.scope);
       if (!current) continue;
       const now = new Date().toISOString();
       const { error: updateError } = await supabase
@@ -819,7 +892,10 @@ export async function recordRiskRetrospectiveRagUsage(input: {
           rag_reference_count: current.ragReferenceCount + 1,
           last_rag_referenced_at: now,
         })
-        .eq("id", assetId);
+        .eq("id", assetId)
+        .eq("org_id", input.scope.orgId)
+        .eq("data_class", input.scope.dataClass)
+        .in("project_id", scopedProjectIds(input.scope));
       if (updateError) {
         return {
           status: isMissingValueMetricColumnsError(updateError.message) ? "skipped" : "failed",
@@ -832,6 +908,9 @@ export async function recordRiskRetrospectiveRagUsage(input: {
       const { error: insertError } = await supabase
         .from("risk_retrospective_asset_usage_logs")
         .insert({
+          org_id: input.scope.orgId,
+          project_id: current.projectId,
+          data_class: input.scope.dataClass,
           asset_id: assetId,
           asset_key: assetKeyRef ?? current.assetKey,
           page_id: citation.page_id,
@@ -867,9 +946,11 @@ export async function recordRiskRetrospectiveRagUsage(input: {
 export async function recordRiskRetrospectiveAssetExportMetrics(input: {
   assetIds: string[];
   sha256: string;
+  scope?: RiskDataScope;
 }): Promise<RiskRetrospectiveAssetUsageResult> {
   const assetIds = input.assetIds.filter(id => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(id));
   if (assetIds.length === 0) return { status: "succeeded", recorded: 0 };
+  if (!input.scope) return { status: "skipped", warning: "RISK_DATA_SCOPE_REQUIRED", recorded: 0 };
   if (!isRiskRetrospectiveAssetStorageConfigured()) {
     return { status: "skipped", warning: "Supabase 未配置，无法记录风险复盘资产导出指标。", recorded: 0 };
   }
@@ -882,7 +963,10 @@ export async function recordRiskRetrospectiveAssetExportMetrics(input: {
         last_exported_at: new Date().toISOString(),
         last_export_sha256: input.sha256,
       })
-      .in("id", assetIds);
+      .in("id", assetIds)
+      .eq("org_id", input.scope.orgId)
+      .eq("data_class", input.scope.dataClass)
+      .in("project_id", scopedProjectIds(input.scope));
     if (error) {
       return {
         status: isMissingValueMetricColumnsError(error.message) ? "skipped" : "failed",

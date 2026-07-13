@@ -1,4 +1,5 @@
 import { getCurrentUser } from "@/features/auth/server";
+import { authorizeRiskRequest } from "@/features/risk/access";
 import { FeishuActionClient } from "@/features/feishu/actions";
 import { FeishuApiError } from "@/features/feishu/client";
 import { getEffectiveFeishuConfig } from "@/features/feishu/user-config";
@@ -69,11 +70,9 @@ async function auditSync(input: {
 
 export async function POST(request: Request): Promise<Response> {
   const requestId = crypto.randomUUID();
+  const access = await authorizeRiskRequest(request, "transition");
+  if (!access.ok) return jsonResponse({ request_id: requestId, error: access.error, detail: access.detail }, access.status, requestId);
   const user = await getCurrentUser();
-  if (process.env.AUTH_REQUIRED === "true" && !user) {
-    return jsonResponse({ request_id: requestId, status: "unauthorized", warning: "请先登录后再同步飞书任务。" }, 401, requestId);
-  }
-
   let body: FeishuSyncBody;
   try {
     body = await request.json() as FeishuSyncBody;
@@ -88,7 +87,7 @@ export async function POST(request: Request): Promise<Response> {
     return jsonResponse({ request_id: requestId, status: "failed", warning: "飞书同步动作不合法。" }, 400, requestId);
   }
 
-  const current = await getRiskRetrospectiveGovernanceFollowup(body.id);
+  const current = await getRiskRetrospectiveGovernanceFollowup(body.id, access.scope);
   if (current.status !== "succeeded") {
     const httpStatus = current.status === "not_configured" ? 503 : current.status === "not_found" ? 404 : 400;
     return jsonResponse({ request_id: requestId, ...current }, httpStatus, requestId);
@@ -99,7 +98,7 @@ export async function POST(request: Request): Promise<Response> {
       id: body.id,
       status: "待确认",
       requestId,
-    });
+    }, access.scope);
     if (result.status === "succeeded") {
       await auditSync({
         user,
@@ -126,7 +125,7 @@ export async function POST(request: Request): Promise<Response> {
       status: "同步失败",
       error: effectiveFeishu.setupHint || "飞书接入未配置。",
       requestId,
-    });
+    }, access.scope);
     if (failed.status === "succeeded") {
       await auditSync({
         user,
@@ -151,7 +150,7 @@ export async function POST(request: Request): Promise<Response> {
     id: body.id,
     status: "同步中",
     requestId,
-  });
+  }, access.scope);
   if (running.status !== "succeeded") {
     const httpStatus = running.status === "not_configured" ? 503 : running.status === "not_found" ? 404 : 400;
     return jsonResponse({ request_id: requestId, ...running }, httpStatus, requestId);
@@ -172,7 +171,7 @@ export async function POST(request: Request): Promise<Response> {
       taskGuid: resource.taskGuid,
       taskUrl: resource.url ?? null,
       requestId,
-    });
+    }, access.scope);
     if (result.status !== "succeeded") {
       const httpStatus = result.status === "not_configured" ? 503 : result.status === "not_found" ? 404 : 400;
       return jsonResponse({ request_id: requestId, ...result }, httpStatus, requestId);
@@ -198,7 +197,7 @@ export async function POST(request: Request): Promise<Response> {
       status: "同步失败",
       error: code,
       requestId,
-    });
+    }, access.scope);
     if (failed.status === "succeeded") {
       await auditSync({
         user,

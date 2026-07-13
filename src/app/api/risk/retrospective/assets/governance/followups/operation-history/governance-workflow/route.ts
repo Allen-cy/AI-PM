@@ -1,8 +1,9 @@
 import { getCurrentUser } from "@/features/auth/server";
+import { authorizeRiskRequest } from "@/features/risk/access";
 import { syncGovernanceEventToFeishu } from "@/features/governance/feishu-sync";
 import {
   createGovernanceInstance,
-  listGovernanceInstances,
+  listGovernanceInstancesForProjectIds,
   type GovernanceCreateInput,
 } from "@/features/governance/repository";
 import { writeIntegrationSyncLog } from "@/features/operating-system/sync-logs";
@@ -11,6 +12,7 @@ import {
   type KnowledgeGovernanceWorkflowCandidateOverride,
 } from "@/features/risk/retrospective-governance-workflow-candidate";
 import { getRiskRetrospectiveGovernanceReminderLog } from "@/features/risk/retrospective-governance-operations";
+import { getRiskRetrospectiveGovernanceFollowup } from "@/features/risk/retrospective-governance-followups";
 import { writeOperationAudit } from "@/features/security/repository";
 
 export const runtime = "nodejs";
@@ -36,9 +38,11 @@ function statusCode(status?: string): number {
   return 400;
 }
 
-function candidateToGovernanceInput(candidate: ReturnType<typeof buildKnowledgeGovernanceWorkflowCandidate>): GovernanceCreateInput {
+function candidateToGovernanceInput(candidate: ReturnType<typeof buildKnowledgeGovernanceWorkflowCandidate>, projectId: string): GovernanceCreateInput {
   return {
     workflowId: candidate.workflowId,
+    projectId,
+    canonicalProjectId: projectId,
     projectName: candidate.projectName,
     title: candidate.title,
     triggerSummary: candidate.triggerSummary,
@@ -60,11 +64,9 @@ function candidateToGovernanceInput(candidate: ReturnType<typeof buildKnowledgeG
 
 export async function POST(request: Request): Promise<Response> {
   const requestId = crypto.randomUUID();
+  const access = await authorizeRiskRequest(request, "create");
+  if (!access.ok) return jsonResponse({ request_id: requestId, error: access.error, detail: access.detail }, access.status, requestId);
   const user = await getCurrentUser();
-  if (process.env.AUTH_REQUIRED === "true" && !user) {
-    return jsonResponse({ request_id: requestId, status: "unauthorized", warning: "请先登录后再将知识治理升级转为治理流程。" }, 401, requestId);
-  }
-
   let body: Body;
   try {
     body = await request.json() as Body;
@@ -75,7 +77,7 @@ export async function POST(request: Request): Promise<Response> {
     return jsonResponse({ request_id: requestId, status: "failed", warning: "请提供知识治理运营提醒日志 ID。" }, 400, requestId);
   }
 
-  const reminder = await getRiskRetrospectiveGovernanceReminderLog(body.id);
+  const reminder = await getRiskRetrospectiveGovernanceReminderLog(body.id, access.scope);
   if (reminder.status !== "succeeded") {
     return jsonResponse({ request_id: requestId, ...reminder }, statusCode(reminder.status), requestId);
   }
@@ -86,6 +88,19 @@ export async function POST(request: Request): Promise<Response> {
       warning: "只有已升级的知识治理运营提醒才能转为治理流程。",
       reminder_log: reminder.log,
     }, 400, requestId);
+  }
+
+  const followup = reminder.log.sourceFollowupId
+    ? await getRiskRetrospectiveGovernanceFollowup(reminder.log.sourceFollowupId, access.scope)
+    : null;
+  if (followup && followup.status !== "succeeded") {
+    return jsonResponse({ request_id: requestId, ...followup }, statusCode(followup.status), requestId);
+  }
+  const projectId = followup?.status === "succeeded"
+    ? followup.followup.projectId
+    : reminder.log.projectId || access.scope.requestedProjectId;
+  if (!projectId || !access.scope.projectIds.includes(projectId)) {
+    return jsonResponse({ request_id: requestId, status: "failed", warning: "请在当前业务上下文中选择唯一项目后再创建治理流程。" }, 400, requestId);
   }
 
   const candidate = buildKnowledgeGovernanceWorkflowCandidate(reminder.log, body.candidate ?? {});
@@ -100,7 +115,7 @@ export async function POST(request: Request): Promise<Response> {
     }, 200, requestId);
   }
 
-  const existing = await listGovernanceInstances(100);
+  const existing = await listGovernanceInstancesForProjectIds([projectId], 100);
   if (existing.status === "succeeded") {
     const duplicate = existing.instances.find(instance =>
       instance.workflowId === candidate.workflowId
@@ -120,7 +135,7 @@ export async function POST(request: Request): Promise<Response> {
     }
   }
 
-  const result = await createGovernanceInstance(candidateToGovernanceInput(candidate), user);
+  const result = await createGovernanceInstance(candidateToGovernanceInput(candidate, projectId), user);
   let feishu_sync: Awaited<ReturnType<typeof syncGovernanceEventToFeishu>> = { status: "skipped", reason: "流程未创建，跳过飞书回写。" };
   if (result.status === "succeeded" && result.instance) {
     feishu_sync = await syncGovernanceEventToFeishu({ instance: result.instance, requestId });

@@ -20,6 +20,14 @@ import type { RiskRetrospectiveAssetDuplicateWarning, RiskRetrospectiveAssetEdit
 import type { RiskRetrospectiveQualityDashboard } from "@/features/risk/retrospective-quality";
 import type { RiskRetrospectiveDashboard } from "@/features/risk/retrospective";
 import {
+  businessContextSearchParams,
+  readStoredBusinessContext,
+  readStoredCurrentProject,
+  readStoredDataClass,
+  writeStoredBusinessContext,
+  writeStoredCurrentProject,
+} from "@/features/operating-model/client-context";
+import {
   type LinkedModule,
   type Risk,
   type RiskCategory,
@@ -320,7 +328,7 @@ function scoreFromSeverity(severity?: "高" | "中" | "低"): Pick<Risk, "probab
   return { probability: 2, impact: 2, urgency: 2 };
 }
 
-function dashboardRecordToRisk(record: DashboardRiskRecord, index: number): Risk {
+function dashboardRecordToRisk(record: DashboardRiskRecord, index: number, projectId: string): Risk {
   const severityScores = scoreFromSeverity(record.风险等级);
   const riskType = record.风险类型 || (Number(record.进度偏差 ?? 0) < -5 ? "进度风险" : "综合风险");
   const impactArea: RiskImpactArea = riskType.includes("回款") || riskType.includes("合同")
@@ -360,7 +368,10 @@ function dashboardRecordToRisk(record: DashboardRiskRecord, index: number): Risk
     actionOwner: "项目经理",
     actionDeadline: record.到期日期 || dateByOffset(7),
   };
-  return withScores(form, `FS-${record.项目编号 || index + 1}`, new Date().toISOString().split("T")[0]);
+  return {
+    ...withScores(form, `FS-${record.项目编号 || index + 1}`, new Date().toISOString().split("T")[0]),
+    projectId,
+  };
 }
 
 function StatCard({ label, value, color, sub }: { label: string; value: string | number; color?: string; sub?: string }) {
@@ -408,6 +419,11 @@ function StatusBadge({ status }: { status: RiskStatus }) {
       {statusLabels[status]}
     </span>
   );
+}
+
+function scopedRiskApiUrl(path: string, scopeQuery: string): string {
+  if (!scopeQuery) return path;
+  return `${path}${path.includes("?") ? "&" : "?"}${scopeQuery}`;
 }
 
 export default function RiskPage() {
@@ -504,6 +520,9 @@ export default function RiskPage() {
   const [reviewNow] = useState(() => Date.now());
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [riskScopeQuery, setRiskScopeQuery] = useState("");
+  const [selectedProject, setSelectedProject] = useState<{ id: string; name: string; code: string | null; dataClass: string } | null>(null);
+  const riskApiUrl = (path: string) => scopedRiskApiUrl(path, riskScopeQuery);
   const governanceFollowupOwnerOptions = useMemo(() => (
     Array.from(new Set(riskRetrospectiveGovernanceFollowups.map(item => item.ownerName || "PMO知识管理员")))
       .filter(Boolean)
@@ -516,22 +535,49 @@ export default function RiskPage() {
       setLoadingRisks(true);
       setError("");
       try {
-        const response = await fetch("/api/risk", { cache: "no-store" });
+        const dataClass = readStoredDataClass();
+        const contextResponse = await fetch(`/api/context/current?data_class=${encodeURIComponent(dataClass)}`, { cache: "no-store" });
+        const contextBody = await contextResponse.json() as {
+          active_context?: { assignmentId: string; businessRole: string; orgId: string; subjectScope: string; subjectId: string } | null;
+          available_contexts?: Array<{ id: string; businessRole: string; orgId: string; subjectScope: string; subjectId: string; status: string }>;
+          available_projects?: Array<{ id: string; name: string; code: string | null; dataClass: string }>;
+          detail?: string;
+        };
+        if (!contextResponse.ok) throw new Error(contextBody.detail || "无法读取当前业务身份。");
+        const storedContext = readStoredBusinessContext();
+        const assignment = contextBody.available_contexts?.find(item => item.id === storedContext?.assignmentId && item.status === "active")
+          ?? contextBody.available_contexts?.find(item => item.id === contextBody.active_context?.assignmentId && item.status === "active");
+        if (!assignment) throw new Error("尚未分配有效业务角色，请联系管理员。");
+        const context = { assignmentId: assignment.id, businessRole: assignment.businessRole, orgId: assignment.orgId, subjectScope: assignment.subjectScope, subjectId: assignment.subjectId };
+        writeStoredBusinessContext(context);
+        const query = businessContextSearchParams(context, dataClass);
+        const projectOptions = contextBody.available_projects ?? [];
+        const storedProjectId = readStoredCurrentProject();
+        const selectedProject = projectOptions.find(item => item.id === storedProjectId) ?? projectOptions[0];
+        if (selectedProject) {
+          query.set("project_id", selectedProject.id);
+          writeStoredCurrentProject(selectedProject.id);
+        }
+        if (!cancelled) setSelectedProject(selectedProject ?? null);
+        const scopeQuery = query.toString();
+        if (!cancelled) setRiskScopeQuery(scopeQuery);
+        const apiUrl = (path: string) => scopedRiskApiUrl(path, scopeQuery);
+        const response = await fetch(apiUrl("/api/risk"), { cache: "no-store" });
         const data = await response.json() as { risks?: Risk[]; events?: RiskWorkflowEvent[]; warning?: string; error?: string; migrationHint?: string };
         if (!response.ok) throw new Error([data.error, data.migrationHint].filter(Boolean).join("；") || "风险登记册读取失败");
         const [integrationResponse, organizationalGovernanceResponse, escalationResponse, closureResponse, retrospectiveResponse, retrospectiveAssetsResponse, retrospectiveRecommendationsResponse, retrospectiveExportResponse, retrospectiveQualityResponse, retrospectiveGovernanceResponse, retrospectiveFollowupsResponse, retrospectiveOperationHistoryResponse] = await Promise.all([
-          fetch("/api/risk/integration", { cache: "no-store" }),
-          fetch("/api/risk/organizational-governance", { cache: "no-store" }),
-          fetch("/api/risk/escalation-drafts", { cache: "no-store" }),
-          fetch("/api/risk/closure", { cache: "no-store" }),
-          fetch("/api/risk/retrospective", { cache: "no-store" }),
-          fetch("/api/risk/retrospective/assets", { cache: "no-store" }),
-          fetch("/api/risk/retrospective/recommendations", { cache: "no-store" }),
-          fetch("/api/risk/retrospective/assets/export", { cache: "no-store" }),
-          fetch("/api/risk/retrospective/assets/quality", { cache: "no-store" }),
-          fetch("/api/risk/retrospective/assets/governance", { cache: "no-store" }),
-          fetch("/api/risk/retrospective/assets/governance/followups?limit=200", { cache: "no-store" }),
-          fetch("/api/risk/retrospective/assets/governance/followups/operation-history", { cache: "no-store" }),
+          fetch(apiUrl("/api/risk/integration"), { cache: "no-store" }),
+          fetch(apiUrl("/api/risk/organizational-governance"), { cache: "no-store" }),
+          fetch(apiUrl("/api/risk/escalation-drafts"), { cache: "no-store" }),
+          fetch(apiUrl("/api/risk/closure"), { cache: "no-store" }),
+          fetch(apiUrl("/api/risk/retrospective"), { cache: "no-store" }),
+          fetch(apiUrl("/api/risk/retrospective/assets"), { cache: "no-store" }),
+          fetch(apiUrl("/api/risk/retrospective/recommendations"), { cache: "no-store" }),
+          fetch(apiUrl("/api/risk/retrospective/assets/export"), { cache: "no-store" }),
+          fetch(apiUrl("/api/risk/retrospective/assets/quality"), { cache: "no-store" }),
+          fetch(apiUrl("/api/risk/retrospective/assets/governance"), { cache: "no-store" }),
+          fetch(apiUrl("/api/risk/retrospective/assets/governance/followups?limit=200"), { cache: "no-store" }),
+          fetch(apiUrl("/api/risk/retrospective/assets/governance/followups/operation-history"), { cache: "no-store" }),
         ]);
         const integrationData = await integrationResponse.json().catch(() => ({})) as { risk_integration?: RiskIntegration };
         const organizationalGovernanceData = await organizationalGovernanceResponse.json().catch(() => ({})) as { risk_organizational_governance?: RiskOrganizationalGovernance };
@@ -662,10 +708,14 @@ export default function RiskPage() {
     setSaving(true);
     setError("");
     try {
-      const response = await fetch("/api/risk", {
+      const response = await fetch(riskApiUrl("/api/risk"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ risk: saved }),
+        body: JSON.stringify({
+          risk: saved,
+          expected_version: editingRisk?.version ?? 0,
+          idempotency_key: crypto.randomUUID(),
+        }),
       });
       const data = await response.json() as { risk?: Risk; error?: string; migrationHint?: string };
       if (!response.ok || !data.risk) throw new Error([data.error, data.migrationHint].filter(Boolean).join("；") || "风险保存失败");
@@ -765,11 +815,13 @@ export default function RiskPage() {
     setSaving(true);
     setError("");
     try {
-      const response = await fetch("/api/risk", {
+      const response = await fetch(riskApiUrl("/api/risk"), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           id: transitioningRisk.id,
+          expected_version: transitioningRisk.version,
+          idempotency_key: crypto.randomUUID(),
           toStatus: transitionForm.toStatus,
           inputSummary: transitionForm.inputSummary,
           outputSummary: transitionForm.outputSummary,
@@ -798,13 +850,13 @@ export default function RiskPage() {
       setWorkflowEvents(prev => [data.event!, ...prev.filter(event => event.id !== data.event!.id)]);
       if (data.risk.status === "closed") {
         void Promise.all([
-          fetch("/api/risk/closure", { cache: "no-store" }),
-          fetch("/api/risk/retrospective", { cache: "no-store" }),
-          fetch("/api/risk/retrospective/assets", { cache: "no-store" }),
-          fetch("/api/risk/retrospective/recommendations", { cache: "no-store" }),
-          fetch("/api/risk/retrospective/assets/quality", { cache: "no-store" }),
-          fetch("/api/risk/retrospective/assets/governance", { cache: "no-store" }),
-          fetch("/api/risk/retrospective/assets/governance/followups?limit=200", { cache: "no-store" }),
+          fetch(riskApiUrl("/api/risk/closure"), { cache: "no-store" }),
+          fetch(riskApiUrl("/api/risk/retrospective"), { cache: "no-store" }),
+          fetch(riskApiUrl("/api/risk/retrospective/assets"), { cache: "no-store" }),
+          fetch(riskApiUrl("/api/risk/retrospective/recommendations"), { cache: "no-store" }),
+          fetch(riskApiUrl("/api/risk/retrospective/assets/quality"), { cache: "no-store" }),
+          fetch(riskApiUrl("/api/risk/retrospective/assets/governance"), { cache: "no-store" }),
+          fetch(riskApiUrl("/api/risk/retrospective/assets/governance/followups?limit=200"), { cache: "no-store" }),
         ])
           .then(async ([closureResponse, retrospectiveResponse, assetsResponse, recommendationsResponse, qualityResponse, governanceResponse, followupsResponse]) => {
             const closurePayload = await closureResponse.json().catch(() => ({})) as { risk_closure?: RiskClosureDashboard };
@@ -848,12 +900,12 @@ export default function RiskPage() {
 
   const refreshRetrospectiveAssets = async () => {
     const [response, recommendationsResponse, exportResponse, qualityResponse, governanceResponse, followupsResponse] = await Promise.all([
-      fetch("/api/risk/retrospective/assets", { cache: "no-store" }),
-      fetch("/api/risk/retrospective/recommendations", { cache: "no-store" }),
-      fetch("/api/risk/retrospective/assets/export", { cache: "no-store" }),
-      fetch("/api/risk/retrospective/assets/quality", { cache: "no-store" }),
-      fetch("/api/risk/retrospective/assets/governance", { cache: "no-store" }),
-      fetch("/api/risk/retrospective/assets/governance/followups?limit=200", { cache: "no-store" }),
+      fetch(riskApiUrl("/api/risk/retrospective/assets"), { cache: "no-store" }),
+      fetch(riskApiUrl("/api/risk/retrospective/recommendations"), { cache: "no-store" }),
+      fetch(riskApiUrl("/api/risk/retrospective/assets/export"), { cache: "no-store" }),
+      fetch(riskApiUrl("/api/risk/retrospective/assets/quality"), { cache: "no-store" }),
+      fetch(riskApiUrl("/api/risk/retrospective/assets/governance"), { cache: "no-store" }),
+      fetch(riskApiUrl("/api/risk/retrospective/assets/governance/followups?limit=200"), { cache: "no-store" }),
     ]);
     const payload = await response.json().catch(() => ({})) as {
       assets?: RiskRetrospectiveAssetRecord[];
@@ -898,7 +950,7 @@ export default function RiskPage() {
     setError("");
     setMessage("");
     try {
-      const response = await fetch(`/api/risk/retrospective/assets/governance/followups?${governanceFollowupFilterParams().toString()}`, { cache: "no-store" });
+      const response = await fetch(riskApiUrl(`/api/risk/retrospective/assets/governance/followups?${governanceFollowupFilterParams().toString()}`), { cache: "no-store" });
       const payload = await response.json().catch(() => ({})) as {
         status?: string;
         followups?: RiskRetrospectiveGovernanceFollowupRecord[];
@@ -932,7 +984,7 @@ export default function RiskPage() {
     setError("");
     setMessage("");
     try {
-      const response = await fetch("/api/risk/retrospective/assets/governance/followups/operation-history", { cache: "no-store" });
+      const response = await fetch(riskApiUrl("/api/risk/retrospective/assets/governance/followups/operation-history"), { cache: "no-store" });
       const payload = await response.json().catch(() => ({})) as {
         status?: string;
         snapshots?: RiskRetrospectiveGovernanceOperationSnapshot[];
@@ -956,7 +1008,7 @@ export default function RiskPage() {
     setError("");
     setMessage("");
     try {
-      const response = await fetch("/api/risk/retrospective/assets/governance/followups/operation-history", {
+      const response = await fetch(riskApiUrl("/api/risk/retrospective/assets/governance/followups/operation-history"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "snapshot" }),
@@ -989,7 +1041,7 @@ export default function RiskPage() {
     setError("");
     setMessage("");
     try {
-      const response = await fetch("/api/risk/retrospective/assets/governance/followups/operation-history", {
+      const response = await fetch(riskApiUrl("/api/risk/retrospective/assets/governance/followups/operation-history"), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id, status, closureNote }),
@@ -1029,7 +1081,7 @@ export default function RiskPage() {
     setError("");
     setMessage("");
     try {
-      const previewResponse = await fetch("/api/risk/retrospective/assets/governance/followups/operation-history/governance-workflow", {
+      const previewResponse = await fetch(riskApiUrl("/api/risk/retrospective/assets/governance/followups/operation-history/governance-workflow"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: log.id }),
@@ -1057,7 +1109,7 @@ export default function RiskPage() {
       ].join("\n"));
       if (!confirmed) return;
 
-      const response = await fetch("/api/risk/retrospective/assets/governance/followups/operation-history/governance-workflow", {
+      const response = await fetch(riskApiUrl("/api/risk/retrospective/assets/governance/followups/operation-history/governance-workflow"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: log.id, confirm: true, candidate }),
@@ -1096,7 +1148,7 @@ export default function RiskPage() {
     setError("");
     setMessage("");
     try {
-      const response = await fetch("/api/risk/retrospective/assets/governance/followups/weekly-reminder", {
+      const response = await fetch(riskApiUrl("/api/risk/retrospective/assets/governance/followups/weekly-reminder"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1157,7 +1209,7 @@ export default function RiskPage() {
     setError("");
     setMessage("");
     try {
-      const response = await fetch("/api/risk/retrospective/assets", {
+      const response = await fetch(riskApiUrl("/api/risk/retrospective/assets"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: input.action, card: input.card, id: input.id }),
@@ -1217,7 +1269,7 @@ export default function RiskPage() {
         reusablePractice: retrospectiveAssetEditForm.reusablePractice,
         tags: retrospectiveAssetEditForm.tagsText.split(/[、,，\n]/u).map(item => item.trim()).filter(Boolean),
       };
-      const response = await fetch("/api/risk/retrospective/assets", {
+      const response = await fetch(riskApiUrl("/api/risk/retrospective/assets"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "update", id: assetId, patch }),
@@ -1250,7 +1302,7 @@ export default function RiskPage() {
     setError("");
     setMessage("");
     try {
-      const response = await fetch("/api/risk/retrospective/assets", {
+      const response = await fetch(riskApiUrl("/api/risk/retrospective/assets"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "merge", id: assetId, targetId }),
@@ -1283,7 +1335,7 @@ export default function RiskPage() {
     setError("");
     setMessage("");
     try {
-      const response = await fetch("/api/risk/retrospective/assets/export", {
+      const response = await fetch(riskApiUrl("/api/risk/retrospective/assets/export"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({}),
@@ -1318,7 +1370,7 @@ export default function RiskPage() {
     setError("");
     setMessage("");
     try {
-      const response = await fetch("/api/risk/retrospective/assets/governance/followups", {
+      const response = await fetch(riskApiUrl("/api/risk/retrospective/assets/governance/followups"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ actionItems }),
@@ -1347,7 +1399,7 @@ export default function RiskPage() {
     setError("");
     setMessage("");
     try {
-      const response = await fetch("/api/risk/retrospective/assets/governance/followups", {
+      const response = await fetch(riskApiUrl("/api/risk/retrospective/assets/governance/followups"), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id, status }),
@@ -1378,7 +1430,7 @@ export default function RiskPage() {
     setError("");
     setMessage("");
     try {
-      const response = await fetch("/api/risk/retrospective/assets/governance/followups/feishu-sync", {
+      const response = await fetch(riskApiUrl("/api/risk/retrospective/assets/governance/followups/feishu-sync"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: followup.id, mode, confirm: mode === "confirm" }),
@@ -1414,7 +1466,7 @@ export default function RiskPage() {
     setMessage("");
     setEvidenceActionMessage("");
     try {
-      const response = await fetch("/api/risk/analyze", {
+      const response = await fetch(riskApiUrl("/api/risk/analyze"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ projectDescription: projectDesc, projectName: scanProjectName, stage: scanStage }),
@@ -1422,10 +1474,14 @@ export default function RiskPage() {
       const data = await response.json() as { risks?: Risk[]; aiReasoning?: string; error?: string; evidence?: AiEvidence };
       setLastRiskEvidence(data.evidence ?? null);
       if (!response.ok || !Array.isArray(data.risks)) throw new Error(data.error || "AI风险扫描失败");
-      const saveResponse = await fetch("/api/risk", {
+      const saveResponse = await fetch(riskApiUrl("/api/risk"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ risks: data.risks }),
+        body: JSON.stringify({
+          risks: data.risks,
+          expected_version: 0,
+          idempotency_key: crypto.randomUUID(),
+        }),
       });
       const savedPayload = await saveResponse.json() as { risks?: Risk[]; error?: string; migrationHint?: string };
       if (!saveResponse.ok || !Array.isArray(savedPayload.risks)) throw new Error([savedPayload.error, savedPayload.migrationHint].filter(Boolean).join("；") || "AI风险写入登记册失败");
@@ -1445,7 +1501,7 @@ export default function RiskPage() {
     setSavingEvidenceAction(actionKey);
     setEvidenceActionMessage("");
     try {
-      const response = await fetch("/api/issue-change", {
+      const response = await fetch(riskApiUrl("/api/issue-change"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1475,7 +1531,7 @@ export default function RiskPage() {
     setError("");
     setMessage("");
     try {
-      const response = await fetch("/api/risk/escalation-drafts", {
+      const response = await fetch(riskApiUrl("/api/risk/escalation-drafts"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ draftId: draft.id, draftType: draft.type, confirm: true }),
@@ -1507,17 +1563,29 @@ export default function RiskPage() {
     setError("");
     setMessage("正在从飞书项目台账读取风险线索...");
     try {
+      if (!selectedProject?.code) throw new Error("FEISHU_PROJECT_CODE_REQUIRED：当前项目未配置稳定项目编码，不能安全匹配飞书台账。");
+      if (selectedProject.dataClass !== "production") throw new Error("飞书共享项目台账只能导入 production 数据空间。");
       const response = await fetch("/api/dashboard/feishu", { cache: "no-store" });
       const payload = await response.json() as { data?: { records?: DashboardRiskRecord[] }; code?: string };
       if (!response.ok || !payload.data?.records) throw new Error(payload.code || `HTTP_${response.status}`);
       const mapped = payload.data.records
+        .filter(record => String(record.项目编号 || "").trim() === selectedProject.code)
         .filter(record => record.是否重点项目 || record.风险等级 !== "低" || Number(record.进度偏差 ?? 0) < -5 || Number(record.应收金额 ?? 0) > 0)
         .slice(0, 12)
-        .map(dashboardRecordToRisk);
-      const saveResponse = await fetch("/api/risk", {
+        .map((record, index) => dashboardRecordToRisk(record, index, selectedProject.id))
+        .map(candidate => {
+          const existing = risks.find(risk => risk.riskCode === candidate.riskCode);
+          return existing ? { ...candidate, version: existing.version } : candidate;
+        });
+      if (mapped.length === 0) throw new Error(`飞书台账中没有与当前项目编码 ${selectedProject.code} 匹配的风险线索。`);
+      const saveResponse = await fetch(riskApiUrl("/api/risk"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ risks: mapped }),
+        body: JSON.stringify({
+          risks: mapped,
+          expected_version: 0,
+          idempotency_key: crypto.randomUUID(),
+        }),
       });
       const savedPayload = await saveResponse.json() as { risks?: Risk[]; error?: string; migrationHint?: string };
       if (!saveResponse.ok || !Array.isArray(savedPayload.risks)) throw new Error([savedPayload.error, savedPayload.migrationHint].filter(Boolean).join("；") || "飞书风险线索写入登记册失败");
@@ -1567,7 +1635,7 @@ export default function RiskPage() {
                   汇总开放风险、逾期、证据缺口、责任人压力和治理升级候选，让风险管理从单条登记册升级为 PMO 组织级闭环。
                 </p>
               </div>
-              <a href="/api/risk/organizational-governance" className="btn-secondary" style={{ textDecoration: "none" }}>查看接口数据</a>
+              <a href={riskApiUrl("/api/risk/organizational-governance")} className="btn-secondary" style={{ textDecoration: "none" }}>查看接口数据</a>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(135px, 1fr))", gap: 10, marginBottom: 12 }}>
               {[

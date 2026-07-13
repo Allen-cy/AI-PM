@@ -1,13 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   buildSensitivityReport,
   calculateSensitivity,
   sensitivityTemplates,
   type SensitivityFactor,
 } from "@/lib/risk-analytics";
+import { loadCurrentBusinessContextSearchParams } from "@/features/operating-model/client-context";
 
 function downloadText(filename: string, content: string) {
   const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
@@ -28,6 +29,17 @@ export default function RiskSensitivityPage() {
   const [projectName, setProjectName] = useState("示例项目");
   const [factors, setFactors] = useState<SensitivityFactor[]>(sensitivityTemplates);
   const [message, setMessage] = useState("");
+  const [impactApiHref, setImpactApiHref] = useState("/risk");
+
+  useEffect(() => {
+    let cancelled = false;
+    void loadCurrentBusinessContextSearchParams()
+      .then(params => {
+        if (!cancelled) setImpactApiHref(`/api/risk/sensitivity-impact?${params.toString()}`);
+      })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, []);
 
   const results = useMemo(() => calculateSensitivity(factors), [factors]);
   const report = useMemo(() => buildSensitivityReport(projectName, factors, results), [projectName, factors, results]);
@@ -99,7 +111,7 @@ export default function RiskSensitivityPage() {
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
               <Link href="/dashboard" className="btn-secondary" style={{ textDecoration: "none" }}>查看项目健康矩阵</Link>
               <Link href="/reports" className="btn-secondary" style={{ textDecoration: "none" }}>进入报告工厂</Link>
-              <a href="/api/risk/sensitivity-impact" target="_blank" rel="noopener noreferrer" className="btn-secondary" style={{ textDecoration: "none" }}>查看影响包API</a>
+              <a href={impactApiHref} target="_blank" rel="noopener noreferrer" className="btn-secondary" style={{ textDecoration: "none" }}>查看影响包API</a>
             </div>
           </div>
         </section>

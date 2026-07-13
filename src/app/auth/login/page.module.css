@@ -1,0 +1,175 @@
+.page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background:
+    radial-gradient(circle at 18% 12%, rgba(255, 236, 190, 0.34), transparent 28%),
+    radial-gradient(circle at 86% 80%, rgba(91, 58, 33, 0.36), transparent 32%),
+    linear-gradient(135deg, #2a1b12 0%, #6f4a2d 48%, #2e1b12 100%);
+  color: #2b2118;
+}
+
+.deskCard {
+  width: 100%;
+  max-width: 980px;
+  min-height: 560px;
+  display: grid;
+  grid-template-columns: minmax(0, 0.95fr) minmax(380px, 1.05fr);
+  border-radius: 30px;
+  padding: 18px;
+  background: linear-gradient(145deg, rgba(255, 244, 221, 0.96), rgba(223, 190, 139, 0.94));
+  box-shadow:
+    0 34px 80px rgba(0, 0, 0, 0.45),
+    inset 0 2px 1px rgba(255, 255, 255, 0.9),
+    inset 0 -18px 36px rgba(104, 67, 34, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.58);
+  position: relative;
+  overflow: hidden;
+}
+
+.brandPanel {
+  position: relative;
+  padding: 34px 30px;
+  border-radius: 24px;
+  color: #fff4df;
+  background:
+    linear-gradient(150deg, rgba(64, 35, 20, 0.96), rgba(126, 79, 39, 0.92)),
+    radial-gradient(circle at 35% 25%, rgba(255, 215, 137, 0.28), transparent 36%);
+  box-shadow:
+    inset 0 1px 1px rgba(255, 255, 255, 0.24),
+    inset 0 -18px 36px rgba(0, 0, 0, 0.18),
+    8px 0 24px rgba(58, 35, 18, 0.18);
+  overflow: hidden;
+}
+
+.brandEmblem {
+  width: 112px;
+  height: 112px;
+  border-radius: 50%;
+  margin-top: 54px;
+  display: grid;
+  place-items: center;
+  font-size: 3rem;
+  background: radial-gradient(circle at 30% 24%, #fff6dc, #d8a74d 42%, #6b421f 78%);
+  box-shadow:
+    0 20px 38px rgba(0, 0, 0, 0.28),
+    inset 0 3px 8px rgba(255, 255, 255, 0.85),
+    inset 0 -8px 18px rgba(83, 48, 18, 0.45);
+}
+
+.brandTitle {
+  margin-top: 28px;
+  font-size: 2rem;
+  line-height: 1.2;
+}
+
+.brandDescription {
+  margin-top: 16px;
+  color: rgba(255, 244, 223, 0.78);
+  line-height: 1.8;
+  font-size: 0.95rem;
+}
+
+.brandNote {
+  margin-top: 34px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: rgba(255, 244, 223, 0.12);
+  border: 1px solid rgba(255, 244, 223, 0.18);
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.16);
+  color: rgba(255, 244, 223, 0.82);
+  font-size: 0.84rem;
+  line-height: 1.7;
+}
+
+.formColumn {
+  position: relative;
+  padding: 42px 44px;
+  display: flex;
+  align-items: center;
+}
+
+.formCard {
+  width: 100%;
+  border-radius: 24px;
+  padding: 34px 32px;
+  background: linear-gradient(180deg, rgba(255, 252, 244, 0.98), rgba(238, 223, 196, 0.94));
+  border: 1px solid rgba(124, 86, 43, 0.22);
+  box-shadow:
+    0 18px 34px rgba(95, 62, 29, 0.18),
+    inset 0 2px 1px rgba(255, 255, 255, 0.95),
+    inset 0 -10px 22px rgba(146, 104, 55, 0.12);
+}
+
+.formFields {
+  display: grid;
+  gap: 16px;
+  margin-top: 28px;
+}
+
+.secondaryLinks {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 22px;
+  font-size: 0.86rem;
+}
+
+@media (max-width: 640px) {
+  .page {
+    min-height: 100svh;
+    place-items: start center;
+    padding: 12px;
+  }
+
+  .deskCard {
+    min-height: 0;
+    grid-template-columns: minmax(0, 1fr);
+    border-radius: 20px;
+    padding: 10px;
+  }
+
+  .brandPanel {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 14px 16px;
+    border-radius: 16px;
+  }
+
+  .brandEmblem,
+  .brandDescription,
+  .brandNote {
+    display: none;
+  }
+
+  .brandTitle {
+    margin: 0;
+    font-size: 1rem;
+    line-height: 1.2;
+    text-align: right;
+  }
+
+  .formColumn {
+    padding: 12px 0 0;
+    align-items: stretch;
+  }
+
+  .formCard {
+    border-radius: 18px;
+    padding: 22px 18px;
+  }
+
+  .formFields {
+    gap: 14px;
+    margin-top: 20px;
+  }
+
+  .secondaryLinks {
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 16px;
+  }
+}

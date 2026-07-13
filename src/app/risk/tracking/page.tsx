@@ -15,6 +15,7 @@ import {
   statusOrder,
 } from "@/lib/risk";
 import type { RiskClosureDecision } from "@/features/risk/closure";
+import { loadCurrentBusinessContextSearchParams } from "@/features/operating-model/client-context";
 
 type RiskPayload = {
   risks?: Risk[];
@@ -91,6 +92,7 @@ export default function RiskTrackingPage() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [reviewNow] = useState(() => Date.now());
+  const [riskScopeQuery, setRiskScopeQuery] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -98,7 +100,10 @@ export default function RiskTrackingPage() {
       setLoading(true);
       setError("");
       try {
-        const response = await fetch("/api/risk", { cache: "no-store" });
+        const params = await loadCurrentBusinessContextSearchParams();
+        const scopeQuery = params.toString();
+        if (!cancelled) setRiskScopeQuery(scopeQuery);
+        const response = await fetch(`/api/risk?${scopeQuery}`, { cache: "no-store" });
         const data = await response.json() as RiskPayload;
         if (!response.ok) throw new Error([data.error, data.migrationHint].filter(Boolean).join("；") || "风险登记册读取失败");
         if (cancelled) return;
@@ -157,11 +162,14 @@ export default function RiskTrackingPage() {
     setError("");
     setMessage("");
     try {
-      const response = await fetch("/api/risk", {
+      if (!riskScopeQuery) throw new Error("业务身份尚未加载完成，请稍后重试。");
+      const response = await fetch(`/api/risk?${riskScopeQuery}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           id: selectedRisk.id,
+          expected_version: selectedRisk.version,
+          idempotency_key: crypto.randomUUID(),
           toStatus: form.status as RiskStatus,
           inputSummary: `本次跟踪输入：完成进度 ${form.progress}%；阻塞/升级：${form.blocker || "无"}。`,
           outputSummary: `风险跟踪记录：${form.actionTaken}`,

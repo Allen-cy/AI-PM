@@ -11,9 +11,13 @@ export type ChangeAction = "analyze" | "approve" | "reject" | "implement" | "com
 export type UnifiedActionSource = "risk" | "issue" | "change" | "governance" | "manual";
 export type UnifiedActionStatus = "open" | "in_progress" | "done" | "cancelled" | "overdue";
 export type UnifiedActionPriority = "P0" | "P1" | "P2";
+export type IssueActionDataClass = "production" | "sample" | "test" | "diagnostic" | "unclassified";
 
 export interface IssueRecord {
   id: string;
+  orgId?: string | null;
+  projectId?: string | null;
+  dataClass?: IssueActionDataClass;
   issueCode?: string | null;
   projectName: string;
   sourceRiskId?: string | null;
@@ -35,6 +39,9 @@ export interface IssueRecord {
 
 export interface ChangeRecord {
   id: string;
+  orgId?: string | null;
+  projectId?: string | null;
+  dataClass?: IssueActionDataClass;
   changeCode?: string | null;
   issueId?: string | null;
   projectName: string;
@@ -60,6 +67,9 @@ export interface ChangeRecord {
 
 export interface UnifiedActionRecord {
   id: string;
+  orgId?: string | null;
+  projectId?: string | null;
+  dataClass?: IssueActionDataClass;
   sourceType: UnifiedActionSource;
   sourceId?: string | null;
   projectName?: string | null;
@@ -78,6 +88,9 @@ export interface UnifiedActionRecord {
 
 export interface IssueChangeEventRecord {
   id: string;
+  orgId?: string | null;
+  projectId?: string | null;
+  dataClass?: IssueActionDataClass;
   subjectType: "issue" | "change" | "action";
   subjectId: string;
   eventType: string;
@@ -109,6 +122,9 @@ export interface IssueCreateInput {
   sourceRiskId?: string;
   sourceRiskCode?: string;
   actionItems?: unknown;
+  orgId?: string;
+  projectId?: string;
+  dataClass?: IssueActionDataClass;
 }
 
 export interface ChangeCreateInput {
@@ -137,6 +153,9 @@ export interface UnifiedActionCreateInput {
   sourceType?: UnifiedActionSource;
   sourceId?: string;
   sourceReason?: string;
+  orgId?: string;
+  projectId?: string;
+  dataClass?: IssueActionDataClass;
 }
 
 export const issueSeverityLabels: Record<IssueSeverity, string> = {

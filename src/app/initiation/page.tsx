@@ -8,6 +8,7 @@ import {
   readStoredBusinessContext,
   readStoredCurrentProject,
   readStoredDataClass,
+  loadCurrentBusinessContextSearchParams,
 } from "@/features/operating-model/client-context";
 
 // ============================================================================
@@ -456,7 +457,8 @@ export default function InitiationPage() {
     setSavingBusinessEvidenceAction(actionKey);
     setBusinessEvidenceActionMessage("");
     try {
-      const response = await fetch("/api/issue-change", {
+      const businessContext = await loadCurrentBusinessContextSearchParams();
+      const response = await fetch(`/api/issue-change?${businessContext.toString()}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

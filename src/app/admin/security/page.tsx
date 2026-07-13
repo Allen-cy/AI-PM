@@ -388,6 +388,7 @@ export default function AdminSecurityPage() {
         <Link href="/" style={{ color: "var(--text2)", textDecoration: "none", fontSize: "0.85rem" }}>← 返回首页</Link>
         <Link href="/account" style={{ color: "var(--text2)", textDecoration: "none", fontSize: "0.85rem" }}>用户中心</Link>
         <Link href="/admin/operating-model" style={{ color: "var(--text2)", textDecoration: "none", fontSize: "0.85rem" }}>运行模型控制台</Link>
+        <Link href="/admin/security/risk-quarantine" style={{ color: "var(--amber)", textDecoration: "none", fontSize: "0.85rem" }}>风险隔离治理</Link>
         <span style={{ color: "var(--border)" }}>|</span>
         <strong style={{ color: "var(--purple)" }}>🛡️ 管理员安全配置中心</strong>
         <span className="tag tag-purple">P9/P10</span>

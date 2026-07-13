@@ -1,4 +1,5 @@
 import { getCurrentUser } from "@/features/auth/server";
+import { authorizeRiskRequest } from "@/features/risk/access";
 import {
   buildRiskRetrospectiveKnowledgeExport,
   listRiskRetrospectiveSyncLogs,
@@ -19,9 +20,11 @@ function jsonResponse(body: unknown, status = 200, requestId = crypto.randomUUID
   });
 }
 
-export async function GET(): Promise<Response> {
+export async function GET(request: Request): Promise<Response> {
   const requestId = crypto.randomUUID();
-  const result = await listRiskRetrospectiveSyncLogs(20);
+  const access = await authorizeRiskRequest(request, "read");
+  if (!access.ok) return jsonResponse({ request_id: requestId, error: access.error, detail: access.detail }, access.status, requestId);
+  const result = await listRiskRetrospectiveSyncLogs(20, access.scope);
   return jsonResponse({
     request_id: requestId,
     status: result.status,
@@ -32,13 +35,11 @@ export async function GET(): Promise<Response> {
 
 export async function POST(request: Request): Promise<Response> {
   const requestId = crypto.randomUUID();
+  const access = await authorizeRiskRequest(request, "transition");
+  if (!access.ok) return jsonResponse({ request_id: requestId, error: access.error, detail: access.detail }, access.status, requestId);
   const user = await getCurrentUser();
-  if (process.env.AUTH_REQUIRED === "true" && !user) {
-    return jsonResponse({ request_id: requestId, status: "unauthorized", error: "请先登录后再导出风险复盘资产。" }, 401, requestId);
-  }
-
   const payload = await request.json().catch(() => ({})) as { targetPath?: string };
-  const assetResult = await listRiskRetrospectiveAssets("all", 200);
+  const assetResult = await listRiskRetrospectiveAssets("all", 200, access.scope);
   if (assetResult.status !== "succeeded") {
     return jsonResponse({
       request_id: requestId,
@@ -50,10 +51,11 @@ export async function POST(request: Request): Promise<Response> {
   const knowledgeExport = buildRiskRetrospectiveKnowledgeExport(assetResult.assets, payload.targetPath);
   const duplicateWarnings = buildRiskRetrospectiveAssetDuplicateWarnings(assetResult.assets);
   const repeatedExport = assetResult.assets.some(asset => asset.lastExportSha256 === knowledgeExport.sha256);
-  const audit = await persistRiskRetrospectiveSyncLog({ knowledgeExport, user, requestId });
+  const audit = await persistRiskRetrospectiveSyncLog({ knowledgeExport, user, requestId, scope: access.scope });
   const metrics = await recordRiskRetrospectiveAssetExportMetrics({
     assetIds: knowledgeExport.assetIds,
     sha256: knowledgeExport.sha256,
+    scope: access.scope,
   });
   const warning = audit.status === "succeeded" ? "" : audit.warning;
   const metricWarning = metrics.status === "succeeded" ? "" : metrics.warning;

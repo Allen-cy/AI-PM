@@ -2,7 +2,9 @@
 
 日期：2026-07-11
 
-当前代码版本：6.0.10
+当前代码版本：6.1.0
+
+> V6.1.0 增量 migration 为 `20260711140000_v61_security_gate.sql`、`20260711150000_v61_risk_scope_quarantine.sql`和`20260711160000_v61_issue_action_scope.sql`。旧 P17–P25 migration 已通过对象、字段和约束对账，只标记迁移历史，不重复执行。
 
 状态：本地质量门已通过；Vercel Production 环境变量补齐、部署、Git Tag 和 GitHub Release 已完成。生产完成仍依赖 Supabase Production 执行/确认 SQL，以及使用真实管理员账号完成线上飞书/真实业务数据冒烟。
 

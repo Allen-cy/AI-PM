@@ -123,7 +123,13 @@ export async function GET(request: NextRequest) {
       effective.config.tables.milestone
         ? client.listRecords('milestone', 500).then(data => ({ data, error: null as string | null })).catch(error => ({ data: [], error: error instanceof Error ? error.message : String(error) }))
         : Promise.resolve({ data: [], error: '未配置飞书里程碑表，交付物数据不可用。' }),
-      listIssueChangeChain(),
+      listIssueChangeChain({
+        actorUserId: user.id,
+        orgId: resolved.access.scope!.orgId,
+        projectIds: [project.id],
+        requestedProjectId: project.id,
+        dataClass,
+      }),
     ]);
     const tasks = normalizeExecutionTasks(taskResult, project);
     const deliverables = normalizeExecutionDeliverables(deliverableResult.data, project);

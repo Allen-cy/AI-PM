@@ -27,6 +27,9 @@ import {
 import { llmComplete } from "@/lib/llm";
 import { REPORT_TYPE_LABELS, type ReportActionItem, type ReportRequest } from "@/lib/reports";
 import { listRisks } from "@/lib/risk-repository";
+import { authorizeRiskRequest } from "@/features/risk/access";
+import { filterRiskScopedProjectRecords } from "@/features/risk/scope";
+import { buildDashboardData } from "@/features/dashboard/normalizer";
 
 export const runtime = "nodejs";
 
@@ -116,6 +119,10 @@ export async function POST(request: Request): Promise<Response> {
   if (process.env.AUTH_REQUIRED === "true" && !user) {
     return jsonResponse({ success: false, status: "unauthorized", error: "请先登录后再生成报告。", request_id: requestId }, 401, requestId);
   }
+  const riskAccess = await authorizeRiskRequest(request, "read");
+  if (!riskAccess.ok) {
+    return jsonResponse({ success: false, error: riskAccess.error, detail: riskAccess.detail, request_id: requestId }, riskAccess.status, requestId);
+  }
 
   let body: ReportRequest;
   try {
@@ -139,7 +146,7 @@ export async function POST(request: Request): Promise<Response> {
   }
   let rawDashboard: Awaited<ReturnType<typeof loadDashboardFromFeishu>>;
   try {
-    rawDashboard = await loadDashboardFromFeishu(effective.config);
+    rawDashboard = await loadDashboardFromFeishu(effective.config, { dataClass: riskAccess.scope.dataClass });
   } catch {
     return jsonResponse({
       success: false,
@@ -159,7 +166,9 @@ export async function POST(request: Request): Promise<Response> {
     }, 422, requestId);
   }
   const grants = await loadProjectAccessGrantsForUser(effective.user);
-  const dashboard = filterDashboardByProjectAccess(rawDashboard, effective.user, grants);
+  const grantedDashboard = filterDashboardByProjectAccess(rawDashboard, effective.user, grants);
+  const scopedRecords = filterRiskScopedProjectRecords(grantedDashboard.records, riskAccess.scope);
+  const dashboard = buildDashboardData(scopedRecords, { type: grantedDashboard.source.type, name: grantedDashboard.source.name, note: grantedDashboard.source.note }, { useTemplateFallback: false });
   const access = {
     mode: projectAccessMode(effective.user, dashboard.records.length, rawDashboard.records.length),
     visible_projects: dashboard.records.length,
@@ -173,7 +182,7 @@ export async function POST(request: Request): Promise<Response> {
     : undefined;
   let riskResult: Awaited<ReturnType<typeof listRisks>>;
   try {
-    riskResult = await listRisks();
+    riskResult = await listRisks(riskAccess.scope);
   } catch {
     return jsonResponse({
       success: false,
@@ -190,7 +199,7 @@ export async function POST(request: Request): Promise<Response> {
   const riskSensitivityImpact = buildRiskSensitivityImpactDashboard(dashboard);
   const riskClosure = buildRiskClosureDashboard(riskResult.risks, riskResult.events);
   const riskRetrospective = buildRiskRetrospectiveDashboard(riskResult.risks, riskResult.events, riskClosure);
-  const governanceFollowupResult = await listRiskRetrospectiveGovernanceFollowups(120);
+  const governanceFollowupResult = await listRiskRetrospectiveGovernanceFollowups(120, riskAccess.scope);
   const riskRetrospectiveGovernanceFollowups = buildRiskRetrospectiveGovernanceFollowupClosureDashboard({
     followups: governanceFollowupResult.followups,
     warning: "warning" in governanceFollowupResult ? governanceFollowupResult.warning : undefined,

@@ -3,12 +3,14 @@ import type {
   RiskRetrospectiveGovernanceActionItem,
   RiskRetrospectiveGovernanceActionItemPriority,
 } from "./retrospective-governance.ts";
+import { resolveRequestedRiskProjectIds, type RiskDataScope } from "./scope.ts";
 
 export type RiskRetrospectiveGovernanceFollowupStatus = "待复核" | "处理中" | "待验收" | "已关闭";
 export type RiskRetrospectiveGovernanceFollowupFeishuSyncStatus = "未同步" | "待确认" | "同步中" | "已同步" | "同步失败";
 
 export interface RiskRetrospectiveGovernanceFollowupRecord {
   id: string;
+  projectId?: string;
   actionKey: string;
   sourceLogId: string | null;
   assetTitle: string;
@@ -115,6 +117,7 @@ function sqlWarning(message?: string): string {
 function selectColumns(): string {
   return [
     "id",
+    "project_id",
     "action_key",
     "source_log_id",
     "asset_title",
@@ -144,6 +147,7 @@ function selectColumns(): string {
 function mapFollowup(row: Record<string, unknown>): RiskRetrospectiveGovernanceFollowupRecord {
   return {
     id: String(row.id),
+    projectId: String(row.project_id ?? ""),
     actionKey: String(row.action_key ?? ""),
     sourceLogId: typeof row.source_log_id === "string" ? row.source_log_id : null,
     assetTitle: String(row.asset_title ?? ""),
@@ -170,6 +174,16 @@ function mapFollowup(row: Record<string, unknown>): RiskRetrospectiveGovernanceF
   };
 }
 
+function scopedProjectIds(scope: RiskDataScope): string[] {
+  return resolveRequestedRiskProjectIds(scope, scope.requestedProjectId);
+}
+
+function singleWritableProjectId(scope: RiskDataScope): string {
+  const projectIds = scopedProjectIds(scope);
+  if (projectIds.length !== 1) throw new Error("PROJECT_ID_REQUIRED");
+  return projectIds[0];
+}
+
 export function normalizeRiskRetrospectiveGovernanceFollowupStatus(status: string): RiskRetrospectiveGovernanceFollowupStatus | null {
   return VALID_STATUSES.includes(status as RiskRetrospectiveGovernanceFollowupStatus)
     ? status as RiskRetrospectiveGovernanceFollowupStatus
@@ -182,7 +196,10 @@ export function normalizeRiskRetrospectiveGovernanceFollowupFeishuSyncStatus(sta
     : null;
 }
 
-export async function listRiskRetrospectiveGovernanceFollowups(limit = 50): Promise<RiskRetrospectiveGovernanceFollowupListResult> {
+export async function listRiskRetrospectiveGovernanceFollowups(limit = 50, scope?: RiskDataScope): Promise<RiskRetrospectiveGovernanceFollowupListResult> {
+  if (!scope) return { status: "failed", followups: [], warning: "RISK_DATA_SCOPE_REQUIRED" };
+  const projectIds = scopedProjectIds(scope);
+  if (projectIds.length === 0) return { status: "succeeded", followups: [] };
   if (!isAuthStorageConfigured()) {
     return { status: "not_configured", followups: [], warning: "Supabase 未配置，无法读取风险复盘二次治理待办。" };
   }
@@ -192,6 +209,9 @@ export async function listRiskRetrospectiveGovernanceFollowups(limit = 50): Prom
     const { data, error } = await supabase
       .from("risk_retrospective_governance_followups")
       .select(selectColumns())
+      .eq("org_id", scope.orgId)
+      .eq("data_class", scope.dataClass)
+      .in("project_id", projectIds)
       .order("created_at", { ascending: false })
       .limit(limit);
 
@@ -215,11 +235,22 @@ export async function listRiskRetrospectiveGovernanceFollowups(limit = 50): Prom
 export async function saveRiskRetrospectiveGovernanceFollowups(
   input: SaveRiskRetrospectiveGovernanceFollowupsInput,
   user: AppUser | null,
+  scope?: RiskDataScope,
 ): Promise<RiskRetrospectiveGovernanceFollowupSaveResult> {
+  if (!scope) return { status: "failed", warning: "RISK_DATA_SCOPE_REQUIRED" };
   if (!isAuthStorageConfigured()) {
     return { status: "not_configured", warning: "Supabase 未配置，无法保存风险复盘二次治理待办。" };
   }
+  let projectId: string;
+  try {
+    projectId = singleWritableProjectId(scope);
+  } catch (error) {
+    return { status: "failed", warning: error instanceof Error ? error.message : "PROJECT_ID_REQUIRED" };
+  }
   const payload = input.actionItems.map(item => ({
+    org_id: scope.orgId,
+    project_id: projectId,
+    data_class: scope.dataClass,
     action_key: item.id,
     source_log_id: isUuid(item.sourceLogId) ? item.sourceLogId : null,
     asset_title: item.assetTitle,
@@ -239,7 +270,7 @@ export async function saveRiskRetrospectiveGovernanceFollowups(
     const supabase = getAuthSupabase();
     const { data, error } = await supabase
       .from("risk_retrospective_governance_followups")
-      .upsert(payload, { onConflict: "action_key", ignoreDuplicates: true })
+      .upsert(payload, { onConflict: "org_id,data_class,project_id,action_key", ignoreDuplicates: true })
       .select(selectColumns());
 
     if (error) {
@@ -262,7 +293,10 @@ export async function saveRiskRetrospectiveGovernanceFollowups(
   }
 }
 
-export async function getRiskRetrospectiveGovernanceFollowup(id: string): Promise<RiskRetrospectiveGovernanceFollowupGetResult> {
+export async function getRiskRetrospectiveGovernanceFollowup(id: string, scope?: RiskDataScope): Promise<RiskRetrospectiveGovernanceFollowupGetResult> {
+  if (!scope) return { status: "failed", warning: "RISK_DATA_SCOPE_REQUIRED" };
+  const projectIds = scopedProjectIds(scope);
+  if (projectIds.length === 0) return { status: "not_found", warning: "风险复盘二次治理待办不存在。" };
   if (!isAuthStorageConfigured()) {
     return { status: "not_configured", warning: "Supabase 未配置，无法读取风险复盘二次治理待办。" };
   }
@@ -272,6 +306,9 @@ export async function getRiskRetrospectiveGovernanceFollowup(id: string): Promis
       .from("risk_retrospective_governance_followups")
       .select(selectColumns())
       .eq("id", id)
+      .eq("org_id", scope.orgId)
+      .eq("data_class", scope.dataClass)
+      .in("project_id", projectIds)
       .maybeSingle();
 
     if (error) {
@@ -292,7 +329,11 @@ export async function getRiskRetrospectiveGovernanceFollowup(id: string): Promis
 
 export async function transitionRiskRetrospectiveGovernanceFollowup(
   input: TransitionRiskRetrospectiveGovernanceFollowupInput,
+  scope?: RiskDataScope,
 ): Promise<RiskRetrospectiveGovernanceFollowupUpdateResult> {
+  if (!scope) return { status: "failed", warning: "RISK_DATA_SCOPE_REQUIRED" };
+  const projectIds = scopedProjectIds(scope);
+  if (projectIds.length === 0) return { status: "not_found", warning: "风险复盘二次治理待办不存在。" };
   if (!isAuthStorageConfigured()) {
     return { status: "not_configured", warning: "Supabase 未配置，无法流转风险复盘二次治理待办。" };
   }
@@ -311,6 +352,9 @@ export async function transitionRiskRetrospectiveGovernanceFollowup(
         updated_at: new Date().toISOString(),
       })
       .eq("id", input.id)
+      .eq("org_id", scope.orgId)
+      .eq("data_class", scope.dataClass)
+      .in("project_id", projectIds)
       .select(selectColumns())
       .maybeSingle();
 
@@ -332,7 +376,11 @@ export async function transitionRiskRetrospectiveGovernanceFollowup(
 
 export async function updateRiskRetrospectiveGovernanceFollowupFromReminder(
   input: UpdateRiskRetrospectiveGovernanceFollowupFromReminderInput,
+  scope?: RiskDataScope,
 ): Promise<RiskRetrospectiveGovernanceFollowupUpdateResult> {
+  if (!scope) return { status: "failed", warning: "RISK_DATA_SCOPE_REQUIRED" };
+  const projectIds = scopedProjectIds(scope);
+  if (projectIds.length === 0) return { status: "not_found", warning: "风险复盘二次治理待办不存在。" };
   if (!isAuthStorageConfigured()) {
     return { status: "not_configured", warning: "Supabase 未配置，无法联动更新风险复盘二次治理待办。" };
   }
@@ -354,6 +402,9 @@ export async function updateRiskRetrospectiveGovernanceFollowupFromReminder(
       .from("risk_retrospective_governance_followups")
       .update(updatePayload)
       .eq("id", input.id)
+      .eq("org_id", scope.orgId)
+      .eq("data_class", scope.dataClass)
+      .in("project_id", projectIds)
       .select(selectColumns())
       .maybeSingle();
 
@@ -375,7 +426,11 @@ export async function updateRiskRetrospectiveGovernanceFollowupFromReminder(
 
 export async function updateRiskRetrospectiveGovernanceFollowupFeishuSync(
   input: UpdateRiskRetrospectiveGovernanceFollowupFeishuSyncInput,
+  scope?: RiskDataScope,
 ): Promise<RiskRetrospectiveGovernanceFollowupUpdateResult> {
+  if (!scope) return { status: "failed", warning: "RISK_DATA_SCOPE_REQUIRED" };
+  const projectIds = scopedProjectIds(scope);
+  if (projectIds.length === 0) return { status: "not_found", warning: "风险复盘二次治理待办不存在。" };
   if (!isAuthStorageConfigured()) {
     return { status: "not_configured", warning: "Supabase 未配置，无法更新风险复盘二次治理飞书同步状态。" };
   }
@@ -396,6 +451,9 @@ export async function updateRiskRetrospectiveGovernanceFollowupFeishuSync(
         updated_at: new Date().toISOString(),
       })
       .eq("id", input.id)
+      .eq("org_id", scope.orgId)
+      .eq("data_class", scope.dataClass)
+      .in("project_id", projectIds)
       .select(selectColumns())
       .maybeSingle();
 

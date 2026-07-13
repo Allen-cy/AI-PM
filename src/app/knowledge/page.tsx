@@ -6,6 +6,7 @@ import { FeishuConfirmationInlinePanelClient } from '@/components/FeishuConfirma
 import { IntegrationStatusPanelClient } from '@/components/IntegrationStatusPanelClient';
 import { toAssistantMessage } from '@/features/rag/client-adapter';
 import type { RagQueryResult } from '@/features/rag/types';
+import { loadCurrentBusinessContextSearchParams } from '@/features/operating-model/client-context';
 import {
   knowledgeCategories,
   suggestedQuestions,
@@ -49,7 +50,8 @@ export default function KnowledgePage() {
 
     try {
       const selectedDomain = knowledgeCategories.find(category => category.id === selectedCategory)?.name;
-      const response = await fetch('/api/rag/query', {
+      const contextParams = await loadCurrentBusinessContextSearchParams();
+      const response = await fetch(`/api/rag/query?${contextParams.toString()}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

@@ -1,7 +1,9 @@
 import { getCurrentUser } from "@/features/auth/server";
+import { authorizeRiskRequest } from "@/features/risk/access";
 import { FeishuActionClient } from "@/features/feishu/actions";
 import { FeishuApiError } from "@/features/feishu/client";
 import { getEffectiveFeishuConfig } from "@/features/feishu/user-config";
+import { resolveRequestedRiskProjectIds } from "@/features/risk/scope";
 import { listRiskRetrospectiveGovernanceFollowups } from "@/features/risk/retrospective-governance-followups";
 import { suppressRiskRetrospectiveGovernanceReminderDraftsForWeek } from "@/features/risk/retrospective-governance-operation-analytics";
 import {
@@ -51,11 +53,18 @@ function buildWeeklyReminderMessage(reportFacts: string[], reminders: RiskRetros
 
 export async function POST(request: Request): Promise<Response> {
   const requestId = crypto.randomUUID();
-  const user = await getCurrentUser();
-  if (process.env.AUTH_REQUIRED === "true" && !user) {
-    return jsonResponse({ request_id: requestId, status: "unauthorized", warning: "请先登录后再发送知识治理周运营飞书提醒。" }, 401, requestId);
+  const access = await authorizeRiskRequest(request, "transition");
+  if (!access.ok) return jsonResponse({ request_id: requestId, error: access.error, detail: access.detail }, access.status, requestId);
+  const projectIds = resolveRequestedRiskProjectIds(access.scope, access.scope.requestedProjectId);
+  if (projectIds.length !== 1) {
+    return jsonResponse({
+      request_id: requestId,
+      status: "failed",
+      error: "PROJECT_ID_REQUIRED",
+      warning: "发送飞书提醒前必须选择一个具体的授权项目。",
+    }, 400, requestId);
   }
-
+  const user = await getCurrentUser();
   let body: WeeklyReminderBody = {};
   try {
     body = await request.json() as WeeklyReminderBody;
@@ -63,7 +72,7 @@ export async function POST(request: Request): Promise<Response> {
     return jsonResponse({ request_id: requestId, status: "failed", warning: "请求 JSON 格式错误。" }, 400, requestId);
   }
 
-  const followupResult = await listRiskRetrospectiveGovernanceFollowups(500);
+  const followupResult = await listRiskRetrospectiveGovernanceFollowups(500, access.scope);
   const operationReport = buildRiskRetrospectiveGovernanceFollowupOperationReport({
     followups: followupResult.followups,
     warning: "warning" in followupResult ? followupResult.warning : undefined,
@@ -77,7 +86,7 @@ export async function POST(request: Request): Promise<Response> {
       operation_report: operationReport,
     }, 200, requestId);
   }
-  const history = await listRiskRetrospectiveGovernanceOperationHistory({ reminderLimit: 300 });
+  const history = await listRiskRetrospectiveGovernanceOperationHistory({ scope: access.scope, reminderLimit: 300 });
   const currentWeekStart = operationReport.weeklyTrend[operationReport.weeklyTrend.length - 1]?.weekStart ?? new Date().toISOString().slice(0, 10);
   const reminderSuppression = suppressRiskRetrospectiveGovernanceReminderDraftsForWeek({
     reminders: operationReport.reminderDrafts,
@@ -151,7 +160,7 @@ export async function POST(request: Request): Promise<Response> {
       idempotencyKey: `risk-retro-governance-weekly-${new Date().toISOString().slice(0, 10)}-${requestId}`,
     });
     const [snapshotResult, reminderLogResult] = await Promise.all([
-      persistRiskRetrospectiveGovernanceOperationSnapshot({ report: operationReport, user, requestId }),
+      persistRiskRetrospectiveGovernanceOperationSnapshot({ report: operationReport, user, requestId, scope: access.scope }),
       persistRiskRetrospectiveGovernanceReminderLogs({
         reminders: reminderSuppression.reminders,
         status: "sent",
@@ -160,6 +169,7 @@ export async function POST(request: Request): Promise<Response> {
         receiveIdType,
         receiveId,
         feishuMessageId: resource.messageId,
+        scope: access.scope,
       }),
     ]);
     await writeOperationAudit({
@@ -205,6 +215,7 @@ export async function POST(request: Request): Promise<Response> {
       receiveIdType,
       receiveId,
       error: code,
+      scope: access.scope,
     });
     await writeOperationAudit({
       user,

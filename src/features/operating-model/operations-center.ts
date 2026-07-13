@@ -49,8 +49,8 @@ export function buildRoleOnboardingGuide(input: {
   const acknowledgedDataClass = String(input.acknowledgements?.data_class ?? "") === input.dataClass;
   const steps: RoleOnboardingStep[] = [
     { key: "business_role", label: "业务角色与管理范围", completed: input.roleAssignmentActive, verification: "system", actionHref: "/admin/security", detail: input.roleAssignmentActive ? `已验证 ${input.businessRole} 角色授权。` : "需管理员分配有效业务角色和主体范围。" },
-    { key: "feishu", label: "个人飞书接入", completed: input.feishuConfigured, verification: "system", actionHref: "/user-center", detail: input.feishuConfigured ? "已验证个人飞书应用、Base 和项目表映射。" : "请在用户中心配置并测试个人飞书接入。" },
-    { key: "ai_model", label: "AI 模型接入", completed: input.aiConfigured, verification: "system", actionHref: "/user-center", detail: input.aiConfigured ? "已检测到可用的用户或全局 AI 模型配置。" : "请在用户中心配置模型并通过连接测试。" },
+    { key: "feishu", label: "个人飞书接入", completed: input.feishuConfigured, verification: "system", actionHref: "/account", detail: input.feishuConfigured ? "已验证个人飞书应用、Base 和项目表映射。" : "请在用户中心配置并测试个人飞书接入。" },
+    { key: "ai_model", label: "AI 模型接入", completed: input.aiConfigured, verification: "system", actionHref: "/account", detail: input.aiConfigured ? "已检测到可用的用户或全局 AI 模型配置。" : "请在用户中心配置模型并通过连接测试。" },
     { key: "project_mapping", label: "稳定项目身份映射", completed: input.projectMappingCount > 0, verification: "system", actionHref: "/integration-center", detail: input.projectMappingCount > 0 ? `当前范围已映射 ${input.projectMappingCount} 个项目。` : "请先将飞书项目台账与系统 project_id 完成稳定映射。" },
     { key: "data_class", label: "数据分类确认", completed: acknowledgedDataClass, verification: "human_acknowledgement", actionHref: "/operations-center", detail: acknowledgedDataClass ? `已确认当前使用 ${input.dataClass} 数据空间。` : `需人工确认当前 ${input.dataClass} 数据空间，防止样例与正式数据混用。` },
   ];

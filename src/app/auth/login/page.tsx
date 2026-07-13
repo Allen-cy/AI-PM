@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useState, type FormEvent } from "react";
+import styles from "./page.module.css";
 
 export default function LoginPage() {
   const [account, setAccount] = useState("");
@@ -9,7 +10,9 @@ export default function LoginPage() {
   const [message, setMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const submit = async () => {
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (loading) return;
     setLoading(true);
     setMessage(null);
     try {
@@ -29,33 +32,6 @@ export default function LoginPage() {
     }
   };
 
-  const pageStyle = {
-    minHeight: "100vh",
-    display: "grid",
-    placeItems: "center",
-    padding: 24,
-    background:
-      "radial-gradient(circle at 18% 12%, rgba(255,236,190,0.34), transparent 28%), radial-gradient(circle at 86% 80%, rgba(91,58,33,0.36), transparent 32%), linear-gradient(135deg, #2a1b12 0%, #6f4a2d 48%, #2e1b12 100%)",
-    color: "#2b2118",
-  } as const;
-
-  const deskCard = {
-    width: "100%",
-    maxWidth: 980,
-    minHeight: 560,
-    display: "grid",
-    gridTemplateColumns: "minmax(0, 0.95fr) minmax(380px, 1.05fr)",
-    borderRadius: 30,
-    padding: 18,
-    background:
-      "linear-gradient(145deg, rgba(255,244,221,0.96), rgba(223,190,139,0.94))",
-    boxShadow:
-      "0 34px 80px rgba(0,0,0,0.45), inset 0 2px 1px rgba(255,255,255,0.9), inset 0 -18px 36px rgba(104,67,34,0.18)",
-    border: "1px solid rgba(255,255,255,0.58)",
-    position: "relative",
-    overflow: "hidden",
-  } as const;
-
   const inputStyle = {
     width: "100%",
     border: "1px solid rgba(86,58,31,0.34)",
@@ -71,8 +47,8 @@ export default function LoginPage() {
   } as const;
 
   return (
-    <main style={pageStyle}>
-      <section style={deskCard}>
+    <main className={styles.page}>
+      <section className={styles.deskCard}>
         <div style={{
           position: "absolute",
           inset: 0,
@@ -82,70 +58,24 @@ export default function LoginPage() {
             "repeating-linear-gradient(90deg, rgba(111,76,42,0.12) 0 1px, transparent 1px 18px), repeating-linear-gradient(0deg, rgba(255,255,255,0.2) 0 1px, transparent 1px 24px)",
         }} />
 
-        <aside style={{
-          position: "relative",
-          padding: "34px 30px",
-          borderRadius: 24,
-          color: "#fff4df",
-          background:
-            "linear-gradient(150deg, rgba(64,35,20,0.96), rgba(126,79,39,0.92)), radial-gradient(circle at 35% 25%, rgba(255,215,137,0.28), transparent 36%)",
-          boxShadow:
-            "inset 0 1px 1px rgba(255,255,255,0.24), inset 0 -18px 36px rgba(0,0,0,0.18), 8px 0 24px rgba(58,35,18,0.18)",
-          overflow: "hidden",
-        }}>
+        <aside className={styles.brandPanel}>
           <Link href="/" style={{ color: "#f7deb0", textDecoration: "none", fontSize: "0.86rem" }}>← 返回首页</Link>
-          <div style={{
-            width: 112,
-            height: 112,
-            borderRadius: "50%",
-            marginTop: 54,
-            display: "grid",
-            placeItems: "center",
-            fontSize: "3rem",
-            background:
-              "radial-gradient(circle at 30% 24%, #fff6dc, #d8a74d 42%, #6b421f 78%)",
-            boxShadow:
-              "0 20px 38px rgba(0,0,0,0.28), inset 0 3px 8px rgba(255,255,255,0.85), inset 0 -8px 18px rgba(83,48,18,0.45)",
-          }}>
+          <div className={styles.brandEmblem}>
             🏛️
           </div>
-          <h1 style={{ marginTop: 28, fontSize: "2rem", lineHeight: 1.2 }}>
+          <h1 className={styles.brandTitle}>
             AI PMO<br />管理工作台
           </h1>
-          <p style={{ marginTop: 16, color: "rgba(255,244,223,0.78)", lineHeight: 1.8, fontSize: "0.95rem" }}>
+          <p className={styles.brandDescription}>
             像打开一本熟悉的项目台账：飞书承载业务数据，AI帮助你看清风险、进度和经营状态。
           </p>
-          <div style={{
-            marginTop: 34,
-            padding: "14px 16px",
-            borderRadius: 18,
-            background: "rgba(255,244,223,0.12)",
-            border: "1px solid rgba(255,244,223,0.18)",
-            boxShadow: "inset 0 2px 6px rgba(0,0,0,0.16)",
-            color: "rgba(255,244,223,0.82)",
-            fontSize: "0.84rem",
-            lineHeight: 1.7,
-          }}>
+          <div className={styles.brandNote}>
             支持邮箱或手机号登录。新用户请先提交申请，由管理员审核后发放一次性注册码。
           </div>
         </aside>
 
-        <div style={{
-          position: "relative",
-          padding: "42px 44px",
-          display: "flex",
-          alignItems: "center",
-        }}>
-          <div style={{
-            width: "100%",
-            borderRadius: 24,
-            padding: "34px 32px",
-            background:
-              "linear-gradient(180deg, rgba(255,252,244,0.98), rgba(238,223,196,0.94))",
-            border: "1px solid rgba(124,86,43,0.22)",
-            boxShadow:
-              "0 18px 34px rgba(95,62,29,0.18), inset 0 2px 1px rgba(255,255,255,0.95), inset 0 -10px 22px rgba(146,104,55,0.12)",
-          }}>
+        <div className={styles.formColumn}>
+          <div className={styles.formCard}>
             <div style={{
               display: "inline-flex",
               padding: "6px 12px",
@@ -163,7 +93,7 @@ export default function LoginPage() {
               输入你的邮箱或手机号码，进入项目管理驾驶舱。
             </p>
 
-            <div style={{ display: "grid", gap: 16, marginTop: 28 }}>
+            <form className={styles.formFields} onSubmit={submit}>
               <label style={{ display: "grid", gap: 8, color: "#6d5034", fontWeight: 700, fontSize: "0.84rem" }}>
                 邮箱或手机号
                 <input
@@ -184,7 +114,7 @@ export default function LoginPage() {
                 />
               </label>
               <button
-                onClick={submit}
+                type="submit"
                 disabled={loading}
                 style={{
                   border: "1px solid rgba(92,55,24,0.42)",
@@ -204,7 +134,7 @@ export default function LoginPage() {
               >
                 {loading ? "正在打开工作台..." : "进入工作台"}
               </button>
-            </div>
+            </form>
 
             {message && (
               <div style={{
@@ -220,13 +150,7 @@ export default function LoginPage() {
               </div>
             )}
 
-            <div style={{
-              display: "flex",
-              justifyContent: "space-between",
-              gap: 12,
-              marginTop: 22,
-              fontSize: "0.86rem",
-            }}>
+            <div className={styles.secondaryLinks}>
               <Link href="/auth/apply" style={{ color: "#8a5724", fontWeight: 700 }}>申请使用</Link>
               <Link href="/auth/register" style={{ color: "#8a5724", fontWeight: 700 }}>已有注册码，去注册</Link>
             </div>

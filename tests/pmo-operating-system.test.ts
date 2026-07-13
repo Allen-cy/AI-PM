@@ -838,7 +838,7 @@ test('risk sensitivity impact is discoverable from api dashboard and sensitivity
 
   assert.match(apiSource, /buildRiskSensitivityImpactDashboard/);
   assert.match(dashboardSource, /buildRiskSensitivityImpactDashboard/);
-  assert.match(dashboardSource, /\/api\/risk\/sensitivity-impact/);
+  assert.match(dashboardSource, /href="\/risk\/sensitivity"/);
   assert.match(sensitivityPageSource, /系统联动口径/);
   assert.match(sensitivityPageSource, /\/api\/risk\/sensitivity-impact/);
   assert.match(reportRouteSource, /riskSensitivityImpact/);

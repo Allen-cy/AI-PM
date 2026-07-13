@@ -671,9 +671,9 @@ export default function DashboardPage() {
               <div style={{ marginTop: 14, padding: 12, background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.22)", borderRadius: 8 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", marginBottom: 8 }}>
                   <div style={{ fontSize: "0.7rem", color: "var(--text2)" }}>敏感性分析建议</div>
-                  <a href="/api/risk/sensitivity-impact" target="_blank" rel="noopener noreferrer" style={{ fontSize: "0.68rem", color: "var(--accent2)", textDecoration: "none" }}>
-                    查看影响包
-                  </a>
+                  <Link href="/risk/sensitivity" style={{ fontSize: "0.68rem", color: "var(--accent2)", textDecoration: "none" }}>
+                    查看敏感性分析
+                  </Link>
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
                   <div style={{ fontSize: "0.75rem", color: "var(--text2)" }}>高敏：<span style={{ color: "var(--red)", fontWeight: 700 }}>{riskSensitivityImpact.summary.highSensitivity}</span></div>

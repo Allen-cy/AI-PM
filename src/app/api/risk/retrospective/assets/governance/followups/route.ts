@@ -1,4 +1,5 @@
 import { getCurrentUser } from "@/features/auth/server";
+import { authorizeRiskRequest } from "@/features/risk/access";
 import type { RiskRetrospectiveGovernanceActionItem } from "@/features/risk/retrospective-governance";
 import {
   listRiskRetrospectiveGovernanceFollowups,
@@ -108,10 +109,12 @@ function isActionItem(value: unknown): value is RiskRetrospectiveGovernanceActio
 
 export async function GET(request: Request): Promise<Response> {
   const requestId = crypto.randomUUID();
+  const access = await authorizeRiskRequest(request, "read");
+  if (!access.ok) return jsonResponse({ request_id: requestId, error: access.error, detail: access.detail }, access.status, requestId);
   const url = new URL(request.url);
   const limit = Number(url.searchParams.get("limit") || 50);
   const filters = operationFiltersFromUrl(url);
-  const result = await listRiskRetrospectiveGovernanceFollowups(Number.isFinite(limit) ? limit : 50);
+  const result = await listRiskRetrospectiveGovernanceFollowups(Number.isFinite(limit) ? limit : 50, access.scope);
   const operationReport = buildRiskRetrospectiveGovernanceFollowupOperationReport({
     followups: result.followups,
     filters,
@@ -135,11 +138,9 @@ export async function GET(request: Request): Promise<Response> {
 
 export async function POST(request: Request): Promise<Response> {
   const requestId = crypto.randomUUID();
+  const access = await authorizeRiskRequest(request, "create");
+  if (!access.ok) return jsonResponse({ request_id: requestId, error: access.error, detail: access.detail }, access.status, requestId);
   const user = await getCurrentUser();
-  if (process.env.AUTH_REQUIRED === "true" && !user) {
-    return jsonResponse({ request_id: requestId, status: "unauthorized", warning: "请先登录后再保存风险复盘二次治理待办。" }, 401, requestId);
-  }
-
   let body: SaveBody;
   try {
     body = await request.json() as SaveBody;
@@ -151,7 +152,7 @@ export async function POST(request: Request): Promise<Response> {
     return jsonResponse({ request_id: requestId, status: "failed", warning: "缺少有效的二次治理待办。" }, 400, requestId);
   }
 
-  const result = await saveRiskRetrospectiveGovernanceFollowups({ actionItems }, user);
+  const result = await saveRiskRetrospectiveGovernanceFollowups({ actionItems }, user, access.scope);
   if (result.status === "succeeded") {
     await writeOperationAudit({
       user,
@@ -170,11 +171,9 @@ export async function POST(request: Request): Promise<Response> {
 
 export async function PATCH(request: Request): Promise<Response> {
   const requestId = crypto.randomUUID();
+  const access = await authorizeRiskRequest(request, "transition");
+  if (!access.ok) return jsonResponse({ request_id: requestId, error: access.error, detail: access.detail }, access.status, requestId);
   const user = await getCurrentUser();
-  if (process.env.AUTH_REQUIRED === "true" && !user) {
-    return jsonResponse({ request_id: requestId, status: "unauthorized", warning: "请先登录后再流转风险复盘二次治理待办。" }, 401, requestId);
-  }
-
   let body: PatchBody;
   try {
     body = await request.json() as PatchBody;
@@ -190,7 +189,7 @@ export async function PATCH(request: Request): Promise<Response> {
     status: body.status,
     closureNote: body.closureNote,
     reviewResult: body.reviewResult,
-  });
+  }, access.scope);
   if (result.status === "succeeded") {
     await writeOperationAudit({
       user,

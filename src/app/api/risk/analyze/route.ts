@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/features/auth/server";
 import { buildRiskScanEvidence, withAuditResult } from "@/features/ai/evidence";
 import { persistAiEvidence } from "@/features/ai/evidence-repository";
+import { authorizeRiskRequest, type RiskAccessScope } from "@/features/risk/access";
 import { llmComplete, SYSTEM_PROMPTS } from "@/lib/llm";
 import {
   calculateRiskPriority,
@@ -170,9 +171,33 @@ function buildRuleBasedRisks(input: AnalyzeInput): Risk[] {
   }, index, input, "风险核查清单规则兜底"));
 }
 
+function applyRiskScope(risks: Risk[], scope: RiskAccessScope): Risk[] {
+  const projectId = scope.requestedProjectId || (scope.projectIds.length === 1 ? scope.projectIds[0] : undefined);
+  return risks.map(risk => ({
+    ...risk,
+    projectId,
+    orgId: scope.orgId,
+    dataClass: scope.dataClass,
+  }));
+}
+
 export async function POST(request: NextRequest) {
   const requestId = crypto.randomUUID();
+  const access = await authorizeRiskRequest(request, "create");
+  if (!access.ok) {
+    return NextResponse.json({ error: access.error, detail: access.detail }, {
+      status: access.status,
+      headers: { "Cache-Control": "no-store", "X-Request-Id": requestId },
+    });
+  }
   const user = await getCurrentUser();
+  const auditMetadata = {
+    route: "/api/risk/analyze",
+    org_id: access.scope.orgId,
+    project_id: access.scope.requestedProjectId || access.scope.projectIds[0] || null,
+    data_class: access.scope.dataClass,
+    business_role: access.scope.businessRole,
+  };
   try {
     const input: AnalyzeInput = await request.json();
     const { projectDescription } = input;
@@ -203,7 +228,7 @@ ${projectDescription}
       );
       content = result.content || "";
     } catch {
-      const fallbackRisks = buildRuleBasedRisks(input);
+      const fallbackRisks = applyRiskScope(buildRuleBasedRisks(input), access.scope);
       const evidence = buildRiskScanEvidence({
         projectName: input.projectName,
         stage: input.stage,
@@ -213,7 +238,7 @@ ${projectDescription}
         status: "fallback",
         reason: "AI风险扫描不可用，使用风险核查清单规则兜底。",
       });
-      const audit = await persistAiEvidence({ evidence, user, requestId, metadata: { route: "/api/risk/analyze" } });
+      const audit = await persistAiEvidence({ evidence, user, requestId, metadata: auditMetadata });
       return NextResponse.json({
         request_id: requestId,
         risks: fallbackRisks,
@@ -226,7 +251,7 @@ ${projectDescription}
     // Parse JSON array from response
     const jsonMatch = content.match(/\[[\s\S]*?\]/);
     if (!jsonMatch) {
-      const fallbackRisks = buildRuleBasedRisks(input);
+      const fallbackRisks = applyRiskScope(buildRuleBasedRisks(input), access.scope);
       const evidence = buildRiskScanEvidence({
         projectName: input.projectName,
         stage: input.stage,
@@ -236,7 +261,7 @@ ${projectDescription}
         status: "fallback",
         reason: "AI返回格式不符合登记册字段要求，使用风险核查清单规则兜底。",
       });
-      const audit = await persistAiEvidence({ evidence, user, requestId, metadata: { route: "/api/risk/analyze", parse_error: "missing_json_array" } });
+      const audit = await persistAiEvidence({ evidence, user, requestId, metadata: { ...auditMetadata, parse_error: "missing_json_array" } });
       return NextResponse.json({
         request_id: requestId,
         risks: fallbackRisks,
@@ -250,7 +275,7 @@ ${projectDescription}
     try {
       parsed = JSON.parse(jsonMatch[0]) as AIParsedRisk[];
     } catch {
-      const fallbackRisks = buildRuleBasedRisks(input);
+      const fallbackRisks = applyRiskScope(buildRuleBasedRisks(input), access.scope);
       const evidence = buildRiskScanEvidence({
         projectName: input.projectName,
         stage: input.stage,
@@ -260,7 +285,7 @@ ${projectDescription}
         status: "fallback",
         reason: "AI返回JSON片段无法解析，使用风险核查清单规则兜底。",
       });
-      const audit = await persistAiEvidence({ evidence, user, requestId, metadata: { route: "/api/risk/analyze", parse_error: "invalid_json" } });
+      const audit = await persistAiEvidence({ evidence, user, requestId, metadata: { ...auditMetadata, parse_error: "invalid_json" } });
       return NextResponse.json({
         request_id: requestId,
         risks: fallbackRisks,
@@ -269,7 +294,7 @@ ${projectDescription}
         evidence: withAuditResult(evidence, audit.status === "succeeded" ? { status: "succeeded", id: audit.id } : { status: audit.status, warning: audit.warning }),
       });
     }
-    const risks: Risk[] = parsed.map((item, index) => buildRisk(item, index, input, "AI风险扫描"));
+    const risks: Risk[] = applyRiskScope(parsed.map((item, index) => buildRisk(item, index, input, "AI风险扫描")), access.scope);
     const evidence = buildRiskScanEvidence({
       projectName: input.projectName,
       stage: input.stage,
@@ -279,7 +304,7 @@ ${projectDescription}
       status: "generated",
       reason: "AI生成候选风险，仍需项目经理确认后进入正式风险闭环。",
     });
-    const audit = await persistAiEvidence({ evidence, user, requestId, metadata: { route: "/api/risk/analyze" } });
+    const audit = await persistAiEvidence({ evidence, user, requestId, metadata: auditMetadata });
 
     return NextResponse.json({
       request_id: requestId,

@@ -2,14 +2,17 @@ import { getCurrentUser } from "@/features/auth/server";
 import { loadDashboardFromFeishu } from "@/features/dashboard/feishu";
 import { getEffectiveFeishuConfig } from "@/features/feishu/user-config";
 import { syncGovernanceEventToFeishu } from "@/features/governance/feishu-sync";
-import { createGovernanceInstance, listGovernanceInstances } from "@/features/governance/repository";
-import { createUnifiedAction, listIssueChangeChain } from "@/features/issue-change/repository";
+import { createGovernanceInstance, listGovernanceInstancesForProjectIds } from "@/features/governance/repository";
+import { createUnifiedAction, listUnifiedActionsForScope } from "@/features/issue-change/repository";
 import { writeIntegrationSyncLog } from "@/features/operating-system/sync-logs";
 import { buildRiskEscalationDraftDashboard, type RiskEscalationDraftType } from "@/features/risk/escalation";
 import { buildRiskIntegrationDashboard } from "@/features/risk/integration";
 import { filterDashboardByProjectAccess, projectAccessMode } from "@/features/security/authorization";
 import { loadProjectAccessGrantsForUser } from "@/features/security/repository";
 import { listRisks } from "@/lib/risk-repository";
+import { authorizeRiskRequest, type RiskAccessOperation } from "@/features/risk/access";
+import { filterRiskScopedProjectRecords } from "@/features/risk/scope";
+import { buildDashboardData } from "@/features/dashboard/normalizer";
 
 export const runtime = "nodejs";
 
@@ -34,9 +37,11 @@ function statusCode(status?: string): number {
   return 400;
 }
 
-async function loadDraftDashboard() {
+async function loadDraftDashboard(request: Request, operation: RiskAccessOperation) {
   const user = await getCurrentUser();
-  const riskResult = await listRisks().catch(() => null);
+  const scopedAccess = await authorizeRiskRequest(request, operation);
+  if (!scopedAccess.ok) return { status: "forbidden" as const, code: scopedAccess.error, warning: scopedAccess.detail || scopedAccess.error, httpStatus: scopedAccess.status, user };
+  const riskResult = await listRisks(scopedAccess.scope).catch(() => null);
   if (!riskResult) {
     return { status: "failed" as const, code: "RISK_REGISTER_LOAD_FAILED", warning: "风险登记册读取失败，未使用样例风险兜底。", user };
   }
@@ -46,12 +51,14 @@ async function loadDraftDashboard() {
   }
   let rawDashboard;
   try {
-    rawDashboard = await loadDashboardFromFeishu(effective.config);
+    rawDashboard = await loadDashboardFromFeishu(effective.config, { dataClass: scopedAccess.scope.dataClass });
   } catch (error) {
     return { status: "failed" as const, code: "FEISHU_DASHBOARD_LOAD_FAILED", warning: error instanceof Error ? error.message : "飞书项目台账读取失败。", user };
   }
   const grants = await loadProjectAccessGrantsForUser(effective.user ?? user);
-  const dashboard = filterDashboardByProjectAccess(rawDashboard, effective.user ?? user, grants);
+  const grantedDashboard = filterDashboardByProjectAccess(rawDashboard, effective.user ?? user, grants);
+  const scopedRecords = filterRiskScopedProjectRecords(grantedDashboard.records, scopedAccess.scope);
+  const dashboard = buildDashboardData(scopedRecords, { type: grantedDashboard.source.type, name: grantedDashboard.source.name, note: grantedDashboard.source.note }, { useTemplateFallback: false });
   const riskIntegration = buildRiskIntegrationDashboard({
     risks: riskResult.risks,
     dashboard,
@@ -73,14 +80,15 @@ async function loadDraftDashboard() {
     },
     riskIntegration,
     riskEscalation,
+    scope: scopedAccess.scope,
   };
 }
 
-export async function GET(): Promise<Response> {
+export async function GET(request: Request): Promise<Response> {
   const requestId = crypto.randomUUID();
-  const loaded = await loadDraftDashboard();
+  const loaded = await loadDraftDashboard(request, "read");
   if (loaded.status !== "succeeded") {
-    return jsonResponse({ request_id: requestId, status: loaded.status, code: loaded.code, warning: loaded.warning, lark_cli_hint: loaded.larkCliHint }, loaded.status === "not_configured" ? 503 : 503, requestId);
+    return jsonResponse({ request_id: requestId, status: loaded.status, code: loaded.code, warning: loaded.warning, lark_cli_hint: "larkCliHint" in loaded ? loaded.larkCliHint : undefined }, "httpStatus" in loaded ? loaded.httpStatus : 503, requestId);
   }
 
   return jsonResponse({
@@ -117,14 +125,22 @@ export async function POST(request: Request): Promise<Response> {
     }, 400, requestId);
   }
 
-  const loaded = await loadDraftDashboard();
+  const loaded = await loadDraftDashboard(request, "create");
   if (loaded.status !== "succeeded") {
-    return jsonResponse({ request_id: requestId, status: loaded.status, code: loaded.code, warning: loaded.warning, lark_cli_hint: loaded.larkCliHint }, loaded.status === "not_configured" ? 503 : 503, requestId);
+    return jsonResponse({ request_id: requestId, status: loaded.status, code: loaded.code, warning: loaded.warning, lark_cli_hint: "larkCliHint" in loaded ? loaded.larkCliHint : undefined }, "httpStatus" in loaded ? loaded.httpStatus : 503, requestId);
   }
   const governanceDraft = loaded.riskEscalation.governanceDrafts.find(draft => draft.id === body.draftId);
   const actionDraft = loaded.riskEscalation.actionDrafts.find(draft => draft.id === body.draftId);
+  const draftRiskId = governanceDraft?.riskId || actionDraft?.riskId;
+  const riskProjectId = loaded.riskResult.risks.find(risk => risk.id === draftRiskId || risk.riskCode === draftRiskId)?.projectId;
+  const scopedProjectId = riskProjectId
+    || loaded.scope.requestedProjectId
+    || (loaded.scope.projectIds.length === 1 ? loaded.scope.projectIds[0] : undefined);
+  if (!scopedProjectId || !loaded.scope.projectIds.includes(scopedProjectId)) {
+    return jsonResponse({ request_id: requestId, status: "failed", warning: "请在当前业务上下文中选择唯一项目后再确认风险升级草稿。" }, 400, requestId);
+  }
   if (body.draftType === "governance_workflow" && governanceDraft) {
-    const existing = await listGovernanceInstances(100);
+    const existing = await listGovernanceInstancesForProjectIds([scopedProjectId], 100);
     const existingInstance = existing.status === "succeeded"
       ? existing.instances.find(instance => instance.workflowId === governanceDraft.workflowId && instance.projectName === governanceDraft.projectName && instance.title === governanceDraft.title)
       : null;
@@ -138,7 +154,10 @@ export async function POST(request: Request): Promise<Response> {
       }, 200, requestId);
     }
 
-    const result = await createGovernanceInstance(governanceDraft.createInput, user);
+    const result = await createGovernanceInstance({
+      ...governanceDraft.createInput,
+      canonicalProjectId: scopedProjectId,
+    }, user);
     let feishu_sync: Awaited<ReturnType<typeof syncGovernanceEventToFeishu>> = { status: "skipped", reason: "流程未创建，跳过飞书回写。" };
     if (result.status === "succeeded" && result.instance) {
       feishu_sync = await syncGovernanceEventToFeishu({ instance: result.instance, requestId });
@@ -157,7 +176,7 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   if (body.draftType === "unified_action" && actionDraft) {
-    const existing = await listIssueChangeChain(120);
+    const existing = await listUnifiedActionsForScope({ ...loaded.scope, requestedProjectId: scopedProjectId }, 120);
     const existingAction = existing.status === "succeeded"
       ? existing.actions.find(action => action.sourceType === "risk" && action.sourceId === actionDraft.riskId && action.projectName === actionDraft.projectName && action.title === actionDraft.title && !["done", "cancelled"].includes(action.status))
       : null;
@@ -171,7 +190,9 @@ export async function POST(request: Request): Promise<Response> {
       }, 200, requestId);
     }
 
-    const result = await createUnifiedAction(actionDraft.createInput, user);
+    const result = await createUnifiedAction({
+      ...actionDraft.createInput,
+    }, user, { ...loaded.scope, requestedProjectId: scopedProjectId });
     if (result.status === "succeeded" && result.action) {
       await writeIntegrationSyncLog({
         userId: user?.id,

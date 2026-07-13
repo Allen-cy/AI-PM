@@ -7,6 +7,7 @@ import {
 import { listRiskRetrospectiveGovernanceFollowups } from "@/features/risk/retrospective-governance-followups";
 import { buildRiskRetrospectiveGovernanceFollowupClosureDashboard } from "@/features/risk/retrospective-governance-followup-workbench";
 import { buildRiskRetrospectiveQualityDashboard } from "@/features/risk/retrospective-quality";
+import { authorizeRiskRequest } from "@/features/risk/access";
 
 export const runtime = "nodejs";
 
@@ -23,6 +24,8 @@ function isKnownAction(action: string | null): action is RiskRetrospectiveGovern
 
 export async function GET(request: Request): Promise<Response> {
   const requestId = crypto.randomUUID();
+  const access = await authorizeRiskRequest(request, "read");
+  if (!access.ok) return jsonResponse({ request_id: requestId, error: access.error, detail: access.detail }, access.status, requestId);
   const url = new URL(request.url);
   const action = url.searchParams.get("action");
   const assetId = url.searchParams.get("asset_id") || undefined;
@@ -32,9 +35,9 @@ export async function GET(request: Request): Promise<Response> {
   }
 
   const [assetsResult, logsResult, followupResult] = await Promise.all([
-    listRiskRetrospectiveAssets("all", 200),
-    listRiskRetrospectiveGovernanceLogs({ action: action || "all", assetId, limit: Number.isFinite(limit) ? limit : 50 }),
-    listRiskRetrospectiveGovernanceFollowups(120),
+    listRiskRetrospectiveAssets("all", 200, access.scope),
+    listRiskRetrospectiveGovernanceLogs({ scope: access.scope, action: action || "all", assetId, limit: Number.isFinite(limit) ? limit : 50 }),
+    listRiskRetrospectiveGovernanceFollowups(120, access.scope),
   ]);
   const quality = buildRiskRetrospectiveQualityDashboard(assetsResult.assets);
   const governance = buildRiskRetrospectiveGovernanceDashboard({

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { templateCatalog, type TemplateCategory } from "@/lib/template-center";
 import type { Risk } from "@/lib/risk";
+import { loadCurrentBusinessContextSearchParams } from "@/features/operating-model/client-context";
 
 const categoryLabels: Record<TemplateCategory, string> = {
   risk: "风险管理",
@@ -35,10 +36,36 @@ export default function TemplateCenterPage() {
       if (!parseResponse.ok || !Array.isArray(parsed.risks)) throw new Error(parsed.error || "模板解析失败");
       if (parsed.risks.length === 0) throw new Error("未识别到可导入的风险记录，请确认字段名称与模板一致。");
 
-      const saveResponse = await fetch("/api/risk", {
+      const riskScope = await loadCurrentBusinessContextSearchParams();
+      const selectedProjectId = riskScope.get("project_id") || "";
+      const contextResponse = await fetch(`/api/context/current?${riskScope.toString()}`, { cache: "no-store" });
+      const contextBody = await contextResponse.json() as {
+        available_projects?: Array<{ id: string; name: string }>;
+        error?: string;
+        detail?: string;
+      };
+      if (!contextResponse.ok) throw new Error(contextBody.detail || contextBody.error || "无法核对导入项目。");
+      const selectedProject = contextBody.available_projects?.find(project => project.id === selectedProjectId);
+      if (!selectedProject) throw new Error("TEMPLATE_PROJECT_MISMATCH：当前业务范围没有可导入的授权项目。");
+      const mismatchedProjects = [...new Set(parsed.risks
+        .map(risk => risk.projectName?.trim())
+        .filter((name): name is string => Boolean(name && name !== selectedProject.name)))];
+      if (mismatchedProjects.length > 0) {
+        throw new Error(`TEMPLATE_PROJECT_MISMATCH：模板中的项目“${mismatchedProjects.join("、")}”与当前授权项目“${selectedProject.name}”不一致，请按项目分开导入。`);
+      }
+      const scopedRisks = parsed.risks.map(risk => ({
+        ...risk,
+        projectId: selectedProject.id,
+        projectName: selectedProject.name,
+      }));
+      const saveResponse = await fetch(`/api/risk?${riskScope.toString()}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ risks: parsed.risks }),
+        body: JSON.stringify({
+          risks: scopedRisks,
+          expected_version: 0,
+          idempotency_key: crypto.randomUUID(),
+        }),
       });
       const saved = await saveResponse.json() as { risks?: Risk[]; error?: string; migrationHint?: string };
       if (!saveResponse.ok || !Array.isArray(saved.risks)) {

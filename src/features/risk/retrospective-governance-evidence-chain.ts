@@ -1,7 +1,7 @@
 import type { AppUser } from "../auth/server.ts";
 import {
   getGovernanceInstanceBundle,
-  listGovernanceInstances,
+  listGovernanceInstancesForProjectIds,
 } from "../governance/repository.ts";
 import {
   isTerminalGovernanceState,
@@ -23,6 +23,7 @@ import {
   buildKnowledgeGovernanceWritebackRecommendation,
   type KnowledgeGovernanceFollowupWritebackRecommendation,
 } from "./retrospective-governance-evidence-chain-model.ts";
+import { resolveRequestedRiskProjectIds, type RiskDataScope } from "./scope.ts";
 
 export type KnowledgeGovernanceEvidenceLinkStatus = "active" | "pending_review" | "applied" | "rejected";
 export type KnowledgeGovernanceEvidenceReviewStatus = "pending" | "approved" | "rejected";
@@ -213,6 +214,10 @@ function evidenceLinkSelectColumns(): string {
   ].join(",");
 }
 
+function scopedProjectIds(scope: RiskDataScope): string[] {
+  return resolveRequestedRiskProjectIds(scope, scope.requestedProjectId);
+}
+
 function appendText(existing: string | null | undefined, addition: string): string {
   const existingText = existing?.trim();
   const additionText = addition.trim();
@@ -293,7 +298,9 @@ function buildGaps(chain: KnowledgeGovernanceEvidenceChain): KnowledgeGovernance
   return gaps;
 }
 
-async function findUnifiedActionByFollowupId(followupId: string): Promise<KnowledgeGovernanceUnifiedActionNode | null> {
+async function findUnifiedActionByFollowupId(followupId: string, scope: RiskDataScope): Promise<KnowledgeGovernanceUnifiedActionNode | null> {
+  const projectIds = scopedProjectIds(scope);
+  if (projectIds.length === 0) return null;
   if (!await authStorageConfigured()) return null;
   const supabase = await authSupabase();
   const { data, error } = await supabase
@@ -301,6 +308,9 @@ async function findUnifiedActionByFollowupId(followupId: string): Promise<Knowle
     .select("id,title,owner,due_date,status,priority,close_evidence,source_type,source_id,created_at,updated_at")
     .eq("source_type", "governance")
     .eq("source_id", `${FOLLOWUP_SOURCE_PREFIX}${followupId}`)
+    .eq("org_id", scope.orgId)
+    .eq("data_class", scope.dataClass)
+    .in("project_id", projectIds)
     .order("updated_at", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -311,7 +321,10 @@ async function findUnifiedActionByFollowupId(followupId: string): Promise<Knowle
 async function findEvidenceLink(input: {
   governanceInstanceId?: string | null;
   followupId?: string | null;
+  scope: RiskDataScope;
 }): Promise<{ status: "succeeded"; link: KnowledgeGovernanceEvidenceLink | null } | { status: "not_configured" | "failed"; warning: string }> {
+  const projectIds = scopedProjectIds(input.scope);
+  if (projectIds.length === 0) return { status: "succeeded", link: null };
   if (!await authStorageConfigured()) return { status: "not_configured", warning: "Supabase 未配置，无法读取知识治理证据链。" };
   if (!input.governanceInstanceId && !input.followupId) return { status: "succeeded", link: null };
   try {
@@ -319,6 +332,9 @@ async function findEvidenceLink(input: {
     let query = supabase
       .from(EVIDENCE_LINK_TABLE)
       .select(evidenceLinkSelectColumns())
+      .eq("org_id", input.scope.orgId)
+      .eq("data_class", input.scope.dataClass)
+      .in("project_id", projectIds)
       .order("updated_at", { ascending: false })
       .limit(1);
     if (input.governanceInstanceId && input.followupId) {
@@ -345,9 +361,19 @@ async function resolveGovernanceInstance(input: {
   governanceInstanceId?: string | null;
   followupId?: string | null;
   reminderLogId?: string | null;
+  scope: RiskDataScope;
 }): Promise<Awaited<ReturnType<typeof getGovernanceInstanceBundle>>> {
-  if (input.governanceInstanceId) return getGovernanceInstanceBundle(input.governanceInstanceId);
-  const list = await listGovernanceInstances(200);
+  const projectIds = scopedProjectIds(input.scope);
+  if (projectIds.length === 0) return { status: "not_found", events: [], actions: [], warning: "当前业务上下文没有可访问项目。" };
+  if (input.governanceInstanceId) {
+    const bundle = await getGovernanceInstanceBundle(input.governanceInstanceId);
+    if (bundle.status !== "succeeded" || !bundle.instance) return bundle;
+    const instanceProjectId = bundle.instance.canonicalProjectId || bundle.instance.projectId;
+    return instanceProjectId && projectIds.includes(instanceProjectId)
+      ? bundle
+      : { status: "not_found", events: [], actions: [], warning: "未找到当前项目范围内的治理流程实例。" };
+  }
+  const list = await listGovernanceInstancesForProjectIds(projectIds, 200);
   if (list.status !== "succeeded") {
     return { status: list.status, events: [], actions: [], warning: list.warning };
   }
@@ -363,7 +389,10 @@ export async function getKnowledgeGovernanceEvidenceChain(input: {
   governanceInstanceId?: string | null;
   followupId?: string | null;
   reminderLogId?: string | null;
+  scope: RiskDataScope;
 }): Promise<KnowledgeGovernanceEvidenceChainResult> {
+  const projectIds = scopedProjectIds(input.scope);
+  if (projectIds.length === 0) return { status: "not_found", warning: "当前业务上下文没有可访问项目。" };
   if (!await authStorageConfigured()) return { status: "not_configured", warning: "Supabase 未配置，无法读取知识治理证据链。" };
   const governance = await resolveGovernanceInstance(input);
   if (governance.status !== "succeeded") {
@@ -373,9 +402,9 @@ export async function getKnowledgeGovernanceEvidenceChain(input: {
   const sourceFollowupId = input.followupId || governance.instance.sourceLinkId || null;
   const sourceReminderId = input.reminderLogId || (governance.instance.sourceType === "risk_retrospective_governance_reminder" ? governance.instance.sourceId : null);
   const [followupResult, reminderResult, evidenceResult] = await Promise.all([
-    sourceFollowupId ? getRiskRetrospectiveGovernanceFollowup(sourceFollowupId) : Promise.resolve(null),
-    sourceReminderId ? getRiskRetrospectiveGovernanceReminderLog(sourceReminderId) : Promise.resolve(null),
-    findEvidenceLink({ governanceInstanceId: governance.instance.id, followupId: sourceFollowupId }),
+    sourceFollowupId ? getRiskRetrospectiveGovernanceFollowup(sourceFollowupId, input.scope) : Promise.resolve(null),
+    sourceReminderId ? getRiskRetrospectiveGovernanceReminderLog(sourceReminderId, input.scope) : Promise.resolve(null),
+    findEvidenceLink({ governanceInstanceId: governance.instance.id, followupId: sourceFollowupId, scope: input.scope }),
   ]);
   if (followupResult && followupResult.status !== "succeeded") {
     return { status: followupResult.status, warning: followupResult.warning };
@@ -383,8 +412,13 @@ export async function getKnowledgeGovernanceEvidenceChain(input: {
   if (reminderResult && reminderResult.status !== "succeeded") {
     return { status: reminderResult.status, warning: reminderResult.warning };
   }
+  const governanceProjectId = governance.instance.canonicalProjectId || governance.instance.projectId;
+  const followupProjectId = followupResult?.status === "succeeded" ? followupResult.followup.projectId : null;
+  if (followupProjectId && governanceProjectId !== followupProjectId) {
+    return { status: "not_found", warning: "治理流程与二次治理待办不属于同一项目，不能串联证据链。" };
+  }
   const evidenceWarning = evidenceResult.status !== "succeeded" ? evidenceResult.warning : undefined;
-  const unifiedAction = sourceFollowupId ? await findUnifiedActionByFollowupId(sourceFollowupId) : null;
+  const unifiedAction = sourceFollowupId ? await findUnifiedActionByFollowupId(sourceFollowupId, input.scope) : null;
   const chain: KnowledgeGovernanceEvidenceChain = {
     followup: followupResult?.status === "succeeded" ? followupResult.followup : undefined,
     reminderLog: reminderResult?.status === "succeeded" ? reminderResult.log : undefined,
@@ -417,11 +451,17 @@ export async function saveKnowledgeGovernanceEvidenceRecommendation(input: {
   override?: Parameters<typeof buildKnowledgeGovernanceWritebackRecommendation>[0]["override"];
   user: AppUser | null;
   requestId?: string;
+  scope: RiskDataScope;
 }): Promise<KnowledgeGovernanceEvidenceRecommendationResult> {
   const chainResult = await getKnowledgeGovernanceEvidenceChain(input);
   if (chainResult.status !== "succeeded") return chainResult;
   if (!chainResult.chain.governanceInstance || !chainResult.chain.followup) {
     return { status: "not_found", warning: "缺少治理流程或二次治理待办，无法生成可反写的证据链。" };
+  }
+  const projectIds = scopedProjectIds(input.scope);
+  const projectId = chainResult.chain.followup.projectId;
+  if (!projectId || !projectIds.includes(projectId)) {
+    return { status: "not_found", warning: "二次治理待办不属于当前项目范围。" };
   }
   if (!await authStorageConfigured()) return { status: "not_configured", warning: "Supabase 未配置，无法保存知识治理证据链。" };
   const recommendation = buildKnowledgeGovernanceWritebackRecommendation({
@@ -437,6 +477,9 @@ export async function saveKnowledgeGovernanceEvidenceRecommendation(input: {
     const { data, error } = await supabase
       .from(EVIDENCE_LINK_TABLE)
       .upsert({
+        org_id: input.scope.orgId,
+        project_id: projectId,
+        data_class: input.scope.dataClass,
         source_followup_id: chainResult.chain.followup.id,
         reminder_log_id: chainResult.chain.reminderLog?.id ?? null,
         unified_action_id: chainResult.chain.unifiedAction?.id ?? null,
@@ -494,6 +537,7 @@ export async function applyKnowledgeGovernanceEvidenceRecommendation(input: {
   reviewNote?: string | null;
   user: AppUser | null;
   requestId?: string;
+  scope: RiskDataScope;
 }): Promise<KnowledgeGovernanceEvidenceApplyResult> {
   const recommendationResult = await saveKnowledgeGovernanceEvidenceRecommendation({
     governanceInstanceId: input.governanceInstanceId,
@@ -505,6 +549,7 @@ export async function applyKnowledgeGovernanceEvidenceRecommendation(input: {
     },
     user: input.user,
     requestId: input.requestId,
+    scope: input.scope,
   });
   if (recommendationResult.status !== "confirmation_required") return recommendationResult;
   if (input.confirm !== true) {
@@ -525,7 +570,7 @@ export async function applyKnowledgeGovernanceEvidenceRecommendation(input: {
     status: recommendation.targetFollowupStatus,
     closureNote: nextClosureNote,
     reviewResult: nextReviewResult,
-  });
+  }, input.scope);
   if (updateResult.status !== "succeeded") return updateResult;
 
   try {
@@ -550,6 +595,9 @@ export async function applyKnowledgeGovernanceEvidenceRecommendation(input: {
         updated_at: new Date().toISOString(),
       })
       .eq("id", recommendationResult.evidenceLink.id)
+      .eq("org_id", input.scope.orgId)
+      .eq("data_class", input.scope.dataClass)
+      .in("project_id", scopedProjectIds(input.scope))
       .select(evidenceLinkSelectColumns())
       .maybeSingle();
     if (error || !data) {

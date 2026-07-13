@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import type { FinanceAlert, FinanceCockpit, FinanceHealth, FinancePriority } from "@/features/finance/cockpit";
+import { loadCurrentBusinessContextSearchParams } from "@/features/operating-model/client-context";
 
 interface FinanceResponse {
   status: "succeeded" | "not_configured" | "error" | "unauthorized";
@@ -137,7 +138,8 @@ export default function FinancePage() {
     setSavingAlert(alert.id);
     setActionMessage("");
     try {
-      const response = await fetch("/api/issue-change", {
+      const businessContext = await loadCurrentBusinessContextSearchParams();
+      const response = await fetch(`/api/issue-change?${businessContext.toString()}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

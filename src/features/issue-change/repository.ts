@@ -1,6 +1,8 @@
 import { getAuthSupabase, isAuthStorageConfigured, type AppUser } from "../auth/server.ts";
-import { listRisks } from "@/lib/risk-repository";
+import { listRisks, type RiskRepositoryScope } from "@/lib/risk-repository";
 import type { Risk } from "@/lib/risk";
+import { issueChangeRecordBelongsToScope, resolveIssueChangeProjectIds } from "./scope.ts";
+export { issueChangeRecordBelongsToScope, resolveIssueChangeProjectIds } from "./scope.ts";
 import {
   transitionRiskRetrospectiveGovernanceFollowup,
   type RiskRetrospectiveGovernanceFollowupRecord,
@@ -63,6 +65,12 @@ export interface IssueChangeChainResult {
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const RISK_RETROSPECTIVE_GOVERNANCE_FOLLOWUP_ACTION_PREFIX = "risk-retro-governance-followup-";
 
+function writableProjectId(scope: RiskRepositoryScope): string {
+  const projectIds = resolveIssueChangeProjectIds(scope);
+  if (projectIds.length !== 1) throw new Error("PROJECT_ID_REQUIRED");
+  return projectIds[0];
+}
+
 function missingStorageResult(): IssueChangeChainResult {
   return {
     status: "not_configured",
@@ -123,6 +131,9 @@ function safeNumber(value: unknown): number | null {
 function mapIssue(row: Record<string, unknown>): IssueRecord {
   return {
     id: String(row.id),
+    orgId: row.org_id ? String(row.org_id) : null,
+    projectId: row.project_id ? String(row.project_id) : null,
+    dataClass: String(row.data_class || "unclassified") as IssueRecord["dataClass"],
     issueCode: row.issue_code ? String(row.issue_code) : null,
     projectName: String(row.project_name),
     sourceRiskId: row.source_risk_id ? String(row.source_risk_id) : null,
@@ -146,6 +157,9 @@ function mapIssue(row: Record<string, unknown>): IssueRecord {
 function mapChange(row: Record<string, unknown>): ChangeRecord {
   return {
     id: String(row.id),
+    orgId: row.org_id ? String(row.org_id) : null,
+    projectId: row.project_id ? String(row.project_id) : null,
+    dataClass: String(row.data_class || "unclassified") as ChangeRecord["dataClass"],
     changeCode: row.change_code ? String(row.change_code) : null,
     issueId: row.issue_id ? String(row.issue_id) : null,
     projectName: String(row.project_name),
@@ -173,6 +187,9 @@ function mapChange(row: Record<string, unknown>): ChangeRecord {
 function mapAction(row: Record<string, unknown>): UnifiedActionRecord {
   return {
     id: String(row.id),
+    orgId: row.org_id ? String(row.org_id) : null,
+    projectId: row.project_id ? String(row.project_id) : null,
+    dataClass: String(row.data_class || "unclassified") as UnifiedActionRecord["dataClass"],
     sourceType: String(row.source_type || "manual") as UnifiedActionSource,
     sourceId: row.source_id ? String(row.source_id) : null,
     projectName: row.project_name ? String(row.project_name) : null,
@@ -193,6 +210,9 @@ function mapAction(row: Record<string, unknown>): UnifiedActionRecord {
 function mapEvent(row: Record<string, unknown>): IssueChangeEventRecord {
   return {
     id: String(row.id),
+    orgId: row.org_id ? String(row.org_id) : null,
+    projectId: row.project_id ? String(row.project_id) : null,
+    dataClass: String(row.data_class || "unclassified") as IssueChangeEventRecord["dataClass"],
     subjectType: String(row.subject_type) as IssueChangeEventRecord["subjectType"],
     subjectId: String(row.subject_id),
     eventType: String(row.event_type),
@@ -216,11 +236,16 @@ async function insertEvent(input: {
   comment?: string;
   evidence?: string;
   metadata?: Record<string, unknown>;
+  scope: RiskRepositoryScope;
+  projectId: string;
 }): Promise<IssueChangeEventRecord> {
   const supabase = getAuthSupabase();
   const { data, error } = await supabase
     .from("issue_change_events")
     .insert({
+      org_id: input.scope.orgId,
+      project_id: input.projectId,
+      data_class: input.scope.dataClass,
       subject_type: input.subjectType,
       subject_id: input.subjectId,
       event_type: input.eventType,
@@ -245,6 +270,8 @@ async function createActionItems(input: {
   value: unknown;
   fallback?: { title: string; owner?: string | null; dueDate?: string | null; priority?: UnifiedActionPriority };
   user: AppUser | null;
+  scope: RiskRepositoryScope;
+  scopedProjectId: string;
 }): Promise<UnifiedActionRecord[]> {
   const parsed = parseUnifiedActionItems(input.value, input.fallback
     ? {
@@ -259,6 +286,9 @@ async function createActionItems(input: {
   const { data, error } = await supabase
     .from("unified_action_items")
     .insert(parsed.map(item => ({
+      org_id: input.scope.orgId,
+      project_id: input.scopedProjectId,
+      data_class: input.scope.dataClass,
       source_type: input.sourceType,
       source_id: input.sourceId,
       project_name: input.projectName || null,
@@ -284,37 +314,49 @@ async function createActionItems(input: {
       user: input.user,
       comment: `行动项已创建：${action.title}`,
       metadata: { source_type: input.sourceType, source_id: input.sourceId },
+      scope: input.scope,
+      projectId: input.scopedProjectId,
     });
   }
   return actions;
 }
 
-async function getIssue(id: string): Promise<IssueRecord | null> {
+async function getIssue(id: string, scope: RiskRepositoryScope): Promise<IssueRecord | null> {
+  const projectIds = resolveIssueChangeProjectIds(scope);
+  if (projectIds.length === 0) return null;
   const supabase = getAuthSupabase();
   const { data, error } = await supabase
     .from("project_issues")
     .select("*")
     .eq("id", id)
+    .eq("org_id", scope.orgId)
+    .eq("data_class", scope.dataClass)
+    .in("project_id", projectIds)
     .maybeSingle();
   if (error) throw error;
   return data ? mapIssue(data as Record<string, unknown>) : null;
 }
 
-async function findRiskByIdOrCode(idOrCode: string): Promise<Risk | null> {
-  const list = await listRisks();
+async function findRiskByIdOrCode(idOrCode: string, scope: RiskRepositoryScope): Promise<Risk | null> {
+  const list = await listRisks(scope);
   return list.risks.find(risk => risk.id === idOrCode || risk.riskCode === idOrCode) ?? null;
 }
 
-export async function listIssueChangeChain(limit = 80): Promise<IssueChangeChainResult> {
+export async function listIssueChangeChain(scope: RiskRepositoryScope, limit = 80): Promise<IssueChangeChainResult> {
   if (!isAuthStorageConfigured()) return missingStorageResult();
+  const projectIds = resolveIssueChangeProjectIds(scope);
+  if (projectIds.length === 0) {
+    return { status: "succeeded", issues: [], changes: [], actions: [], events: [] };
+  }
+  const safeLimit = Math.max(1, Math.min(Number.isFinite(limit) ? Math.trunc(limit) : 80, 200));
 
   try {
     const supabase = getAuthSupabase();
     const [issuesResult, changesResult, actionsResult, eventsResult] = await Promise.all([
-      supabase.from("project_issues").select("*").order("updated_at", { ascending: false }).limit(limit),
-      supabase.from("project_changes").select("*").order("updated_at", { ascending: false }).limit(limit),
-      supabase.from("unified_action_items").select("*").order("updated_at", { ascending: false }).limit(limit),
-      supabase.from("issue_change_events").select("*").order("created_at", { ascending: false }).limit(160),
+      supabase.from("project_issues").select("*").eq("org_id", scope.orgId).eq("data_class", scope.dataClass).in("project_id", projectIds).order("updated_at", { ascending: false }).limit(safeLimit),
+      supabase.from("project_changes").select("*").eq("org_id", scope.orgId).eq("data_class", scope.dataClass).in("project_id", projectIds).order("updated_at", { ascending: false }).limit(safeLimit),
+      supabase.from("unified_action_items").select("*").eq("org_id", scope.orgId).eq("data_class", scope.dataClass).in("project_id", projectIds).order("updated_at", { ascending: false }).limit(safeLimit),
+      supabase.from("issue_change_events").select("*").eq("org_id", scope.orgId).eq("data_class", scope.dataClass).in("project_id", projectIds).order("created_at", { ascending: false }).limit(Math.min(safeLimit * 2, 400)),
     ]);
 
     const firstError = issuesResult.error || changesResult.error || actionsResult.error || eventsResult.error;
@@ -344,7 +386,42 @@ export async function listIssueChangeChain(limit = 80): Promise<IssueChangeChain
   }
 }
 
-export async function createIssue(input: IssueCreateInput, user: AppUser | null): Promise<{
+export async function listUnifiedActionsForScope(scope: RiskRepositoryScope, limit = 120): Promise<{
+  status: "succeeded" | "not_configured" | "failed";
+  actions: UnifiedActionRecord[];
+  warning?: string;
+}> {
+  if (!isAuthStorageConfigured()) {
+    return { status: "not_configured", actions: [], warning: "AUTH_STORAGE_NOT_CONFIGURED" };
+  }
+  const projectIds = scope.requestedProjectId
+    ? (scope.projectIds.includes(scope.requestedProjectId) ? [scope.requestedProjectId] : [])
+    : [...new Set(scope.projectIds.filter(Boolean))];
+  if (projectIds.length === 0) return { status: "succeeded", actions: [] };
+
+  try {
+    const { data, error } = await getAuthSupabase()
+      .from("unified_action_items")
+      .select("*")
+      .eq("org_id", scope.orgId)
+      .eq("data_class", scope.dataClass)
+      .in("project_id", projectIds)
+      .order("updated_at", { ascending: false })
+      .limit(Math.max(1, Math.min(limit, 200)));
+    if (error) {
+      return {
+        status: isMissingTableError(error.message) ? "not_configured" : "failed",
+        actions: [],
+        warning: error.message,
+      };
+    }
+    return { status: "succeeded", actions: (data ?? []).map(item => mapAction(item as Record<string, unknown>)) };
+  } catch (error) {
+    return { status: "failed", actions: [], warning: error instanceof Error ? error.message : "行动项读取失败。" };
+  }
+}
+
+export async function createIssue(input: IssueCreateInput, user: AppUser | null, scope: RiskRepositoryScope): Promise<{
   status: "succeeded" | "not_configured" | "failed";
   issue?: IssueRecord;
   actions?: UnifiedActionRecord[];
@@ -356,11 +433,15 @@ export async function createIssue(input: IssueCreateInput, user: AppUser | null)
   if (!input.title?.trim()) return { status: "failed", warning: "问题标题不能为空。" };
 
   try {
+    const projectId = writableProjectId(scope);
     const supabase = getAuthSupabase();
     const sourceRiskId = input.sourceRiskId && uuidPattern.test(input.sourceRiskId) ? input.sourceRiskId : null;
     const { data, error } = await supabase
       .from("project_issues")
       .insert({
+        org_id: scope.orgId,
+        project_id: projectId,
+        data_class: scope.dataClass,
         issue_code: code("ISS"),
         project_name: input.projectName.trim(),
         source_risk_id: sourceRiskId,
@@ -375,7 +456,12 @@ export async function createIssue(input: IssueCreateInput, user: AppUser | null)
         evidence: input.evidence?.trim() || null,
         created_by: user?.id ?? null,
         created_by_name: actorName(user),
-        metadata: { source: input.sourceRiskId || input.sourceRiskCode ? "risk-escalation" : "manual" },
+        metadata: {
+          source: input.sourceRiskId || input.sourceRiskCode ? "risk-escalation" : "manual",
+          org_id: scope.orgId,
+          project_id: projectId,
+          data_class: scope.dataClass,
+        },
       })
       .select("*")
       .maybeSingle();
@@ -396,7 +482,15 @@ export async function createIssue(input: IssueCreateInput, user: AppUser | null)
       user,
       comment: input.sourceRiskId || input.sourceRiskCode ? "风险已升级为问题。" : "问题已创建。",
       evidence: issue.evidence || undefined,
-      metadata: { issue_code: issue.issueCode, source_risk_code: issue.sourceRiskCode },
+      metadata: {
+        issue_code: issue.issueCode,
+        source_risk_code: issue.sourceRiskCode,
+        org_id: issue.orgId,
+        project_id: issue.projectId,
+        data_class: issue.dataClass,
+      },
+      scope,
+      projectId,
     });
     const actions = await createActionItems({
       sourceType: "issue",
@@ -410,6 +504,8 @@ export async function createIssue(input: IssueCreateInput, user: AppUser | null)
         priority: issue.severity === "high" ? "P0" : "P1",
       },
       user,
+      scope,
+      scopedProjectId: projectId,
     });
     return { status: "succeeded", issue, event, actions };
   } catch (error) {
@@ -420,13 +516,19 @@ export async function createIssue(input: IssueCreateInput, user: AppUser | null)
   }
 }
 
-export async function createIssueFromRisk(input: { riskId?: string; risk?: Risk; actionItems?: unknown }, user: AppUser | null) {
-  const risk = input.risk || (input.riskId ? await findRiskByIdOrCode(input.riskId) : null);
+export async function createIssueFromRisk(input: { riskId?: string; risk?: Risk; actionItems?: unknown }, user: AppUser | null, scope: RiskRepositoryScope) {
+  const riskKey = input.riskId || input.risk?.id || input.risk?.riskCode;
+  const risk = riskKey ? await findRiskByIdOrCode(riskKey, scope) : null;
   if (!risk) return { status: "failed" as const, warning: "未找到可升级的风险。请提供风险ID/风险编号，或直接传入风险对象。" };
-  return createIssue({ ...riskToIssueDraft(risk), actionItems: input.actionItems || riskToIssueDraft(risk).actionItems }, user);
+  const projectId = risk.projectId || scope.requestedProjectId || (scope.projectIds.length === 1 ? scope.projectIds[0] : undefined);
+  if (!projectId || !scope.projectIds.includes(projectId)) return { status: "failed" as const, warning: "PROJECT_OUTSIDE_CONTEXT" };
+  return createIssue({
+    ...riskToIssueDraft(risk),
+    actionItems: input.actionItems || riskToIssueDraft(risk).actionItems,
+  }, user, { ...scope, requestedProjectId: projectId });
 }
 
-export async function transitionIssue(input: IssueTransitionInput, user: AppUser | null): Promise<{
+export async function transitionIssue(input: IssueTransitionInput, user: AppUser | null, scope: RiskRepositoryScope): Promise<{
   status: "succeeded" | "not_found" | "not_configured" | "failed";
   issue?: IssueRecord;
   event?: IssueChangeEventRecord;
@@ -436,8 +538,10 @@ export async function transitionIssue(input: IssueTransitionInput, user: AppUser
   if (!isAuthStorageConfigured()) return { ...missingStorageResult(), actions: undefined };
 
   try {
-    const current = await getIssue(input.id);
+    const current = await getIssue(input.id, scope);
     if (!current) return { status: "not_found", warning: "问题不存在或已被删除。" };
+    const projectId = current.projectId;
+    if (!projectId || !issueChangeRecordBelongsToScope(current, scope)) return { status: "not_found", warning: "问题不存在或已被删除。" };
     const nextStatus = deriveIssueNextStatus(current.status, input.action);
     const now = new Date().toISOString();
     const supabase = getAuthSupabase();
@@ -450,6 +554,9 @@ export async function transitionIssue(input: IssueTransitionInput, user: AppUser
         evidence: input.evidence?.trim() || current.evidence,
       })
       .eq("id", current.id)
+      .eq("org_id", scope.orgId)
+      .eq("data_class", scope.dataClass)
+      .eq("project_id", projectId)
       .select("*")
       .maybeSingle();
     if (error || !data) throw error || new Error("问题状态更新失败。");
@@ -465,6 +572,8 @@ export async function transitionIssue(input: IssueTransitionInput, user: AppUser
       comment: input.comment || "问题状态已流转。",
       evidence: input.evidence,
       metadata: { issue_code: issue.issueCode },
+      scope,
+      projectId,
     });
     const actions = await createActionItems({
       sourceType: "issue",
@@ -472,6 +581,8 @@ export async function transitionIssue(input: IssueTransitionInput, user: AppUser
       projectName: issue.projectName,
       value: input.actionItems,
       user,
+      scope,
+      scopedProjectId: projectId,
     });
     return { status: "succeeded", issue, event, actions };
   } catch (error) {
@@ -482,7 +593,7 @@ export async function transitionIssue(input: IssueTransitionInput, user: AppUser
   }
 }
 
-export async function createChange(input: ChangeCreateInput, user: AppUser | null): Promise<{
+export async function createChange(input: ChangeCreateInput, user: AppUser | null, scope: RiskRepositoryScope): Promise<{
   status: "succeeded" | "not_found" | "not_configured" | "failed";
   change?: ChangeRecord;
   issue?: IssueRecord;
@@ -493,8 +604,10 @@ export async function createChange(input: ChangeCreateInput, user: AppUser | nul
   if (!isAuthStorageConfigured()) return { ...missingStorageResult(), actions: undefined };
 
   try {
-    const issue = input.issueId ? await getIssue(input.issueId) : null;
+    const issue = input.issueId ? await getIssue(input.issueId, scope) : null;
     if (input.issueId && !issue) return { status: "not_found", warning: "关联问题不存在或已被删除。" };
+    const projectId = issue?.projectId || writableProjectId(scope);
+    if (!projectId || (issue && !issueChangeRecordBelongsToScope(issue, scope))) return { status: "not_found", warning: "关联问题不存在或已被删除。" };
     const projectName = input.projectName?.trim() || issue?.projectName || "";
     if (!projectName) return { status: "failed", warning: "项目名称不能为空。" };
     const title = input.title?.trim() || (issue ? `${issue.title}-变更申请` : "");
@@ -504,6 +617,9 @@ export async function createChange(input: ChangeCreateInput, user: AppUser | nul
     const { data, error } = await supabase
       .from("project_changes")
       .insert({
+        org_id: scope.orgId,
+        project_id: projectId,
+        data_class: scope.dataClass,
         change_code: code("CHG"),
         issue_id: issue?.id || null,
         project_name: projectName,
@@ -521,7 +637,7 @@ export async function createChange(input: ChangeCreateInput, user: AppUser | nul
         due_date: input.dueDate || issue?.dueDate || null,
         created_by: user?.id ?? null,
         created_by_name: actorName(user),
-        metadata: { source_issue_id: issue?.id || null },
+        metadata: { source_issue_id: issue?.id || null, org_id: scope.orgId, project_id: projectId, data_class: scope.dataClass },
       })
       .select("*")
       .maybeSingle();
@@ -534,7 +650,7 @@ export async function createChange(input: ChangeCreateInput, user: AppUser | nul
         action: "require_change",
         comment: `问题已触发变更：${title}`,
         evidence: input.reason,
-      }, user);
+      }, user, { ...scope, requestedProjectId: projectId });
       updatedIssue = issueUpdate.issue ?? issue;
     }
 
@@ -548,6 +664,8 @@ export async function createChange(input: ChangeCreateInput, user: AppUser | nul
       comment: issue ? "由问题触发变更申请。" : "变更申请已创建。",
       evidence: input.reason,
       metadata: { change_code: change.changeCode, issue_id: issue?.id || null },
+      scope,
+      projectId,
     });
     const actions = await createActionItems({
       sourceType: "change",
@@ -561,6 +679,8 @@ export async function createChange(input: ChangeCreateInput, user: AppUser | nul
         priority: "P1",
       },
       user,
+      scope,
+      scopedProjectId: projectId,
     });
     return { status: "succeeded", change, issue: updatedIssue ?? undefined, event, actions };
   } catch (error) {
@@ -571,7 +691,7 @@ export async function createChange(input: ChangeCreateInput, user: AppUser | nul
   }
 }
 
-export async function transitionChange(input: ChangeTransitionInput, user: AppUser | null): Promise<{
+export async function transitionChange(input: ChangeTransitionInput, user: AppUser | null, scope: RiskRepositoryScope): Promise<{
   status: "succeeded" | "not_found" | "not_configured" | "failed";
   change?: ChangeRecord;
   event?: IssueChangeEventRecord;
@@ -581,16 +701,23 @@ export async function transitionChange(input: ChangeTransitionInput, user: AppUs
   if (!isAuthStorageConfigured()) return { ...missingStorageResult(), actions: undefined };
 
   try {
+    const projectIds = resolveIssueChangeProjectIds(scope);
+    if (projectIds.length === 0) return { status: "not_found", warning: "变更不存在或已被删除。" };
     const supabase = getAuthSupabase();
     const { data: currentRow, error: currentError } = await supabase
       .from("project_changes")
       .select("*")
       .eq("id", input.id)
+      .eq("org_id", scope.orgId)
+      .eq("data_class", scope.dataClass)
+      .in("project_id", projectIds)
       .maybeSingle();
     if (currentError) throw currentError;
     if (!currentRow) return { status: "not_found", warning: "变更不存在或已被删除。" };
 
     const current = mapChange(currentRow as Record<string, unknown>);
+    const projectId = current.projectId;
+    if (!projectId || !issueChangeRecordBelongsToScope(current, scope)) return { status: "not_found", warning: "变更不存在或已被删除。" };
     const nextStatus = deriveChangeNextStatus(current.status, input.action);
     const now = new Date().toISOString();
     const { data, error } = await supabase
@@ -602,6 +729,9 @@ export async function transitionChange(input: ChangeTransitionInput, user: AppUs
         closed_at: isTerminalChangeStatus(nextStatus) ? now : current.closedAt,
       })
       .eq("id", current.id)
+      .eq("org_id", scope.orgId)
+      .eq("data_class", scope.dataClass)
+      .eq("project_id", projectId)
       .select("*")
       .maybeSingle();
     if (error || !data) throw error || new Error("变更状态更新失败。");
@@ -617,6 +747,8 @@ export async function transitionChange(input: ChangeTransitionInput, user: AppUs
       comment: input.comment || input.decisionSummary || "变更状态已流转。",
       evidence: input.evidence,
       metadata: { change_code: change.changeCode },
+      scope,
+      projectId,
     });
     const actions = await createActionItems({
       sourceType: "change",
@@ -624,6 +756,8 @@ export async function transitionChange(input: ChangeTransitionInput, user: AppUs
       projectName: change.projectName,
       value: input.actionItems,
       user,
+      scope,
+      scopedProjectId: projectId,
     });
     return { status: "succeeded", change, event, actions };
   } catch (error) {
@@ -634,7 +768,7 @@ export async function transitionChange(input: ChangeTransitionInput, user: AppUs
   }
 }
 
-export async function closeUnifiedAction(input: CloseActionInput, user: AppUser | null): Promise<{
+export async function closeUnifiedAction(input: CloseActionInput, user: AppUser | null, scope: RiskRepositoryScope): Promise<{
   status: "succeeded" | "not_found" | "not_configured" | "failed";
   action?: UnifiedActionRecord;
   event?: IssueChangeEventRecord;
@@ -646,15 +780,22 @@ export async function closeUnifiedAction(input: CloseActionInput, user: AppUser 
   if (!input.closeEvidence?.trim()) return { status: "failed", warning: "关闭行动项必须填写关闭证据。" };
 
   try {
+    const projectIds = resolveIssueChangeProjectIds(scope);
+    if (projectIds.length === 0) return { status: "not_found", warning: "行动项不存在或已被删除。" };
     const supabase = getAuthSupabase();
     const { data: currentRow, error: currentError } = await supabase
       .from("unified_action_items")
       .select("*")
       .eq("id", input.id)
+      .eq("org_id", scope.orgId)
+      .eq("data_class", scope.dataClass)
+      .in("project_id", projectIds)
       .maybeSingle();
     if (currentError) throw currentError;
     if (!currentRow) return { status: "not_found", warning: "行动项不存在或已被删除。" };
     const current = mapAction(currentRow as Record<string, unknown>);
+    const projectId = current.projectId;
+    if (!projectId || !issueChangeRecordBelongsToScope(current, scope)) return { status: "not_found", warning: "行动项不存在或已被删除。" };
     const nextStatus = input.status || "done";
     const now = new Date().toISOString();
     const { data, error } = await supabase
@@ -666,6 +807,9 @@ export async function closeUnifiedAction(input: CloseActionInput, user: AppUser 
         closed_at: now,
       })
       .eq("id", input.id)
+      .eq("org_id", scope.orgId)
+      .eq("data_class", scope.dataClass)
+      .eq("project_id", projectId)
       .select("*")
       .maybeSingle();
     if (error || !data) throw error || new Error("行动项关闭失败。");
@@ -681,10 +825,24 @@ export async function closeUnifiedAction(input: CloseActionInput, user: AppUser 
       comment: "行动项已关闭并补充证据。",
       evidence: input.closeEvidence,
       metadata: { source_type: action.sourceType, source_id: action.sourceId },
+      scope,
+      projectId,
     });
     const governanceFollowupId = action.status === "done" ? riskRetrospectiveGovernanceFollowupIdFromAction(action) : null;
     if (!governanceFollowupId) {
       return { status: "succeeded", action, event };
+    }
+
+    const linkedOrgId = currentRow.org_id ? String(currentRow.org_id) : "";
+    const linkedProjectId = currentRow.project_id ? String(currentRow.project_id) : "";
+    const linkedDataClass = currentRow.data_class ? String(currentRow.data_class) as "production" | "sample" | "test" | "diagnostic" | "unclassified" : "unclassified";
+    if (!linkedOrgId || !linkedProjectId || linkedDataClass === "unclassified") {
+      return {
+        status: "succeeded",
+        action,
+        event,
+        linkedGovernanceWarning: "关联行动项缺少正式组织、项目或数据分类，未跨范围关闭风险治理待办。",
+      };
     }
 
     const linkedGovernanceResult = await transitionRiskRetrospectiveGovernanceFollowup({
@@ -692,7 +850,7 @@ export async function closeUnifiedAction(input: CloseActionInput, user: AppUser 
       status: "已关闭",
       closureNote: input.closeEvidence.trim(),
       reviewResult: `统一行动项已关闭：${action.title}（行动项 ${action.id}）。`,
-    });
+    }, { orgId: linkedOrgId, projectIds: [linkedProjectId], requestedProjectId: linkedProjectId, dataClass: linkedDataClass });
     if (linkedGovernanceResult.status !== "succeeded") {
       return {
         status: "succeeded",
@@ -710,7 +868,7 @@ export async function closeUnifiedAction(input: CloseActionInput, user: AppUser 
   }
 }
 
-export async function createUnifiedAction(input: UnifiedActionCreateInput, user: AppUser | null): Promise<{
+export async function createUnifiedAction(input: UnifiedActionCreateInput, user: AppUser | null, scope: RiskRepositoryScope): Promise<{
   status: "succeeded" | "not_configured" | "failed";
   action?: UnifiedActionRecord;
   event?: IssueChangeEventRecord;
@@ -720,6 +878,7 @@ export async function createUnifiedAction(input: UnifiedActionCreateInput, user:
   if (!input.title?.trim()) return { status: "failed", warning: "行动项标题不能为空。" };
 
   try {
+    const projectId = writableProjectId(scope);
     const actions = await createActionItems({
       sourceType: input.sourceType || "manual",
       sourceId: input.sourceId || `manual-${Date.now()}`,
@@ -731,6 +890,8 @@ export async function createUnifiedAction(input: UnifiedActionCreateInput, user:
         priority: input.priority || "P1",
       }],
       user,
+      scope,
+      scopedProjectId: projectId,
     });
     const action = actions[0];
     if (!action) return { status: "failed", warning: "行动项创建失败。" };
@@ -742,6 +903,8 @@ export async function createUnifiedAction(input: UnifiedActionCreateInput, user:
       user,
       comment: input.sourceReason || "AI建议已转为统一行动项。",
       metadata: { source_type: action.sourceType, source_id: action.sourceId },
+      scope,
+      projectId,
     });
     return { status: "succeeded", action, event };
   } catch (error) {
@@ -752,13 +915,13 @@ export async function createUnifiedAction(input: UnifiedActionCreateInput, user:
   }
 }
 
-export async function issueChangeReportMarkdown(): Promise<{
+export async function issueChangeReportMarkdown(scope: RiskRepositoryScope): Promise<{
   status: "succeeded" | "not_configured" | "failed";
   markdown?: string;
   filename?: string;
   warning?: string;
 }> {
-  const bundle = await listIssueChangeChain(200);
+  const bundle = await listIssueChangeChain(scope, 200);
   if (bundle.status !== "succeeded") {
     return { status: bundle.status, warning: bundle.warning };
   }

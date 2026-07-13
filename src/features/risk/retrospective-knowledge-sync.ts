@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import type { RiskRetrospectiveAssetRecord } from "./retrospective-assets.ts";
+import { resolveRequestedRiskProjectIds, type RiskDataScope } from "./scope.ts";
 
 interface SyncActor {
   id?: string | null;
@@ -93,6 +94,11 @@ function mapLog(row: Record<string, unknown>): RiskRetrospectiveSyncLog {
     requestId: row.request_id ? String(row.request_id) : null,
     createdAt: String(row.created_at ?? ""),
   };
+}
+
+function exportProjectId(scope: RiskDataScope): string | null {
+  const projectIds = resolveRequestedRiskProjectIds(scope, scope.requestedProjectId);
+  return scope.requestedProjectId ? projectIds[0] ?? null : null;
 }
 
 function assetSection(asset: RiskRetrospectiveAssetRecord, index: number): string[] {
@@ -192,16 +198,22 @@ export async function persistRiskRetrospectiveSyncLog(input: {
   user: SyncActor | null;
   requestId?: string;
   warning?: string;
+  scope?: RiskDataScope;
 }): Promise<RiskRetrospectiveSyncPersistResult> {
+  if (!input.scope) return { status: "failed", warning: "RISK_DATA_SCOPE_REQUIRED" };
   if (!isStorageConfigured()) {
     return { status: "skipped", warning: "Supabase 未配置，风险复盘资产导出审计未持久化。" };
   }
 
   try {
+    const projectId = exportProjectId(input.scope);
     const supabase = getSupabase();
     const { data, error } = await supabase
       .from("risk_retrospective_asset_sync_logs")
       .insert({
+        org_id: input.scope.orgId,
+        project_id: projectId,
+        data_class: input.scope.dataClass,
         asset_ids: input.knowledgeExport.assetIds,
         asset_count: input.knowledgeExport.assetCount,
         target_space: "AI-PMO-SYS",
@@ -238,16 +250,22 @@ export async function persistRiskRetrospectiveSyncLog(input: {
   }
 }
 
-export async function listRiskRetrospectiveSyncLogs(limit = 20): Promise<RiskRetrospectiveSyncLogListResult> {
+export async function listRiskRetrospectiveSyncLogs(limit = 20, scope?: RiskDataScope): Promise<RiskRetrospectiveSyncLogListResult> {
+  if (!scope) return { status: "failed", logs: [], warning: "RISK_DATA_SCOPE_REQUIRED" };
   if (!isStorageConfigured()) {
     return { status: "not_configured", logs: [], warning: "Supabase 未配置，无法读取风险复盘资产导出审计。" };
   }
 
   try {
+    const projectId = exportProjectId(scope);
     const supabase = getSupabase();
-    const { data, error } = await supabase
+    let query = supabase
       .from("risk_retrospective_asset_sync_logs")
       .select("id,asset_ids,asset_count,target_space,target_path,export_status,markdown_title,markdown_sha256,warning,exported_by_name,request_id,created_at")
+      .eq("org_id", scope.orgId)
+      .eq("data_class", scope.dataClass);
+    query = projectId ? query.eq("project_id", projectId) : query.is("project_id", null);
+    const { data, error } = await query
       .order("created_at", { ascending: false })
       .limit(limit);
 

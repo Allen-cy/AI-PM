@@ -1,4 +1,6 @@
 import { getCurrentUser } from "@/features/auth/server";
+import { authorizeRiskRequest } from "@/features/risk/access";
+import type { RiskDataScope } from "@/features/risk/scope";
 import { createUnifiedAction } from "@/features/issue-change/repository";
 import {
   listRiskRetrospectiveGovernanceFollowups,
@@ -50,8 +52,8 @@ function unifiedActionPriority(priority: "P0" | "P1" | "P2"): "P0" | "P1" | "P2"
   return priority;
 }
 
-async function currentOperationReport(limit = 500) {
-  const followupResult = await listRiskRetrospectiveGovernanceFollowups(limit);
+async function currentOperationReport(scope: RiskDataScope, limit = 500) {
+  const followupResult = await listRiskRetrospectiveGovernanceFollowups(limit, scope);
   return {
     followupResult,
     operationReport: buildRiskRetrospectiveGovernanceFollowupOperationReport({
@@ -61,16 +63,13 @@ async function currentOperationReport(limit = 500) {
   };
 }
 
-export async function GET(): Promise<Response> {
+export async function GET(request: Request): Promise<Response> {
   const requestId = crypto.randomUUID();
-  const user = await getCurrentUser();
-  if (process.env.AUTH_REQUIRED === "true" && !user) {
-    return jsonResponse({ request_id: requestId, status: "unauthorized", warning: "请先登录后再查看知识治理运营历史。" }, 401, requestId);
-  }
-
+  const access = await authorizeRiskRequest(request, "read");
+  if (!access.ok) return jsonResponse({ request_id: requestId, error: access.error, detail: access.detail }, access.status, requestId);
   const [{ operationReport }, history] = await Promise.all([
-    currentOperationReport(),
-    listRiskRetrospectiveGovernanceOperationHistory(),
+    currentOperationReport(access.scope),
+    listRiskRetrospectiveGovernanceOperationHistory({ scope: access.scope }),
   ]);
   const operationSummary = buildRiskRetrospectiveGovernanceOperationHistorySummary({
     snapshots: history.snapshots,
@@ -91,11 +90,9 @@ export async function GET(): Promise<Response> {
 
 export async function POST(request: Request): Promise<Response> {
   const requestId = crypto.randomUUID();
+  const access = await authorizeRiskRequest(request, "create");
+  if (!access.ok) return jsonResponse({ request_id: requestId, error: access.error, detail: access.detail }, access.status, requestId);
   const user = await getCurrentUser();
-  if (process.env.AUTH_REQUIRED === "true" && !user) {
-    return jsonResponse({ request_id: requestId, status: "unauthorized", warning: "请先登录后再保存知识治理运营快照。" }, 401, requestId);
-  }
-
   let body: PostBody = {};
   try {
     body = await request.json() as PostBody;
@@ -106,11 +103,12 @@ export async function POST(request: Request): Promise<Response> {
     return jsonResponse({ request_id: requestId, status: "failed", warning: "知识治理运营历史动作不合法。" }, 400, requestId);
   }
 
-  const { operationReport } = await currentOperationReport();
+  const { operationReport } = await currentOperationReport(access.scope);
   const result = await persistRiskRetrospectiveGovernanceOperationSnapshot({
     report: operationReport,
     user,
     requestId,
+    scope: access.scope,
   });
   await writeOperationAudit({
     user,
@@ -138,11 +136,9 @@ export async function POST(request: Request): Promise<Response> {
 
 export async function PATCH(request: Request): Promise<Response> {
   const requestId = crypto.randomUUID();
+  const access = await authorizeRiskRequest(request, "transition");
+  if (!access.ok) return jsonResponse({ request_id: requestId, error: access.error, detail: access.detail }, access.status, requestId);
   const user = await getCurrentUser();
-  if (process.env.AUTH_REQUIRED === "true" && !user) {
-    return jsonResponse({ request_id: requestId, status: "unauthorized", warning: "请先登录后再更新知识治理运营提醒。" }, 401, requestId);
-  }
-
   let body: PatchBody;
   try {
     body = await request.json() as PatchBody;
@@ -159,39 +155,48 @@ export async function PATCH(request: Request): Promise<Response> {
     closureNote: body.closureNote,
     user,
     requestId,
+    scope: access.scope,
   });
   let linkedFollowup: Awaited<ReturnType<typeof updateRiskRetrospectiveGovernanceFollowupFromReminder>> | null = null;
   let linkedAction: Awaited<ReturnType<typeof createUnifiedAction>> | null = null;
+  let linkedActionWarning: string | undefined;
   if (result.status === "succeeded" && result.log.sourceFollowupId && body.status === "processed") {
     linkedFollowup = await updateRiskRetrospectiveGovernanceFollowupFromReminder({
       id: result.log.sourceFollowupId,
       status: "待验收",
       closureNote: body.closureNote,
       reviewResult: `运营提醒已处理：${result.log.title}。进入待验收，由PMO复核关闭标准和证据。`,
-    });
+    }, access.scope);
   }
   if (result.status === "succeeded" && result.log.sourceFollowupId && body.status === "escalated") {
     linkedFollowup = await updateRiskRetrospectiveGovernanceFollowupFromReminder({
       id: result.log.sourceFollowupId,
       status: "处理中",
       reviewResult: `运营提醒已升级：${result.log.title}。需纳入统一行动项或PMO治理跟踪。`,
-    });
-    linkedAction = await createUnifiedAction({
-      title: `[知识治理升级] ${result.log.title}`,
-      owner: result.log.ownerName || undefined,
-      dueDate: result.log.dueDate || undefined,
-      priority: unifiedActionPriority(result.log.priority),
-      projectName: "风险复盘资产治理",
-      sourceType: "governance",
-      sourceId: `risk-retro-governance-followup-${result.log.sourceFollowupId}`,
-      sourceReason: [
-        `来源：知识治理运营提醒 ${result.log.id}`,
-        `提醒类型：${result.log.reminderType}`,
-        `资产：${result.log.assetTitle || "未记录"}`,
-        `处理动作：${result.log.actionRequired || "未记录"}`,
-        `升级说明：${body.closureNote || "未填写"}`,
-      ].join("\n"),
-    }, user);
+    }, access.scope);
+    const scopedProjectId = result.log.projectId
+      || access.scope.requestedProjectId
+      || (access.scope.projectIds.length === 1 ? access.scope.projectIds[0] : undefined);
+    if (!scopedProjectId || !access.scope.projectIds.includes(scopedProjectId)) {
+      linkedActionWarning = "当前业务上下文无法唯一确定项目，未创建跨项目知识治理行动项。";
+    } else {
+      linkedAction = await createUnifiedAction({
+        title: `[知识治理升级] ${result.log.title}`,
+        owner: result.log.ownerName || undefined,
+        dueDate: result.log.dueDate || undefined,
+        priority: unifiedActionPriority(result.log.priority),
+        projectName: "风险复盘资产治理",
+        sourceType: "governance",
+        sourceId: `risk-retro-governance-followup-${result.log.sourceFollowupId}`,
+        sourceReason: [
+          `来源：知识治理运营提醒 ${result.log.id}`,
+          `提醒类型：${result.log.reminderType}`,
+          `资产：${result.log.assetTitle || "未记录"}`,
+          `处理动作：${result.log.actionRequired || "未记录"}`,
+          `升级说明：${body.closureNote || "未填写"}`,
+        ].join("\n"),
+      }, user, { ...access.scope, requestedProjectId: scopedProjectId });
+    }
   }
   if (result.status === "succeeded") {
     await writeOperationAudit({
@@ -218,6 +223,6 @@ export async function PATCH(request: Request): Promise<Response> {
     linked_followup: linkedFollowup?.status === "succeeded" ? linkedFollowup.followup : undefined,
     linked_followup_warning: linkedFollowup && linkedFollowup.status !== "succeeded" ? linkedFollowup.warning : undefined,
     linked_action: linkedAction?.status === "succeeded" ? linkedAction.action : undefined,
-    linked_action_warning: linkedAction && linkedAction.status !== "succeeded" ? linkedAction.warning : undefined,
+    linked_action_warning: linkedActionWarning || (linkedAction && linkedAction.status !== "succeeded" ? linkedAction.warning : undefined),
   }, result.status === "failed" ? 500 : statusCode(result.status), requestId);
 }

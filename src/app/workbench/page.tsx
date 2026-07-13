@@ -6,6 +6,7 @@ import { FeishuConfirmationInlinePanelClient } from "@/components/FeishuConfirma
 import { IntegrationStatusPanelClient } from "@/components/IntegrationStatusPanelClient";
 import {
   businessContextSearchParams,
+  loadCurrentBusinessContextSearchParams,
   readStoredBusinessContext,
   readStoredDataClass,
   writeStoredBusinessContext,
@@ -258,7 +259,8 @@ export default function WorkbenchPage() {
     setSavingSuggestion(item.title);
     setActionMessage("");
     try {
-      const response = await fetch("/api/issue-change", {
+      const businessContext = await loadCurrentBusinessContextSearchParams();
+      const response = await fetch(`/api/issue-change?${businessContext.toString()}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -289,7 +291,8 @@ export default function WorkbenchPage() {
     setSavingGovernanceFollowup(item.id);
     setActionMessage("");
     try {
-      const response = await fetch("/api/issue-change", {
+      const businessContext = await loadCurrentBusinessContextSearchParams();
+      const response = await fetch(`/api/issue-change?${businessContext.toString()}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -302,7 +305,7 @@ export default function WorkbenchPage() {
         throw new Error(body.warning || "知识治理待办转统一行动项失败。");
       }
 
-      await fetch("/api/risk/retrospective/assets/governance/followups", {
+      await fetch(`/api/risk/retrospective/assets/governance/followups?${businessContext.toString()}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

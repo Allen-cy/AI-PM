@@ -1,4 +1,5 @@
 import { getCurrentUser } from "@/features/auth/server";
+import { authorizeRiskRequest } from "@/features/risk/access";
 import {
   applyKnowledgeGovernanceEvidenceRecommendation,
   getKnowledgeGovernanceEvidenceChain,
@@ -48,22 +49,23 @@ function text(value: unknown): string | undefined {
 
 export async function GET(request: Request): Promise<Response> {
   const requestId = crypto.randomUUID();
+  const access = await authorizeRiskRequest(request, "read");
+  if (!access.ok) return jsonResponse({ request_id: requestId, error: access.error, detail: access.detail }, access.status, requestId);
   const url = new URL(request.url);
   const result = await getKnowledgeGovernanceEvidenceChain({
     governanceInstanceId: url.searchParams.get("governanceInstanceId") || url.searchParams.get("instanceId"),
     followupId: url.searchParams.get("followupId"),
     reminderLogId: url.searchParams.get("reminderLogId"),
+    scope: access.scope,
   });
   return jsonResponse({ request_id: requestId, ...result }, statusCode(result.status), requestId);
 }
 
 export async function POST(request: Request): Promise<Response> {
   const requestId = crypto.randomUUID();
+  const access = await authorizeRiskRequest(request, "create");
+  if (!access.ok) return jsonResponse({ request_id: requestId, error: access.error, detail: access.detail }, access.status, requestId);
   const user = await getCurrentUser();
-  if (process.env.AUTH_REQUIRED === "true" && !user) {
-    return jsonResponse({ request_id: requestId, status: "unauthorized", warning: "请先登录后再生成知识治理反写建议。" }, 401, requestId);
-  }
-
   let body: RecommendationBody;
   try {
     body = await request.json() as RecommendationBody;
@@ -82,6 +84,7 @@ export async function POST(request: Request): Promise<Response> {
     },
     user,
     requestId,
+    scope: access.scope,
   });
   if (result.status === "confirmation_required") {
     await writeOperationAudit({
@@ -107,11 +110,9 @@ export async function POST(request: Request): Promise<Response> {
 
 export async function PATCH(request: Request): Promise<Response> {
   const requestId = crypto.randomUUID();
+  const access = await authorizeRiskRequest(request, "transition");
+  if (!access.ok) return jsonResponse({ request_id: requestId, error: access.error, detail: access.detail }, access.status, requestId);
   const user = await getCurrentUser();
-  if (process.env.AUTH_REQUIRED === "true" && !user) {
-    return jsonResponse({ request_id: requestId, status: "unauthorized", warning: "请先登录后再反写知识治理待办。" }, 401, requestId);
-  }
-
   let body: ApplyBody;
   try {
     body = await request.json() as ApplyBody;
@@ -130,6 +131,7 @@ export async function PATCH(request: Request): Promise<Response> {
     reviewNote: text(body.reviewNote),
     user,
     requestId,
+    scope: access.scope,
   });
   if (result.status === "succeeded") {
     await writeOperationAudit({

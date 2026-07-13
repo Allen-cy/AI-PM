@@ -3,6 +3,7 @@ import {
   listRiskRetrospectiveAssets,
 } from "@/features/risk/retrospective-assets";
 import { listRisks } from "@/lib/risk-repository";
+import { authorizeRiskRequest } from "@/features/risk/access";
 
 export const runtime = "nodejs";
 
@@ -13,12 +14,14 @@ function jsonResponse(body: unknown, status = 200, requestId = crypto.randomUUID
   });
 }
 
-export async function GET(): Promise<Response> {
+export async function GET(request: Request): Promise<Response> {
   const requestId = crypto.randomUUID();
   try {
+    const access = await authorizeRiskRequest(request, "read");
+    if (!access.ok) return jsonResponse({ request_id: requestId, error: access.error, detail: access.detail }, access.status, requestId);
     const [riskResult, assetResult] = await Promise.all([
-      listRisks(),
-      listRiskRetrospectiveAssets("published", 100),
+      listRisks(access.scope),
+      listRiskRetrospectiveAssets("published", 100, access.scope),
     ]);
     const recommendations = buildRiskRetrospectiveRecommendations(riskResult.risks, assetResult.assets);
     return jsonResponse({

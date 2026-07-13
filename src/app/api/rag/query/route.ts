@@ -42,6 +42,11 @@ async function requireAuthenticatedApiUser() {
   }
 }
 
+async function authorizeRiskKnowledgeRequest(request: Request) {
+  const access = await import('../../../../features/risk/access.ts');
+  return access.authorizeRiskRequest(request, 'read');
+}
+
 async function saveKnowledgeOutputReference(input: {
   outputType: 'ai_answer';
   outputId: string;
@@ -77,7 +82,15 @@ export async function POST(request: Request): Promise<Response> {
 
   try {
     const input = validateRagQuery(body);
-    const dynamicDocuments = await listPublishedRiskRetrospectiveRagDocuments();
+    const hasBusinessContext = new URL(request.url).searchParams.has('org_id');
+    const access = user && hasBusinessContext ? await authorizeRiskKnowledgeRequest(request) : null;
+    if (access && !access.ok) {
+      return problem(access.status, 'Knowledge Scope Forbidden', access.detail || access.error, id);
+    }
+    const riskScope = access?.ok ? access.scope : undefined;
+    const dynamicDocuments = riskScope
+      ? await listPublishedRiskRetrospectiveRagDocuments(riskScope)
+      : { status: 'succeeded' as const, documents: [] };
     const result = queryRagWithAdditionalDocuments(input, dynamicDocuments.documents);
     result.trace_id = id;
     const usage = await recordRiskRetrospectiveRagUsage({
@@ -85,6 +98,7 @@ export async function POST(request: Request): Promise<Response> {
       citations: result.citations,
       requestId: id,
       user,
+      scope: riskScope,
     });
     if (usage.status === 'failed') {
       console.error(JSON.stringify({

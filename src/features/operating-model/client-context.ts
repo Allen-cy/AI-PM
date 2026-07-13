@@ -72,3 +72,52 @@ export function businessContextSearchParams(context: StoredBusinessContext, data
     data_class: dataClass,
   });
 }
+
+export async function loadCurrentBusinessContextSearchParams(options: {
+  preferredRole?: string;
+  preferredSubjectScope?: string;
+} = {}): Promise<URLSearchParams> {
+  const dataClass = readStoredDataClass();
+  const response = await fetch(`/api/context/current?data_class=${encodeURIComponent(dataClass)}`, { cache: "no-store" });
+  const body = await response.json() as {
+    active_context?: StoredBusinessContext | null;
+    available_contexts?: Array<{
+      id: string;
+      businessRole: string;
+      orgId: string;
+      subjectScope: string;
+      subjectId: string;
+      status: string;
+    }>;
+    available_projects?: Array<{ id: string }>;
+    detail?: string;
+  };
+  if (!response.ok) throw new Error(body.detail || "无法读取当前业务身份。");
+  const stored = readStoredBusinessContext();
+  const preferred = body.available_contexts?.find(item => (
+    item.status === "active"
+    && (!options.preferredRole || item.businessRole === options.preferredRole)
+    && (!options.preferredSubjectScope || item.subjectScope === options.preferredSubjectScope)
+  ));
+  const assignment = preferred
+    ?? body.available_contexts?.find(item => item.id === stored?.assignmentId && item.status === "active")
+    ?? body.available_contexts?.find(item => item.id === body.active_context?.assignmentId && item.status === "active");
+  if (!assignment) throw new Error("尚未分配有效业务角色，请联系管理员。");
+  const context: StoredBusinessContext = {
+    assignmentId: assignment.id,
+    businessRole: assignment.businessRole,
+    orgId: assignment.orgId,
+    subjectScope: assignment.subjectScope,
+    subjectId: assignment.subjectId,
+  };
+  writeStoredBusinessContext(context);
+  const params = businessContextSearchParams(context, dataClass);
+  const availableProjects = body.available_projects ?? [];
+  const storedProjectId = readStoredCurrentProject();
+  const project = availableProjects.find(item => item.id === storedProjectId) ?? availableProjects[0];
+  if (project) {
+    params.set("project_id", project.id);
+    writeStoredCurrentProject(project.id);
+  }
+  return params;
+}

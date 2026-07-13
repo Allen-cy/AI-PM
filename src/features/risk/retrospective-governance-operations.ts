@@ -5,12 +5,14 @@ import type {
   RiskRetrospectiveGovernanceFollowupReminderDraft,
 } from "./retrospective-governance-followup-workbench.ts";
 import { maskFeishuReceiveId, reminderLogKey } from "./retrospective-governance-operation-utils.ts";
+import { resolveRequestedRiskProjectIds, type RiskDataScope } from "./scope.ts";
 
 export type RiskRetrospectiveGovernanceReminderLogStatus = "draft" | "sent" | "processed" | "ignored" | "escalated" | "failed";
 export type RiskRetrospectiveGovernanceReminderLogType = RiskRetrospectiveGovernanceFollowupReminderDraft["type"] | "weekly_summary";
 
 export interface RiskRetrospectiveGovernanceOperationSnapshot {
   id: string;
+  projectId: string;
   snapshotDate: string;
   snapshotWeekStart: string;
   total: number;
@@ -33,6 +35,7 @@ export interface RiskRetrospectiveGovernanceOperationSnapshot {
 
 export interface RiskRetrospectiveGovernanceReminderLog {
   id: string;
+  projectId?: string | null;
   reminderKey: string;
   reminderType: RiskRetrospectiveGovernanceReminderLogType;
   originalReminderId: string | null;
@@ -126,6 +129,7 @@ function weekStartFromTrend(report: RiskRetrospectiveGovernanceFollowupOperation
 function mapSnapshot(row: Record<string, unknown>): RiskRetrospectiveGovernanceOperationSnapshot {
   return {
     id: String(row.id),
+    projectId: String(row.project_id ?? ""),
     snapshotDate: String(row.snapshot_date ?? ""),
     snapshotWeekStart: String(row.snapshot_week_start ?? ""),
     total: Number(row.total_count ?? 0),
@@ -155,6 +159,7 @@ function mapReminderLog(row: Record<string, unknown>): RiskRetrospectiveGovernan
   const reminderType = String(row.reminder_type ?? "weekly_summary") as RiskRetrospectiveGovernanceReminderLogType;
   return {
     id: String(row.id),
+    projectId: typeof row.project_id === "string" ? row.project_id : null,
     reminderKey: String(row.reminder_key ?? ""),
     reminderType,
     originalReminderId,
@@ -183,6 +188,7 @@ function mapReminderLog(row: Record<string, unknown>): RiskRetrospectiveGovernan
 function snapshotSelectColumns(): string {
   return [
     "id",
+    "project_id",
     "snapshot_date",
     "snapshot_week_start",
     "total_count",
@@ -221,6 +227,7 @@ function sourceFollowupIdFromOriginalReminderId(originalReminderId: string | nul
 function reminderLogSelectColumns(): string {
   return [
     "id",
+    "project_id",
     "reminder_key",
     "reminder_type",
     "priority",
@@ -245,21 +252,37 @@ function reminderLogSelectColumns(): string {
   ].join(",");
 }
 
+function scopedOperationProjectIds(scope: RiskDataScope): string[] {
+  return resolveRequestedRiskProjectIds(scope, scope.requestedProjectId);
+}
+
+function requiredOperationProjectId(scope: RiskDataScope): string {
+  const projectIds = resolveRequestedRiskProjectIds(scope, scope.requestedProjectId);
+  if (projectIds.length !== 1) throw new Error("PROJECT_ID_REQUIRED");
+  return projectIds[0];
+}
+
 export async function persistRiskRetrospectiveGovernanceOperationSnapshot(input: {
   report: RiskRetrospectiveGovernanceFollowupOperationReport;
   user: AppUser | null;
   requestId?: string;
+  scope?: RiskDataScope;
 }): Promise<RiskRetrospectiveGovernanceOperationPersistResult> {
+  if (!input.scope) return { status: "failed", warning: "RISK_DATA_SCOPE_REQUIRED" };
   if (!isAuthStorageConfigured()) {
     return { status: "skipped", warning: "Supabase 未配置，知识治理运营快照未持久化。" };
   }
 
-  const snapshotDate = dateOnly();
   try {
+    const snapshotDate = dateOnly();
+    const projectId = requiredOperationProjectId(input.scope);
     const supabase = getAuthSupabase();
     const { data, error } = await supabase
       .from(SNAPSHOT_TABLE)
       .upsert({
+        org_id: input.scope.orgId,
+        project_id: projectId,
+        data_class: input.scope.dataClass,
         snapshot_date: snapshotDate,
         snapshot_week_start: weekStartFromTrend(input.report),
         total_count: input.report.summary.total,
@@ -279,11 +302,12 @@ export async function persistRiskRetrospectiveGovernanceOperationSnapshot(input:
         request_id: input.requestId ?? null,
         metadata: {
           source: "risk_retrospective_governance_operation_report",
+          project_id: projectId,
           filtered: input.report.summary.filtered,
           warning: input.report.warning ?? null,
         },
         updated_at: new Date().toISOString(),
-      }, { onConflict: "snapshot_date" })
+      }, { onConflict: "org_id,data_class,project_id,snapshot_date" })
       .select(snapshotSelectColumns())
       .single();
 
@@ -311,45 +335,51 @@ export async function persistRiskRetrospectiveGovernanceReminderLogs(input: {
   receiveId?: string;
   feishuMessageId?: string | null;
   error?: string | null;
+  scope?: RiskDataScope;
 }): Promise<RiskRetrospectiveGovernanceReminderPersistResult> {
+  if (!input.scope) return { status: "failed", warning: "RISK_DATA_SCOPE_REQUIRED" };
   if (input.reminders.length === 0) return { status: "succeeded", logs: [] };
   if (!isAuthStorageConfigured()) {
     return { status: "skipped", warning: "Supabase 未配置，知识治理运营提醒日志未持久化。" };
   }
 
-  const snapshotDate = dateOnly();
-  const now = new Date().toISOString();
-  const payload = input.reminders.map(reminder => ({
-    reminder_key: reminderLogKey(reminder.id, snapshotDate),
-    reminder_type: reminder.type,
-    priority: reminder.priority,
-    title: reminder.title,
-    asset_title: reminder.assetTitle,
-    owner_name: reminder.ownerName,
-    due_date: /^\d{4}-\d{2}-\d{2}$/.test(reminder.dueDate) ? reminder.dueDate : null,
-    action_required: reminder.actionRequired,
-    status: input.status,
-    feishu_message_id: input.feishuMessageId ?? null,
-    feishu_receive_id_type: input.receiveIdType ?? null,
-    feishu_receive_id_masked: input.receiveId ? maskFeishuReceiveId(input.receiveId) : null,
-    sent_at: input.status === "sent" ? now : null,
-    error: input.error ?? null,
-    created_by: input.user?.id ?? null,
-    created_by_name: actorName(input.user),
-    request_id: input.requestId ?? null,
-    metadata: {
-      source: "risk_retrospective_governance_weekly_reminder",
-      original_reminder_id: reminder.id,
-      confirmation_required: reminder.confirmationRequired,
-    },
-    updated_at: now,
-  }));
-
   try {
+    const snapshotDate = dateOnly();
+    const now = new Date().toISOString();
+    const projectId = requiredOperationProjectId(input.scope);
+    const payload = input.reminders.map(reminder => ({
+      org_id: input.scope!.orgId,
+      project_id: projectId,
+      data_class: input.scope!.dataClass,
+      reminder_key: reminderLogKey(reminder.id, snapshotDate),
+      reminder_type: reminder.type,
+      priority: reminder.priority,
+      title: reminder.title,
+      asset_title: reminder.assetTitle,
+      owner_name: reminder.ownerName,
+      due_date: /^\d{4}-\d{2}-\d{2}$/.test(reminder.dueDate) ? reminder.dueDate : null,
+      action_required: reminder.actionRequired,
+      status: input.status,
+      feishu_message_id: input.feishuMessageId ?? null,
+      feishu_receive_id_type: input.receiveIdType ?? null,
+      feishu_receive_id_masked: input.receiveId ? maskFeishuReceiveId(input.receiveId) : null,
+      sent_at: input.status === "sent" ? now : null,
+      error: input.error ?? null,
+      created_by: input.user?.id ?? null,
+      created_by_name: actorName(input.user),
+      request_id: input.requestId ?? null,
+      metadata: {
+        source: "risk_retrospective_governance_weekly_reminder",
+        project_id: projectId,
+        original_reminder_id: reminder.id,
+        confirmation_required: reminder.confirmationRequired,
+      },
+      updated_at: now,
+    }));
     const supabase = getAuthSupabase();
     const { data, error } = await supabase
       .from(REMINDER_LOG_TABLE)
-      .upsert(payload, { onConflict: "reminder_key" })
+      .upsert(payload, { onConflict: "org_id,data_class,project_id,reminder_key" })
       .select(reminderLogSelectColumns());
 
     if (error) {
@@ -368,24 +398,36 @@ export async function persistRiskRetrospectiveGovernanceReminderLogs(input: {
 }
 
 export async function listRiskRetrospectiveGovernanceOperationHistory(input: {
+  scope?: RiskDataScope;
   snapshotLimit?: number;
   reminderLimit?: number;
 } = {}): Promise<RiskRetrospectiveGovernanceOperationHistoryResult> {
+  if (!input.scope) return { status: "failed", snapshots: [], reminderLogs: [], warning: "RISK_DATA_SCOPE_REQUIRED" };
   if (!isAuthStorageConfigured()) {
     return { status: "not_configured", snapshots: [], reminderLogs: [], warning: "Supabase 未配置，无法读取知识治理运营历史。" };
   }
 
   try {
     const supabase = getAuthSupabase();
+    const projectIds = scopedOperationProjectIds(input.scope);
+    if (projectIds.length === 0) return { status: "succeeded", snapshots: [], reminderLogs: [] };
+    const snapshotQuery = supabase
+      .from(SNAPSHOT_TABLE)
+      .select(snapshotSelectColumns())
+      .eq("org_id", input.scope.orgId)
+      .eq("data_class", input.scope.dataClass)
+      .in("project_id", projectIds);
+    const reminderQuery = supabase
+      .from(REMINDER_LOG_TABLE)
+      .select(reminderLogSelectColumns())
+      .eq("org_id", input.scope.orgId)
+      .eq("data_class", input.scope.dataClass)
+      .in("project_id", projectIds);
     const [snapshots, reminderLogs] = await Promise.all([
-      supabase
-        .from(SNAPSHOT_TABLE)
-        .select(snapshotSelectColumns())
+      snapshotQuery
         .order("snapshot_date", { ascending: false })
         .limit(input.snapshotLimit ?? 12),
-      supabase
-        .from(REMINDER_LOG_TABLE)
-        .select(reminderLogSelectColumns())
+      reminderQuery
         .order("created_at", { ascending: false })
         .limit(input.reminderLimit ?? 50),
     ]);
@@ -415,18 +457,24 @@ export async function listRiskRetrospectiveGovernanceOperationHistory(input: {
   }
 }
 
-export async function getRiskRetrospectiveGovernanceReminderLog(id: string): Promise<RiskRetrospectiveGovernanceReminderGetResult> {
+export async function getRiskRetrospectiveGovernanceReminderLog(id: string, scope?: RiskDataScope): Promise<RiskRetrospectiveGovernanceReminderGetResult> {
+  if (!scope) return { status: "failed", warning: "RISK_DATA_SCOPE_REQUIRED" };
   if (!isAuthStorageConfigured()) {
     return { status: "not_configured", warning: "Supabase 未配置，无法读取知识治理运营提醒。" };
   }
 
   try {
     const supabase = getAuthSupabase();
-    const { data, error } = await supabase
+    const projectIds = scopedOperationProjectIds(scope);
+    if (projectIds.length === 0) return { status: "not_found", warning: "未找到知识治理运营提醒日志。" };
+    const query = supabase
       .from(REMINDER_LOG_TABLE)
       .select(reminderLogSelectColumns())
       .eq("id", id)
-      .maybeSingle();
+      .eq("org_id", scope.orgId)
+      .eq("data_class", scope.dataClass)
+      .in("project_id", projectIds);
+    const { data, error } = await query.maybeSingle();
 
     if (error) {
       return {
@@ -450,14 +498,18 @@ export async function updateRiskRetrospectiveGovernanceReminderLogStatus(input: 
   closureNote?: string | null;
   user: AppUser | null;
   requestId?: string;
+  scope?: RiskDataScope;
 }): Promise<RiskRetrospectiveGovernanceReminderUpdateResult> {
+  if (!input.scope) return { status: "failed", warning: "RISK_DATA_SCOPE_REQUIRED" };
   if (!isAuthStorageConfigured()) {
     return { status: "not_configured", warning: "Supabase 未配置，无法更新知识治理运营提醒状态。" };
   }
 
   try {
     const supabase = getAuthSupabase();
-    const { data, error } = await supabase
+    const projectIds = scopedOperationProjectIds(input.scope);
+    if (projectIds.length === 0) return { status: "not_found", warning: "未找到知识治理运营提醒日志。" };
+    const query = supabase
       .from(REMINDER_LOG_TABLE)
       .update({
         status: input.status,
@@ -471,8 +523,10 @@ export async function updateRiskRetrospectiveGovernanceReminderLogStatus(input: 
         },
       })
       .eq("id", input.id)
-      .select(reminderLogSelectColumns())
-      .maybeSingle();
+      .eq("org_id", input.scope.orgId)
+      .eq("data_class", input.scope.dataClass)
+      .in("project_id", projectIds);
+    const { data, error } = await query.select(reminderLogSelectColumns()).maybeSingle();
 
     if (error) {
       return {

@@ -635,7 +635,6 @@ export async function loadContextProjectIdentityMappings(input: {
   const output = new Map<string, ContextProjectIdentityMapping>();
   for (const row of projects.data ?? []) {
     if (stableOnlyProjects.has(String(row.id))) continue;
-    if (!row.source_record_id && !row.oa_no) continue;
     output.set(`${row.id}:${row.source_record_id || "project"}`, { projectId: row.id, sourceRecordId: row.source_record_id || "", externalProjectCode: row.oa_no, dataClass: row.data_class });
   }
   for (const row of mappings.data ?? []) {

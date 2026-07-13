@@ -1,10 +1,18 @@
 import { issueChangeReportMarkdown } from "@/features/issue-change/repository";
+import { authorizeRiskRequest } from "@/features/risk/access";
 
 export const runtime = "nodejs";
 
-export async function GET(): Promise<Response> {
+export async function GET(request: Request): Promise<Response> {
   const requestId = crypto.randomUUID();
-  const result = await issueChangeReportMarkdown();
+  const access = await authorizeRiskRequest(request, "read");
+  if (!access.ok) {
+    return Response.json({ request_id: requestId, status: "forbidden", warning: access.error, detail: access.detail }, {
+      status: access.status,
+      headers: { "Cache-Control": "no-store", "X-Request-Id": requestId },
+    });
+  }
+  const result = await issueChangeReportMarkdown(access.scope);
   if (result.status !== "succeeded" || !result.markdown) {
     return Response.json({
       request_id: requestId,

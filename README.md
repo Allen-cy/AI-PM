@@ -35,6 +35,14 @@ The easiest way to deploy your Next.js app is to use the [Vercel Platform](https
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
 
+## AI-PMO System V6.1.0
+
+V6.1.0 建立“安全与数据库治理门禁”：所有应用自有 `public` 表启用 RLS，撤销 `PUBLIC`/`anon`/`authenticated` 业务读写权，并把表、函数、序列、策略和 `service_role` 必需权限纳入自动审计。新建数据库对象默认不再暴露到 Data API，后续 migration 必须显式声明服务端权限。
+
+风险主链路现在强制 `org_id + project_id + data_class + business context`，新增项目级唯一键、乐观锁、幂等回执、状态/事件原子事务和软归档。未关联项目的 18 条历史风险保留原记录并进入组织隔离治理队列；安全中心新增可视化治理页，只能选择当前授权项目，不再输入 UUID 或 JSON。同时修复用户中心错误链接与 375px 手机登录页布局。
+
+V6.1.0 是 V6.1–V6.6 全模块真实化计划的第一个版本；V6.2.0 的八类飞书事实同步与对账尚未在本版本内宣告完成。
+
 ## AI-PMO System V6.0.10
 
 V6.0.10 收口版本与发布治理：将 P17-P25 经营操作系统正式并入 `main`，并以 `package.json` 作为唯一产品版本源。首页页头与页脚不再维护独立的硬编码版号，构建时自动注入版本号和 Git 短提交号，统一显示为 `V6.0.10 · <commit>`。

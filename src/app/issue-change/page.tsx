@@ -17,6 +17,7 @@ import {
   type IssueSeverity,
   type UnifiedActionRecord,
 } from "@/features/issue-change/model";
+import { loadCurrentBusinessContextSearchParams } from "@/features/operating-model/client-context";
 
 interface ChainBundle {
   status: "succeeded" | "not_configured" | "failed";
@@ -163,6 +164,7 @@ export default function IssueChangePage() {
   const [issueForm, setIssueForm] = useState<IssueForm>(() => ({ ...initialIssueForm, dueDate: todayOffset(7) }));
   const [changeForm, setChangeForm] = useState<ChangeForm>(() => ({ ...initialChangeForm, dueDate: todayOffset(10) }));
   const [actionEvidence, setActionEvidence] = useState<Record<string, string>>({});
+  const [scopeQuery, setScopeQuery] = useState("");
 
   const openActions = useMemo(
     () => bundle.actions.filter(action => action.status !== "done" && action.status !== "cancelled"),
@@ -180,7 +182,10 @@ export default function IssueChangePage() {
   async function load() {
     setLoading(true);
     try {
-      const response = await fetch("/api/issue-change", { cache: "no-store" });
+      const params = await loadCurrentBusinessContextSearchParams();
+      const query = params.toString();
+      setScopeQuery(query);
+      const response = await fetch(`/api/issue-change?${query}`, { cache: "no-store" });
       const data = await response.json();
       setBundle({
         status: data.status || "failed",
@@ -208,7 +213,9 @@ export default function IssueChangePage() {
     setSaving(true);
     setMessage("");
     try {
-      const response = await fetch("/api/issue-change", {
+      const query = scopeQuery || (await loadCurrentBusinessContextSearchParams()).toString();
+      if (!scopeQuery) setScopeQuery(query);
+      const response = await fetch(`/api/issue-change?${query}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -332,7 +339,7 @@ export default function IssueChangePage() {
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <Link href="/" className="btn-secondary" style={{ textDecoration: "none" }}>返回主页</Link>
             <Link href="/risk" className="btn-secondary" style={{ textDecoration: "none" }}>风险登记册</Link>
-            <a href="/api/issue-change/report" className="btn-primary" style={{ textDecoration: "none" }}>下载链路报告</a>
+            <a href={scopeQuery ? `/api/issue-change/report?${scopeQuery}` : "#"} aria-disabled={!scopeQuery} className="btn-primary" style={{ textDecoration: "none", opacity: scopeQuery ? 1 : 0.55, pointerEvents: scopeQuery ? "auto" : "none" }}>下载链路报告</a>
           </div>
         </div>
       </header>

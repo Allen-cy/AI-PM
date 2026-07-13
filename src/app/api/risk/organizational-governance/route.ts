@@ -6,6 +6,9 @@ import { buildRiskOrganizationalGovernanceDashboard } from "@/features/risk/orga
 import { filterDashboardByProjectAccess } from "@/features/security/authorization";
 import { loadProjectAccessGrantsForUser } from "@/features/security/repository";
 import { listRisks } from "@/lib/risk-repository";
+import { authorizeRiskRequest } from "@/features/risk/access";
+import { filterRiskScopedProjectRecords } from "@/features/risk/scope";
+import { buildDashboardData } from "@/features/dashboard/normalizer";
 
 export const runtime = "nodejs";
 
@@ -19,10 +22,12 @@ function json(body: unknown, status = 200, requestId = crypto.randomUUID()) {
   });
 }
 
-export async function GET(): Promise<Response> {
+export async function GET(request: Request): Promise<Response> {
   const requestId = crypto.randomUUID();
   const user = await getCurrentUser();
-  const riskResult = await listRisks().catch(() => null);
+  const scopedAccess = await authorizeRiskRequest(request, "read");
+  if (!scopedAccess.ok) return json({ request_id: requestId, error: scopedAccess.error, detail: scopedAccess.detail }, scopedAccess.status, requestId);
+  const riskResult = await listRisks(scopedAccess.scope).catch(() => null);
   if (!riskResult) {
     return json({ request_id: requestId, status: "failed", code: "RISK_REGISTER_LOAD_FAILED", detail: "风险登记册读取失败，未使用样例风险兜底。" }, 503, requestId);
   }
@@ -32,12 +37,14 @@ export async function GET(): Promise<Response> {
   }
   let rawDashboard;
   try {
-    rawDashboard = await loadDashboardFromFeishu(effective.config);
+    rawDashboard = await loadDashboardFromFeishu(effective.config, { dataClass: scopedAccess.scope.dataClass });
   } catch (error) {
     return json({ request_id: requestId, status: "failed", code: "FEISHU_DASHBOARD_LOAD_FAILED", detail: error instanceof Error ? error.message : "飞书项目台账读取失败。" }, 503, requestId);
   }
   const grants = await loadProjectAccessGrantsForUser(effective.user ?? user);
-  const dashboard = filterDashboardByProjectAccess(rawDashboard, effective.user ?? user, grants);
+  const grantedDashboard = filterDashboardByProjectAccess(rawDashboard, effective.user ?? user, grants);
+  const scopedRecords = filterRiskScopedProjectRecords(grantedDashboard.records, scopedAccess.scope);
+  const dashboard = buildDashboardData(scopedRecords, { type: grantedDashboard.source.type, name: grantedDashboard.source.name, note: grantedDashboard.source.note }, { useTemplateFallback: false });
   const risk_integration = buildRiskIntegrationDashboard({
     risks: riskResult.risks,
     dashboard,

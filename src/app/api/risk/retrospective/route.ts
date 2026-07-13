@@ -1,5 +1,6 @@
 import { buildRiskRetrospectiveDashboard } from "@/features/risk/retrospective";
 import { listRisks } from "@/lib/risk-repository";
+import { authorizeRiskRequest } from "@/features/risk/access";
 
 export const runtime = "nodejs";
 
@@ -10,10 +11,12 @@ function jsonResponse(body: unknown, status = 200, requestId = crypto.randomUUID
   });
 }
 
-export async function GET(): Promise<Response> {
+export async function GET(request: Request): Promise<Response> {
   const requestId = crypto.randomUUID();
   try {
-    const result = await listRisks();
+    const access = await authorizeRiskRequest(request, "read");
+    if (!access.ok) return jsonResponse({ request_id: requestId, error: access.error, detail: access.detail }, access.status, requestId);
+    const result = await listRisks(access.scope);
     const risk_retrospective = buildRiskRetrospectiveDashboard(result.risks, result.events);
     return jsonResponse({
       request_id: requestId,

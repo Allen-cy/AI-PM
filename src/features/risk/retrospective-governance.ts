@@ -7,6 +7,7 @@ import {
   buildRiskRetrospectiveQualityDashboard,
   type RiskRetrospectiveQualityDashboard,
 } from "./retrospective-quality.ts";
+import { resolveRequestedRiskProjectIds, type RiskDataScope } from "./scope.ts";
 
 export type RiskRetrospectiveGovernanceAction = "edit" | "merge" | "archive" | "review" | "publish";
 
@@ -160,11 +161,14 @@ function mapGovernanceLog(row: Record<string, unknown>): RiskRetrospectiveGovern
   };
 }
 
-export async function listRiskRetrospectiveGovernanceLogs(input?: {
+export async function listRiskRetrospectiveGovernanceLogs(input: {
+  scope: RiskDataScope;
   limit?: number;
   action?: RiskRetrospectiveGovernanceAction | "all";
   assetId?: string;
 }): Promise<RiskRetrospectiveGovernanceLogListResult> {
+  const projectIds = resolveRequestedRiskProjectIds(input.scope, input.scope.requestedProjectId);
+  if (projectIds.length === 0) return { status: "succeeded", logs: [] };
   if (!isStorageConfigured()) {
     return { status: "not_configured", logs: [], warning: "Supabase 未配置，无法读取风险复盘资产治理审计。" };
   }
@@ -174,10 +178,13 @@ export async function listRiskRetrospectiveGovernanceLogs(input?: {
     let query = supabase
       .from("risk_retrospective_asset_governance_logs")
       .select("id,asset_id,target_asset_id,action,action_summary,before_snapshot,after_snapshot,performed_by_name,request_id,created_at")
+      .eq("org_id", input.scope.orgId)
+      .eq("data_class", input.scope.dataClass)
+      .in("project_id", projectIds)
       .order("created_at", { ascending: false })
-      .limit(input?.limit ?? 50);
-    if (input?.action && input.action !== "all") query = query.eq("action", input.action);
-    if (input?.assetId) query = query.or(`asset_id.eq.${input.assetId},target_asset_id.eq.${input.assetId}`);
+      .limit(input.limit ?? 50);
+    if (input.action && input.action !== "all") query = query.eq("action", input.action);
+    if (input.assetId) query = query.or(`asset_id.eq.${input.assetId},target_asset_id.eq.${input.assetId}`);
 
     const { data, error } = await query;
     if (error) {

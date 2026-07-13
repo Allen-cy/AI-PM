@@ -37,6 +37,10 @@ export type RiskWorkflowStep = "identify" | "analyze" | "plan" | "implement" | "
 
 export interface Risk {
   id: string;
+  version?: number;
+  projectId?: string;
+  orgId?: string;
+  dataClass?: "production" | "sample" | "test" | "diagnostic" | "unclassified";
   riskCode?: string;
   projectName: string;
   description: string;
@@ -70,6 +74,7 @@ export interface Risk {
   actionDeadline?: string;
   createdAt: string;
   updatedAt?: string;
+  archivedAt?: string;
 }
 
 export interface RiskWorkflowEvent {
@@ -87,6 +92,7 @@ export interface RiskWorkflowEvent {
   evidence?: string;
   actor?: string;
   createdAt: string;
+  requestId?: string;
 }
 
 export interface RiskClassification {
