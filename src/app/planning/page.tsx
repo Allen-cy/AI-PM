@@ -1,7 +1,13 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
+import {
+  loadCurrentBusinessContextSearchParams,
+  readStoredBusinessContext,
+  readStoredCurrentProject,
+  readStoredDataClass,
+} from '@/features/operating-model/client-context';
 import {
   PMBOK_KNOWLEDGE_AREAS,
   PLAN_TEMPLATES,
@@ -19,6 +25,22 @@ interface CreatedPlan {
   createdAt: string;
 }
 
+interface PersistedArtifact {
+  id: string;
+  status: 'draft' | 'submitted' | 'approved' | 'rejected' | 'changes_requested' | 'superseded';
+  version: number;
+  title: string;
+  content: Record<string, unknown>;
+  updated_at?: string;
+}
+
+interface PersistedBaseline extends PersistedArtifact {
+  baseline_type: 'scope' | 'schedule' | 'cost';
+  baseline_value?: number | null;
+  currency?: string | null;
+  effective_date?: string | null;
+}
+
 export default function PlanningPage() {
   const [activeTab, setActiveTab] = useState<TabType>('areas');
   const [selectedArea, setSelectedArea] = useState<KnowledgeArea | null>(null);
@@ -27,7 +49,18 @@ export default function PlanningPage() {
   const [aiLoading, setAiLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [createdPlans, setCreatedPlans] = useState<CreatedPlan[]>([]);
-  const [baselines, setBaselines] = useState<Record<string, { status: string; updatedAt: string }>>({});
+  const [managementPlan, setManagementPlan] = useState<PersistedArtifact | null>(null);
+  const [baselines, setBaselines] = useState<Record<string, PersistedBaseline>>({});
+  const [projectName, setProjectName] = useState('');
+  const [sourceState, setSourceState] = useState<'loading' | 'ready' | 'unavailable'>('loading');
+  const [saving, setSaving] = useState<string | null>(null);
+  const [planDraft, setPlanDraft] = useState('');
+  const [reviewComment, setReviewComment] = useState('');
+  const [baselineDrafts, setBaselineDrafts] = useState<Record<string, { summary: string; value: string; currency: string; effectiveDate: string }>>({
+    scope: { summary: '', value: '', currency: '', effectiveDate: '' },
+    schedule: { summary: '', value: '', currency: '', effectiveDate: '' },
+    cost: { summary: '', value: '', currency: 'CNY', effectiveDate: '' },
+  });
   const [aiResult, setAiResult] = useState<{
     suggestions: string[];
     checklist: string[];
@@ -37,8 +70,66 @@ export default function PlanningPage() {
   const templateKeys = Object.keys(PLAN_TEMPLATES);
   const template = PLAN_TEMPLATES[selectedTemplate];
 
+  const loadPlanningData = useCallback(async () => {
+    setSourceState('loading');
+    try {
+      const params = await loadCurrentBusinessContextSearchParams();
+      if (!params.get('project_id') || !params.get('business_role')) throw new Error('请先在顶部选择已授权的项目和业务角色。');
+      const response = await fetch(`/api/planning?${params.toString()}`, { cache: 'no-store' });
+      const payload = await response.json() as { project?: { name?: string }; plans?: PersistedArtifact[]; baselines?: PersistedBaseline[]; detail?: string; error?: string };
+      if (!response.ok) throw new Error(payload.detail || payload.error || '规划数据读取失败');
+      setProjectName(payload.project?.name || '当前项目');
+      const plan = payload.plans?.[0] ?? null;
+      setManagementPlan(plan);
+      const sections = plan?.content?.sections && typeof plan.content.sections === 'object' ? plan.content.sections as Record<string, { area_name?: string; outputs?: string[]; narrative?: string; updated_at?: string }> : {};
+      setCreatedPlans(Object.entries(sections).map(([id, section]) => ({ id, areaName: section.area_name || id, templateName: String(plan?.content?.template_name || '项目管理计划'), outputs: section.outputs || [], createdAt: section.updated_at ? new Date(section.updated_at).toLocaleString('zh-CN') : '已持久化' })));
+      const baselineMap: Record<string, PersistedBaseline> = {};
+      for (const baseline of payload.baselines || []) {
+        baselineMap[baseline.baseline_type] = baseline;
+        setBaselineDrafts(previous => ({ ...previous, [baseline.baseline_type]: { summary: String(baseline.content?.summary || ''), value: baseline.baseline_value == null ? '' : String(baseline.baseline_value), currency: baseline.currency || (baseline.baseline_type === 'cost' ? 'CNY' : ''), effectiveDate: baseline.effective_date || '' } }));
+      }
+      setBaselines(baselineMap);
+      setSourceState('ready');
+    } catch (error) {
+      setSourceState('unavailable');
+      setMessage(error instanceof Error ? error.message : '规划数据源不可用');
+      setManagementPlan(null); setBaselines({}); setCreatedPlans([]); setProjectName('');
+    }
+  }, []);
+
+  useEffect(() => {
+    const first = window.setTimeout(() => void loadPlanningData(), 0);
+    const reload = () => void loadPlanningData();
+    window.addEventListener('ai-pmo:project-context-changed', reload);
+    window.addEventListener('ai-pmo:business-context-changed', reload);
+    window.addEventListener('ai-pmo:data-class-changed', reload);
+    return () => {
+      window.clearTimeout(first);
+      window.removeEventListener('ai-pmo:project-context-changed', reload);
+      window.removeEventListener('ai-pmo:business-context-changed', reload);
+      window.removeEventListener('ai-pmo:data-class-changed', reload);
+    };
+  }, [loadPlanningData]);
+
+  const writeContext = (expectedVersion: number) => {
+    const context = readStoredBusinessContext();
+    const projectId = readStoredCurrentProject();
+    if (!context?.businessRole || !projectId) return null;
+    return { project_id: projectId, business_role: context.businessRole, data_class: readStoredDataClass(), expected_version: expectedVersion, idempotency_key: `v63:planning:${projectId}:${crypto.randomUUID()}` };
+  };
+
+  const postPlanning = async (body: Record<string, unknown>) => {
+    const response = await fetch('/api/planning', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const payload = await response.json() as { detail?: string; error?: string };
+    if (!response.ok) throw new Error(payload.detail || payload.error || '规划操作失败');
+    await loadPlanningData();
+  };
+
   const handleAreaClick = (area: KnowledgeArea) => {
     setSelectedArea(area);
+    const sections = managementPlan?.content?.sections && typeof managementPlan.content.sections === 'object' ? managementPlan.content.sections as Record<string, { narrative?: string }> : {};
+    setPlanDraft(sections[area.id]?.narrative || '');
+    setAiResult(null);
   };
 
   const handleAIAssist = async () => {
@@ -48,60 +139,87 @@ export default function PlanningPage() {
     setShowAIAssistant(true);
 
     try {
+      const contextParams = await loadCurrentBusinessContextSearchParams();
       const response = await fetch('/api/planning', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          projectType: template.type,
-          knowledgeArea: selectedArea.id,
+          operation: 'assist',
+          project_id: contextParams.get('project_id'),
+          business_role: contextParams.get('business_role'),
+          data_class: contextParams.get('data_class'),
+          project_type: template.type,
+          knowledge_area: selectedArea.id,
           context: {
-            projectName: '示例项目',
-            objectives: ['按时交付', '控制成本', '保证质量'],
+            project_name: projectName,
+            user_plan_input: planDraft,
+            required_outputs: selectedArea.outputs,
           },
         }),
       });
 
-      if (!response.ok) throw new Error('AI request failed');
-
-      const data = await response.json();
+      const data = await response.json() as { suggestions: string[]; checklist: string[]; warnings: string[]; detail?: string; error?: string };
+      if (!response.ok) throw new Error(data.detail || data.error || 'AI规划失败');
       setAiResult(data);
     } catch (error) {
-      console.error('AI Assistant error:', error);
-      setAiResult({
-        suggestions: [
-          `${selectedArea.name}计划应先明确输入、方法和输出，再形成可审批的管理计划。`,
-          '建议先复用当前项目类型模板，再根据项目等级裁剪控制强度。',
-          '对需要跨部门协同的事项，应在计划中写清责任人、触发条件和升级路径。',
-        ],
-        checklist: selectedArea.outputs.map(output => `已定义${output}`),
-        warnings: ['AI服务不可用时使用本地模板兜底；正式计划仍需项目经理和PMO复核。'],
-      });
+      setAiResult(null);
+      setMessage(`AI规划不可用：${error instanceof Error ? error.message : '未知错误'}。系统未使用伪造兜底结果。`);
     } finally {
       setAiLoading(false);
     }
   };
 
-  const handleCreatePlan = () => {
+  const handleCreatePlan = async () => {
     if (!selectedArea) return;
+    if (!planDraft.trim()) { setMessage('请先录入该知识领域的实际规划内容。'); return; }
+    const context = writeContext(managementPlan?.version ?? 0);
+    if (!context) { setMessage('请先选择已授权的当前项目。'); return; }
     const areaTemplate = template?.areas[selectedArea.id];
-    const plan: CreatedPlan = {
-      id: `PLAN-${Date.now()}`,
-      areaName: selectedArea.name,
-      templateName: template.name,
-      outputs: areaTemplate?.outputs ?? selectedArea.outputs,
-      createdAt: new Date().toLocaleString('zh-CN'),
-    };
-    setCreatedPlans(prev => [plan, ...prev]);
-    setMessage(`已创建${selectedArea.name}计划草案，输出项：${plan.outputs.join('、')}。`);
+    const priorSections = managementPlan?.content?.sections && typeof managementPlan.content.sections === 'object' ? managementPlan.content.sections as Record<string, unknown> : {};
+    setSaving('save_management_plan');
+    try {
+      await postPlanning({ operation: 'save_management_plan', ...context, title: `${projectName}-${template.name}`, source_type: aiResult ? 'ai_assisted' : 'human_input', content: { template_name: template.name, project_type: template.type, sections: { ...priorSections, [selectedArea.id]: { area_name: selectedArea.name, narrative: planDraft.trim(), inputs: selectedArea.planningInputs, tools_techniques: selectedArea.toolsTechniques, outputs: areaTemplate?.outputs ?? selectedArea.outputs, ai_suggestions: aiResult, updated_at: new Date().toISOString() } } } });
+      setMessage(`已将${selectedArea.name}计划保存到Supabase正式管理计划。`);
+    } catch (error) { setMessage(`管理计划保存失败：${error instanceof Error ? error.message : '未知错误'}`); }
+    finally { setSaving(null); }
   };
 
-  const handleSetBaseline = (baselineType: string) => {
+  const handleSetBaseline = async (baselineType: string) => {
     const label = baselineType === 'scope' ? '范围基准' : baselineType === 'schedule' ? '进度基准' : '成本基准';
-    setBaselines(prev => ({
-      ...prev,
-      [baselineType]: { status: '已设置', updatedAt: new Date().toLocaleString('zh-CN') },
-    }));
-    setMessage(`已设置${label}草案。后续可接入飞书或Supabase保存正式基准版本。`);
+    const draft = baselineDrafts[baselineType];
+    if (!draft?.summary.trim() || !draft.effectiveDate) { setMessage(`请先录入${label}内容和生效日期。`); return; }
+    if (baselineType === 'cost' && (!draft.value || !draft.currency)) { setMessage('成本基准必须录入金额和币种。'); return; }
+    const context = writeContext(baselines[baselineType]?.version ?? 0);
+    if (!context) { setMessage('请先选择已授权的当前项目。'); return; }
+    setSaving(`save_${baselineType}`);
+    try {
+      await postPlanning({ operation: 'save_baseline', ...context, baseline_type: baselineType, title: `${projectName}-${label}`, content: { summary: draft.summary.trim(), source: 'human_input' }, baseline_value: baselineType === 'cost' ? Number(draft.value) : null, currency: baselineType === 'cost' ? draft.currency : null, effective_date: draft.effectiveDate });
+      setMessage(`${label}草稿已保存到Supabase，尚需提交和人工审批。`);
+    } catch (error) { setMessage(`${label}保存失败：${error instanceof Error ? error.message : '未知错误'}`); }
+    finally { setSaving(null); }
+  };
+
+  const transitionPlan = async (transition: string) => {
+    if (!managementPlan) return;
+    const context = writeContext(managementPlan.version);
+    if (!context) return;
+    if (['approve', 'reject', 'request_changes'].includes(transition) && !reviewComment.trim()) { setMessage('审批动作必须填写意见。'); return; }
+    setSaving(`plan_${transition}`);
+    try { await postPlanning({ operation: 'transition_artifact', ...context, artifact_id: managementPlan.id, transition, comment: reviewComment.trim() }); setReviewComment(''); setMessage('管理计划状态已更新并写入审计轨迹。'); }
+    catch (error) { setMessage(`管理计划流转失败：${error instanceof Error ? error.message : '未知错误'}`); }
+    finally { setSaving(null); }
+  };
+
+  const transitionBaseline = async (baselineType: string, transition: string) => {
+    const baseline = baselines[baselineType];
+    if (!baseline) return;
+    const context = writeContext(baseline.version);
+    if (!context) return;
+    if (['approve', 'reject', 'request_changes'].includes(transition) && !reviewComment.trim()) { setMessage('审批动作必须填写意见。'); return; }
+    setSaving(`${baselineType}_${transition}`);
+    try { await postPlanning({ operation: 'transition_baseline', ...context, baseline_id: baseline.id, transition, comment: reviewComment.trim() }); setReviewComment(''); setMessage('基准状态已更新并写入审计轨迹。'); }
+    catch (error) { setMessage(`基准流转失败：${error instanceof Error ? error.message : '未知错误'}`); }
+    finally { setSaving(null); }
   };
 
   const getStatusColor = (status: string) => {
@@ -168,6 +286,10 @@ export default function PlanningPage() {
         <p style={{ color: 'var(--text2)', fontSize: '0.9rem' }}>
           基于PMBOK知识体系的项目规划中心 · 支持信息化/课程开发/工程基建/运营服务四类项目
         </p>
+        <div style={{ marginTop: 10, fontSize: '0.8rem', color: sourceState === 'ready' ? 'var(--green)' : sourceState === 'loading' ? 'var(--accent)' : 'var(--amber)' }}>
+          {sourceState === 'ready' ? `${projectName} · Supabase正式规划数据已连接` : sourceState === 'loading' ? '正在读取当前项目规划数据…' : '规划数据源不可用，请检查项目上下文或数据库迁移'}
+          {managementPlan ? ` · 管理计划 ${managementPlan.status} v${managementPlan.version}` : ''}
+        </div>
         {message && (
           <div style={{ marginTop: 12, padding: '10px 14px', borderRadius: 8, background: 'rgba(139,92,246,0.1)', border: '1px solid rgba(139,92,246,0.25)', color: 'var(--purple)', fontSize: '0.85rem' }}>
             {message}
@@ -384,16 +506,21 @@ export default function PlanningPage() {
                 </div>
 
                 {/* Create Plan Button */}
+                <div style={{ marginTop: 16 }}>
+                  <label className="label">{selectedArea.name}实际规划内容（用户输入）</label>
+                  <textarea className="input" rows={7} value={planDraft} onChange={(event) => setPlanDraft(event.target.value)} placeholder="请录入目标、边界、责任人、执行方法、检查频率、升级路径和预期输出。AI建议只能辅助，不能代替实际输入。" style={{ width: '100%', resize: 'vertical', fontFamily: 'inherit' }} />
+                </div>
                 <button
                   className="btn-primary"
-                  onClick={handleCreatePlan}
+                  onClick={() => void handleCreatePlan()}
+                  disabled={Boolean(saving) || Boolean(managementPlan && !['draft', 'changes_requested', 'rejected'].includes(managementPlan.status))}
                   style={{
                     width: '100%',
                     background: 'var(--purple)',
                     marginTop: '16px',
                   }}
                 >
-                  创建{selectedArea.name}计划
+                  {saving === 'save_management_plan' ? '保存中…' : `保存${selectedArea.name}计划`}
                 </button>
 
                 {createdPlans.length > 0 && (
@@ -406,6 +533,18 @@ export default function PlanningPage() {
                     ))}
                   </div>
                 )}
+
+                <div style={{ marginTop: 16, padding: 12, background: 'var(--surface2)', borderRadius: 8 }}>
+                  <div style={{ fontSize: '0.85rem', fontWeight: 700, marginBottom: 8 }}>管理计划正式流转</div>
+                  <textarea className="input" rows={2} value={reviewComment} onChange={(event) => setReviewComment(event.target.value)} placeholder="审批、拒绝或退回修改时填写意见" style={{ width: '100%', marginBottom: 8, resize: 'vertical' }} />
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                    <button className="btn-secondary" onClick={() => void transitionPlan('submit')} disabled={Boolean(saving) || managementPlan?.status !== 'draft'}>提交审批</button>
+                    <button className="btn-secondary" onClick={() => void transitionPlan('approve')} disabled={Boolean(saving) || managementPlan?.status !== 'submitted'} style={{ color: 'var(--green)' }}>批准</button>
+                    <button className="btn-secondary" onClick={() => void transitionPlan('request_changes')} disabled={Boolean(saving) || managementPlan?.status !== 'submitted'} style={{ color: 'var(--amber)' }}>退回修改</button>
+                    <button className="btn-secondary" onClick={() => void transitionPlan('reject')} disabled={Boolean(saving) || managementPlan?.status !== 'submitted'} style={{ color: 'var(--red)' }}>拒绝</button>
+                    <button className="btn-secondary" onClick={() => void transitionPlan('revise')} disabled={Boolean(saving) || !managementPlan || !['changes_requested', 'rejected'].includes(managementPlan.status)}>重新修订</button>
+                  </div>
+                </div>
 
                 {/* Integration Dependencies */}
                 <div style={{ marginTop: '20px', padding: '12px', background: 'var(--surface2)', borderRadius: '8px' }}>
@@ -474,32 +613,54 @@ export default function PlanningPage() {
                 {baselineType === 'cost' && '定义项目预算分配，作为测量项目成本绩效的依据。包括预算分解、成本基准。'}
               </div>
 
+              <div style={{ marginBottom: 16 }}>
+                <label className="label">基准内容（用户输入）</label>
+                <textarea className="input" rows={5} value={baselineDrafts[baselineType]?.summary || ''} onChange={(event) => setBaselineDrafts(previous => ({ ...previous, [baselineType]: { ...previous[baselineType], summary: event.target.value } }))} placeholder={baselineType === 'scope' ? '录入范围说明、WBS边界、验收标准和排除项' : baselineType === 'schedule' ? '录入计划起止、里程碑、关键路径和进度控制规则' : '录入预算构成、控制账户、储备和成本控制规则'} style={{ width: '100%', resize: 'vertical', fontFamily: 'inherit' }} />
+                <label className="label" style={{ marginTop: 10 }}>生效日期</label>
+                <input className="input" type="date" value={baselineDrafts[baselineType]?.effectiveDate || ''} onChange={(event) => setBaselineDrafts(previous => ({ ...previous, [baselineType]: { ...previous[baselineType], effectiveDate: event.target.value } }))} style={{ width: '100%' }} />
+                {baselineType === 'cost' && (
+                  <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 8, marginTop: 10 }}>
+                    <input className="input" type="number" min="0" step="0.01" value={baselineDrafts.cost?.value || ''} onChange={(event) => setBaselineDrafts(previous => ({ ...previous, cost: { ...previous.cost, value: event.target.value } }))} placeholder="基准金额" />
+                    <select className="input" value={baselineDrafts.cost?.currency || 'CNY'} onChange={(event) => setBaselineDrafts(previous => ({ ...previous, cost: { ...previous.cost, currency: event.target.value } }))}><option value="CNY">CNY</option><option value="USD">USD</option><option value="EUR">EUR</option></select>
+                  </div>
+                )}
+              </div>
+
               <div style={{ marginBottom: '16px' }}>
                 <div className="label">基准状态</div>
                 <span
                   className={baselines[baselineType] ? 'tag tag-green' : 'tag tag-amber'}
                   style={{ fontSize: '0.8rem' }}
                 >
-                  {baselines[baselineType]?.status ?? '待设置'}
+                  {baselines[baselineType]?.status ?? '未保存'}
                 </span>
                 {baselines[baselineType] && (
                   <div style={{ marginTop: 6, fontSize: '0.75rem', color: 'var(--text2)' }}>
-                    更新时间：{baselines[baselineType].updatedAt}
+                    版本：v{baselines[baselineType].version} · 更新时间：{baselines[baselineType].updated_at ? new Date(baselines[baselineType].updated_at!).toLocaleString('zh-CN') : '—'}
                   </div>
                 )}
               </div>
 
               <button
                 className="btn-secondary"
-                onClick={() => handleSetBaseline(baselineType)}
+                onClick={() => void handleSetBaseline(baselineType)}
+                disabled={Boolean(saving) || Boolean(baselines[baselineType] && !['draft', 'changes_requested', 'rejected'].includes(baselines[baselineType].status))}
                 style={{
                   width: '100%',
                   borderColor: 'var(--purple)',
                   color: 'var(--purple)',
                 }}
               >
-                设置{baselineType === 'scope' ? '范围' : baselineType === 'schedule' ? '进度' : '成本'}基准
+                {saving === `save_${baselineType}` ? '保存中…' : `保存${baselineType === 'scope' ? '范围' : baselineType === 'schedule' ? '进度' : '成本'}基准草稿`}
               </button>
+              <textarea className="input" rows={2} value={reviewComment} onChange={(event) => setReviewComment(event.target.value)} placeholder="审批意见（审批、拒绝或退回修改时必填）" style={{ width: '100%', marginTop: 10, resize: 'vertical' }} />
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+                <button className="btn-secondary" onClick={() => void transitionBaseline(baselineType, 'submit')} disabled={Boolean(saving) || baselines[baselineType]?.status !== 'draft'}>提交</button>
+                <button className="btn-secondary" onClick={() => void transitionBaseline(baselineType, 'approve')} disabled={Boolean(saving) || baselines[baselineType]?.status !== 'submitted'} style={{ color: 'var(--green)' }}>批准</button>
+                <button className="btn-secondary" onClick={() => void transitionBaseline(baselineType, 'request_changes')} disabled={Boolean(saving) || baselines[baselineType]?.status !== 'submitted'} style={{ color: 'var(--amber)' }}>退回</button>
+                <button className="btn-secondary" onClick={() => void transitionBaseline(baselineType, 'reject')} disabled={Boolean(saving) || baselines[baselineType]?.status !== 'submitted'} style={{ color: 'var(--red)' }}>拒绝</button>
+                <button className="btn-secondary" onClick={() => void transitionBaseline(baselineType, 'revise')} disabled={Boolean(saving) || !baselines[baselineType] || !['changes_requested', 'rejected'].includes(baselines[baselineType].status)}>修订</button>
+              </div>
             </div>
           ))}
         </div>

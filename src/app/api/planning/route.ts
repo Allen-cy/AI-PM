@@ -1,296 +1,150 @@
-import { NextResponse } from 'next/server';
-import { llmComplete } from '@/lib/llm';
+import { getAuthSupabase, requireAuthenticatedApiUser } from "@/features/auth/server";
+import { parseGovernanceWriteContract } from "@/features/project-governance/contracts";
+import { projectAccessHttpStatus, resolveProjectLifecycleAccess } from "@/features/lifecycle-loop/access";
+import type { BusinessRole } from "@/features/operating-model/context";
+import { llmComplete } from "@/lib/llm";
 
-interface AssistRequest {
-  projectType: '信息化' | '课程' | '工程' | '运营';
-  knowledgeArea: string;
-  context?: {
-    projectName?: string;
-    constraints?: string[];
-    objectives?: string[];
-  };
+export const runtime = "nodejs";
+
+const ROLES = new Set<BusinessRole>(["pm", "operations", "pmo", "sponsor", "business_owner", "finance"]);
+const DATA_CLASSES = new Set(["production", "sample", "test", "diagnostic", "unclassified"]);
+
+function json(body: unknown, status: number, requestId: string) {
+  return Response.json(body, { status, headers: { "Cache-Control": "no-store", "X-Request-Id": requestId } });
+}
+
+function text(value: unknown, field: string, maximum = 4000): string {
+  const output = String(value ?? "").trim();
+  if (!output || output.length > maximum) throw new Error(`${field}为必填项，且不得超过${maximum}字符。`);
+  return output;
+}
+
+function object(value: unknown, field: string): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${field}必须为结构化对象。`);
+  return value as Record<string, unknown>;
+}
+
+function errorMessage(error: unknown): string {
+  if (error && typeof error === "object" && "message" in error) return String(error.message);
+  return error instanceof Error ? error.message : "规划数据操作失败";
+}
+
+function errorStatus(message: string): number {
+  if (/VERSION_CONFLICT|IDEMPOTENCY_PAYLOAD_CONFLICT|STATUS_CONFLICT|DATA_CLASS_MISMATCH|ORG_SCOPE_MISMATCH/i.test(message)) return 409;
+  if (/ROLE_FORBIDDEN/i.test(message)) return 403;
+  if (/NOT_FOUND/i.test(message)) return 404;
+  if (/INPUT_REQUIRED|INPUT_INVALID|WRITE_CONTRACT_INVALID|COMMENT_REQUIRED/i.test(message)) return 400;
+  return 503;
+}
+
+async function resolveProject(request: Request, body?: Record<string, unknown>) {
+  const user = await requireAuthenticatedApiUser();
+  if (!user) return { ok: false, error: "UNAUTHORIZED", status: 401 } as const;
+  const url = new URL(request.url);
+  const projectId = String(body?.project_id ?? url.searchParams.get("project_id") ?? "").trim();
+  const businessRole = String(body?.business_role ?? url.searchParams.get("business_role") ?? "") as BusinessRole;
+  const dataClass = String(body?.data_class ?? url.searchParams.get("data_class") ?? "");
+  if (!projectId || !ROLES.has(businessRole) || !DATA_CLASSES.has(dataClass)) return { ok: false, error: "PLANNING_CONTEXT_REQUIRED", status: 400 } as const;
+  const access = await resolveProjectLifecycleAccess({ user, projectId, businessRole });
+  if (access.status !== "succeeded" || !access.scope) return { ok: false, error: access.status.toUpperCase(), detail: access.warning, status: projectAccessHttpStatus(access.status) } as const;
+  if (access.scope.dataClass !== dataClass) return { ok: false, error: "DATA_CLASS_MISMATCH", status: 409 } as const;
+  return { ok: true, user, projectId, businessRole, dataClass, access, scope: access.scope } as const;
+}
+
+function source(dataClass: string, updatedAt?: string | null) {
+  return { type: "supabase", fallback_used: false, data_class: dataClass, updated_at: updatedAt ?? null };
+}
+
+export async function GET(request: Request) {
+  const requestId = crypto.randomUUID();
+  const resolved = await resolveProject(request);
+  if (!resolved.ok) return json({ ...resolved, request_id: requestId }, resolved.status, requestId);
+  const supabase = getAuthSupabase();
+  const [project, plans, baselines, decisions, events] = await Promise.all([
+    supabase.from("projects").select("id,name,oa_no,data_class,updated_at").eq("id", resolved.projectId).maybeSingle(),
+    supabase.from("project_governance_artifacts").select("*").eq("project_id", resolved.projectId).eq("data_class", resolved.dataClass).eq("artifact_type", "management_plan").order("updated_at", { ascending: false }),
+    supabase.from("project_plan_baselines").select("*").eq("project_id", resolved.projectId).eq("data_class", resolved.dataClass).order("updated_at", { ascending: false }),
+    supabase.from("project_governance_decisions").select("id,subject_type,subject_id,operation,from_status,to_status,decision_comment,business_role,actor_user_id,created_at").eq("project_id", resolved.projectId).eq("data_class", resolved.dataClass).order("created_at", { ascending: false }).limit(30),
+    supabase.from("project_governance_events").select("id,aggregate_type,aggregate_id,event_type,aggregate_version,business_role,actor_user_id,payload,created_at").eq("project_id", resolved.projectId).eq("data_class", resolved.dataClass).order("created_at", { ascending: false }).limit(30),
+  ]);
+  const error = project.error || plans.error || baselines.error || decisions.error || events.error;
+  if (error) {
+    const missing = /project_(governance_artifacts|plan_baselines)|relation|does not exist/i.test(error.message);
+    return json({ error: missing ? "V63_GOVERNANCE_STORAGE_NOT_READY" : "PLANNING_DATA_LOAD_FAILED", detail: missing ? "请先应用V6.3.0立项与规划持久化迁移。" : error.message, source: source(resolved.dataClass), request_id: requestId }, 503, requestId);
+  }
+  if (!project.data) return json({ error: "PROJECT_NOT_FOUND", request_id: requestId }, 404, requestId);
+  const updatedAt = [project.data.updated_at, ...(plans.data ?? []).map(item => item.updated_at), ...(baselines.data ?? []).map(item => item.updated_at)].filter(Boolean).sort().at(-1) ?? null;
+  return json({
+    status: "succeeded", request_id: requestId,
+    context: { org_id: resolved.scope.orgId, subject_scope: "project", subject_id: resolved.projectId, project_id: resolved.projectId, business_role: resolved.businessRole, data_class: resolved.dataClass },
+    project: project.data, plans: plans.data ?? [], baselines: baselines.data ?? [], decisions: decisions.data ?? [], events: events.data ?? [],
+    data: { project: project.data, plans: plans.data ?? [], baselines: baselines.data ?? [] },
+    source: { type: "supabase", fallback_used: false, data_class: resolved.dataClass, updated_at: updatedAt }, generated_at: new Date().toISOString(), warnings: [],
+  }, 200, requestId);
 }
 
 export async function POST(request: Request) {
-  try {
-    const body: AssistRequest = await request.json();
-    const { projectType, knowledgeArea, context } = body;
-
-    if (!projectType || !knowledgeArea) {
-      return NextResponse.json(
-        { error: 'Missing required fields: projectType, knowledgeArea' },
-        { status: 400 }
-      );
-    }
-
-    // Build context for AI
-    const contextStr = context
-      ? `\n项目背景：
-- 项目名称：${context.projectName || '未命名项目'}
-- 约束条件：${context.constraints?.join('；') || '暂无'}
-- 项目目标：${context.objectives?.join('；') || '暂无'}`
-      : '';
-
-    const systemPrompt = `你是PMBOK项目管理规划助手，为${projectType}类型的项目提供${knowledgeArea}知识领域的规划指导。
-
-要求：
-1. 输出JSON格式，包含suggestions、checklist、warnings三个字段
-2. suggestions：提供3-5条具体的规划建议
-3. checklist：提供该知识领域的规划检查清单（5-8项）
-4. warnings：列出2-4个常见的规划陷阱或风险点
-5. 所有内容使用中文，简洁专业
-6. 结合中国项目管理实践（如有）`;
-
-    const userMessage = `请为${projectType}项目的${knowledgeArea}领域提供规划指导。${contextStr}`;
-
-    // Call AI for suggestions
-    const response = await llmComplete('planning', systemPrompt, userMessage);
-
-    // Parse AI response
-    let parsed: { suggestions: string[]; checklist: string[]; warnings: string[] };
-    try {
-      // Try to extract JSON from response
-      const jsonMatch = response.content.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        parsed = JSON.parse(jsonMatch[0]);
-      } else {
-        // Fallback: generate structured response
-        parsed = generateFallbackResponse(projectType, knowledgeArea);
-      }
-    } catch {
-      parsed = generateFallbackResponse(projectType, knowledgeArea);
-    }
-
-    return NextResponse.json({
-      suggestions: parsed.suggestions,
-      checklist: parsed.checklist,
-      warnings: parsed.warnings,
-      knowledgeArea,
-      projectType,
-      timestamp: new Date().toISOString(),
-    });
-  } catch (error) {
-    console.error('[planning/assist] Error:', error);
-    return NextResponse.json(
-      {
-        ...generateFallbackResponse('信息化', 'integration'),
-        knowledgeArea: 'integration',
-        projectType: '信息化',
-        timestamp: new Date().toISOString(),
-        fallback: true,
-      }
-    );
+  const requestId = crypto.randomUUID();
+  let body: Record<string, unknown>;
+  try { body = await request.json() as Record<string, unknown>; } catch {
+    return json({ error: "INVALID_JSON", request_id: requestId }, 400, requestId);
   }
-}
+  const resolved = await resolveProject(request, body);
+  if (!resolved.ok) return json({ ...resolved, request_id: requestId }, resolved.status, requestId);
+  const operation = String(body.operation || "");
+  const scope = resolved.scope;
+  const responseContext = { org_id: scope.orgId, subject_scope: "project", subject_id: resolved.projectId, project_id: resolved.projectId, business_role: resolved.businessRole, data_class: resolved.dataClass };
+  const supabase = getAuthSupabase();
 
-// Fallback response generator
-function generateFallbackResponse(
-  projectType: string,
-  knowledgeArea: string
-): { suggestions: string[]; checklist: string[]; warnings: string[] } {
-  const responses: Record<string, { suggestions: string[]; checklist: string[]; warnings: string[] }> = {
-    integration: {
-      suggestions: [
-        '制定项目管理计划，明确各知识领域的管理方法',
-        '建立变更控制流程，确保项目范围和基准可控',
-        '设置阶段审查点，定期评估项目状态',
-        '建立项目收尾清单，确保交付物完整移交',
-      ],
-      checklist: [
-        '项目章程已批准',
-        '项目管理计划已定义',
-        '变更管理流程已建立',
-        '阶段审查机制已设定',
-        '项目收尾标准已明确',
-        '项目治理结构已建立',
-      ],
-      warnings: [
-        '过度强调整合而忽略各知识领域的特殊性',
-        '变更控制不严格导致范围蔓延',
-        '缺乏有效的项目监控机制',
-      ],
-    },
-    scope: {
-      suggestions: [
-        '使用WBS分解项目工作，明确交付物层次结构',
-        '制定详细的需求管理计划，跟踪需求变更',
-        '建立范围基准，作为项目控制的依据',
-        '识别范围管理与其他知识领域的接口',
-      ],
-      checklist: [
-        '项目范围说明书已完成',
-        'WBS已分解到工作包级别',
-        '范围基准已批准',
-        '需求变更已建立流程',
-        '范围状态已定义测量指标',
-      ],
-      warnings: [
-        '范围定义不清晰导致后续变更频繁',
-        'WBS分解过细或过粗，影响管理效率',
-        '范围蔓延未及时识别和控制',
-      ],
-    },
-    schedule: {
-      suggestions: [
-        '识别关键路径，确保关键活动资源充足',
-        '使用甘特图和里程碑计划展示项目进度',
-        '建立进度基准，用于绩效测量',
-        '设置进度预警机制，及时发现延误',
-      ],
-      checklist: [
-        '项目进度计划已制定',
-        '关键路径已识别',
-        '进度基准已批准',
-        '进度测量机制已建立',
-        '进度变更流程已定义',
-      ],
-      warnings: [
-        '关键路径识别错误导致进度失控',
-        '资源冲突未识别导致活动延误',
-        '依赖关系定义不准确影响进度',
-      ],
-    },
-    cost: {
-      suggestions: [
-        '制定详细的成本估算，考虑直接和间接成本',
-        '建立成本基准，作为预算控制的依据',
-        '使用挣值管理（EVM）监控成本绩效',
-        '设置成本预警阈值，及时发现超支',
-      ],
-      checklist: [
-        '成本估算已完成',
-        '成本基准已批准',
-        '预算分配已确定',
-        '成本监控机制已建立',
-        '成本变更流程已定义',
-      ],
-      warnings: [
-        '成本估算遗漏关键成本项',
-        '资源费率假设不准确',
-        '未考虑风险储备导致预算不足',
-      ],
-    },
-    risk: {
-      suggestions: [
-        '建立风险登记册，系统化管理项目风险',
-        '使用概率影响矩阵评估风险优先级',
-        '制定风险应对策略，包括应急计划',
-        '定期审查风险状态，及时更新风险信息',
-      ],
-      checklist: [
-        '风险识别已完成',
-        '风险评估已进行',
-        '风险应对策略已制定',
-        '风险登记册已建立',
-        '风险监控机制已运行',
-      ],
-      warnings: [
-        '风险识别不全面，遗漏重要风险',
-        '风险应对策略缺乏针对性',
-        '风险监控流于形式，未实际执行',
-      ],
-    },
-    quality: {
-      suggestions: [
-        '制定质量管理计划，明确质量标准和度量指标',
-        '建立质量保证流程，确保过程符合要求',
-        '实施质量控制检查，验证交付物质量',
-        '收集质量数据，持续改进项目质量',
-      ],
-      checklist: [
-        '质量标准已定义',
-        '质量管理计划已批准',
-        '质量保证活动已安排',
-        '质量控制检查点已设置',
-        '质量测量指标已确定',
-      ],
-      warnings: [
-        '质量标准定义不清或无法测量',
-        '质量检查流于形式，未真正执行',
-        '质量改进建议未实际落实',
-      ],
-    },
-    resource: {
-      suggestions: [
-        '制定资源管理计划，明确资源获取和分配方式',
-        '建立资源日历，跟踪资源使用情况',
-        '使用责任分配矩阵（RAM）明确角色职责',
-        '设置资源预警机制，及时发现资源冲突',
-      ],
-      checklist: [
-        '资源需求已识别',
-        '资源管理计划已批准',
-        '资源分配已确定',
-        '角色职责已明确（RAM）',
-        '资源监控机制已建立',
-      ],
-      warnings: [
-        '资源需求估算不准确',
-        '资源冲突未及时识别和解决',
-        '团队成员角色职责不清晰',
-      ],
-    },
-    communications: {
-      suggestions: [
-        '制定沟通管理计划，明确信息发布和收集方式',
-        '建立沟通渠道清单，确保信息传递畅通',
-        '设置沟通频率和格式，规范信息交换',
-        '定期评估沟通效果，及时调整沟通策略',
-      ],
-      checklist: [
-        '沟通需求已分析',
-        '沟通管理计划已批准',
-        '沟通渠道已建立',
-        '沟通报告机制已设定',
-        '干系人信息需求已明确',
-      ],
-      warnings: [
-        '沟通计划不符合干系人需求',
-        '重要信息未及时传递给相关方',
-        '沟通记录不完整，难以追溯',
-      ],
-    },
-    procurement: {
-      suggestions: [
-        '制定采购管理计划，明确采购流程和策略',
-        '编制招标文件，确保采购需求完整清晰',
-        '建立供应商评估标准，选择合格供应商',
-        '设置合同管理机制，监控供应商绩效',
-      ],
-      checklist: [
-        '采购需求已明确',
-        '采购策略已制定',
-        '招标文件已准备',
-        '供应商评估已完成',
-        '合同管理机制已建立',
-      ],
-      warnings: [
-        '采购需求描述不清晰导致供应商误解',
-        '供应商选择标准不客观',
-        '合同条款不完善导致后续纠纷',
-      ],
-    },
-    stakeholder: {
-      suggestions: [
-        '识别所有干系人，建立干系人登记册',
-        '分析干系人需求和期望，制定参与策略',
-        '使用权力利益方格对干系人进行分类管理',
-        '定期更新干系人状态，评估参与效果',
-      ],
-      checklist: [
-        '干系人已识别',
-        '干系人分析已完成',
-        '干系人管理策略已制定',
-        '沟通策略已针对干系人',
-        '干系人参与度已评估',
-      ],
-      warnings: [
-        '关键干系人遗漏未识别',
-        '干系人期望管理不当导致不满',
-        '干系人沟通策略缺乏针对性',
-      ],
-    },
-  };
+  if (operation === "assist") {
+    try {
+      const project = await supabase.from("projects").select("id,name,oa_no,data_class").eq("id", resolved.projectId).eq("data_class", resolved.dataClass).maybeSingle();
+      if (project.error || !project.data) throw project.error || new Error("PROJECT_NOT_FOUND");
+      const projectType = text(body.project_type, "项目类型", 40);
+      const knowledgeArea = text(body.knowledge_area, "知识领域", 80);
+      const context = object(body.context ?? {}, "规划上下文");
+      const systemPrompt = `你是项目管理规划助手。只能根据当前项目的真实输入提供${knowledgeArea}规划建议，不得编造预算、期限、资源或已批准状态。返回严格JSON：{"suggestions":[],"checklist":[],"warnings":[]}。内容使用中文，建议必须可由项目成员复核。`;
+      const result = await llmComplete("planning", systemPrompt, `项目ID：${resolved.projectId}\n项目名称：${project.data.name}\n项目编码：${project.data.oa_no || "未设置"}\n项目类型：${projectType}\n知识领域：${knowledgeArea}\n用户输入：${JSON.stringify(context)}`, { temperature: 0.2 });
+      const match = result.content.match(/\{[\s\S]*\}/);
+      const parsed = object(JSON.parse(match?.[0] ?? result.content), "LLM返回结果");
+      return json({ status: "succeeded", request_id: requestId, context: responseContext, data: parsed, ...parsed, model: result.model, source: { type: "llm+supabase", fallback_used: false, data_class: resolved.dataClass }, generated_at: new Date().toISOString(), warnings: ["规划建议必须经用户确认并保存，AI不会代替审批。"] }, 200, requestId);
+    } catch (error) {
+      return json({ error: "PLANNING_AI_FAILED", detail: errorMessage(error), request_id: requestId, source: { type: "llm+supabase", fallback_used: false, data_class: resolved.dataClass } }, 503, requestId);
+    }
+  }
 
-  return responses[knowledgeArea] || responses.integration;
+  let contract;
+  try { contract = parseGovernanceWriteContract(body); } catch (error) {
+    return json({ error: "WRITE_CONTRACT_INVALID", detail: errorMessage(error), request_id: requestId }, 400, requestId);
+  }
+  if (contract.projectId !== resolved.projectId || contract.businessRole !== resolved.businessRole || contract.dataClass !== resolved.dataClass) {
+    return json({ error: "WRITE_CONTEXT_MISMATCH", request_id: requestId }, 409, requestId);
+  }
+  const common = { p_org_id: scope.orgId, p_project_id: resolved.projectId, p_data_class: resolved.dataClass, p_business_role: resolved.businessRole, p_actor_user_id: resolved.user.id, p_idempotency_key: contract.idempotencyKey, p_expected_version: contract.expectedVersion };
+  try {
+    if (operation === "save_management_plan") {
+      const result = await supabase.rpc("save_project_governance_artifact_tx", { ...common, p_artifact_type: "management_plan", p_title: text(body.title, "管理计划标题", 240), p_content: object(body.content, "管理计划内容"), p_source_type: String(body.source_type || "human_input") });
+      if (result.error) throw result.error;
+      return json({ status: "succeeded", request_id: requestId, context: responseContext, data: result.data, source: source(resolved.dataClass, String(result.data?.updated_at ?? "")), generated_at: new Date().toISOString(), warnings: [] }, 200, requestId);
+    }
+    if (operation === "transition_artifact") {
+      const result = await supabase.rpc("transition_project_governance_artifact_tx", { ...common, p_artifact_id: text(body.artifact_id, "管理计划ID", 80), p_operation: text(body.transition, "状态动作", 40), p_comment: String(body.comment ?? "").trim() || null });
+      if (result.error) throw result.error;
+      return json({ status: "succeeded", request_id: requestId, context: responseContext, data: result.data, source: source(resolved.dataClass, String(result.data?.updated_at ?? "")), generated_at: new Date().toISOString(), warnings: [] }, 200, requestId);
+    }
+    if (operation === "save_baseline") {
+      const result = await supabase.rpc("save_project_plan_baseline_tx", { ...common, p_baseline_type: text(body.baseline_type, "基准类型", 30), p_title: text(body.title, "基准标题", 240), p_content: object(body.content, "基准内容"), p_baseline_value: body.baseline_value === null || body.baseline_value === undefined || body.baseline_value === "" ? null : Number(body.baseline_value), p_currency: String(body.currency ?? "").trim() || null, p_effective_date: String(body.effective_date ?? "").trim() || null });
+      if (result.error) throw result.error;
+      return json({ status: "succeeded", request_id: requestId, context: responseContext, data: result.data, source: source(resolved.dataClass, String(result.data?.updated_at ?? "")), generated_at: new Date().toISOString(), warnings: [] }, 200, requestId);
+    }
+    if (operation === "transition_baseline") {
+      const result = await supabase.rpc("transition_project_plan_baseline_tx", { ...common, p_baseline_id: text(body.baseline_id, "基准ID", 80), p_operation: text(body.transition, "状态动作", 40), p_comment: String(body.comment ?? "").trim() || null });
+      if (result.error) throw result.error;
+      return json({ status: "succeeded", request_id: requestId, context: responseContext, data: result.data, source: source(resolved.dataClass, String(result.data?.updated_at ?? "")), generated_at: new Date().toISOString(), warnings: [] }, 200, requestId);
+    }
+    return json({ error: "PLANNING_OPERATION_INVALID", request_id: requestId }, 400, requestId);
+  } catch (error) {
+    const message = errorMessage(error);
+    return json({ error: "PLANNING_OPERATION_FAILED", detail: message, request_id: requestId, source: source(resolved.dataClass) }, errorStatus(message), requestId);
+  }
 }

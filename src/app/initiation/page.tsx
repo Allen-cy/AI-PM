@@ -75,6 +75,14 @@ interface Requirement {
   category: string;
 }
 
+interface PersistedGovernanceRecord {
+  id: string;
+  status: "draft" | "submitted" | "approved" | "rejected" | "changes_requested" | "superseded";
+  version: number;
+  content: Record<string, unknown>;
+  updated_at?: string;
+}
+
 const PROJECT_TYPES = ["信息化", "课程开发", "工程基建", "运营服务"] as const;
 const PROJECT_LEVELS = ["S", "A", "B"] as const;
 const QUADRANT_COLORS = {
@@ -245,6 +253,11 @@ export default function InitiationPage() {
   const [currentProjectName, setCurrentProjectName] = useState("");
   const [sourceState, setSourceState] = useState<{ status: "loading" | "ready" | "unavailable"; detail: string }>({ status: "loading", detail: "正在读取当前项目的Supabase立项数据。" });
   const [requirementSaving, setRequirementSaving] = useState(false);
+  const [governanceSaving, setGovernanceSaving] = useState<string | null>(null);
+  const [initiationRecord, setInitiationRecord] = useState<PersistedGovernanceRecord | null>(null);
+  const [businessArtifact, setBusinessArtifact] = useState<PersistedGovernanceRecord | null>(null);
+  const [charterArtifact, setCharterArtifact] = useState<PersistedGovernanceRecord | null>(null);
+  const [reviewComment, setReviewComment] = useState("");
 
   // Project Registration State
   const [projectInfo, setProjectInfo] = useState<ProjectInfo>({
@@ -320,6 +333,8 @@ export default function InitiationPage() {
       const response = await fetch(`/api/initiation?${params.toString()}`, { cache: "no-store" });
       const payload = await response.json() as {
         project?: { name?: string };
+        initiation?: PersistedGovernanceRecord | null;
+        artifacts?: Array<PersistedGovernanceRecord & { artifact_type: string }>;
         stakeholders?: Array<{ id: string; name: string; role: string; power: number; interest: number }>;
         requirements?: Requirement[];
         detail?: string;
@@ -327,6 +342,39 @@ export default function InitiationPage() {
       };
       if (!response.ok) throw new Error(payload.detail || payload.error || "立项数据读取失败");
       setCurrentProjectName(payload.project?.name || "当前项目");
+      const loadedInitiation = payload.initiation ?? null;
+      const loadedBusiness = payload.artifacts?.find(item => item.artifact_type === "business_case") ?? null;
+      const loadedCharter = payload.artifacts?.find(item => item.artifact_type === "project_charter") ?? null;
+      setInitiationRecord(loadedInitiation);
+      setBusinessArtifact(loadedBusiness);
+      setCharterArtifact(loadedCharter);
+      if (loadedInitiation?.content) {
+        const content = loadedInitiation.content;
+        setProjectInfo(previous => ({
+          ...previous,
+          name: payload.project?.name || previous.name,
+          type: String(content.project_type || previous.type) as ProjectInfo["type"],
+          level: String(content.project_level || previous.level) as ProjectInfo["level"],
+          applyDate: String(content.apply_date || previous.applyDate),
+          expectedStart: String(content.expected_start || previous.expectedStart),
+          sponsor: String(content.sponsor || ""),
+          businessJustification: String(content.business_justification || ""),
+        }));
+      } else {
+        setProjectInfo(previous => ({ ...previous, name: payload.project?.name || previous.name }));
+      }
+      if (loadedBusiness?.content) setBusinessCase(loadedBusiness.content as unknown as BusinessCase);
+      if (loadedCharter?.content) {
+        const content = loadedCharter.content as unknown as Omit<ProjectCharter, "signoff">;
+        setProjectCharter(previous => ({
+          ...previous,
+          ...content,
+          signoff: {
+            ...previous.signoff,
+            status: loadedCharter.status === "approved" ? "approved" : loadedCharter.status === "rejected" ? "rejected" : "pending",
+          },
+        }));
+      }
       setStakeholders((payload.stakeholders || []).map(item => {
         const power = levelLabel(item.power);
         const interest = levelLabel(item.interest);
@@ -336,6 +384,7 @@ export default function InitiationPage() {
       setSourceState({ status: "ready", detail: `已连接Supabase正式数据：${payload.project?.name || "当前项目"}。` });
     } catch (error) {
       setStakeholders([]); setRequirements([]); setCurrentProjectName("");
+      setInitiationRecord(null); setBusinessArtifact(null); setCharterArtifact(null);
       setSourceState({ status: "unavailable", detail: error instanceof Error ? error.message : "立项数据源不可用。" });
     }
   }, []);
@@ -353,6 +402,70 @@ export default function InitiationPage() {
       window.removeEventListener("ai-pmo:data-class-changed", reload);
     };
   }, [loadInitiationData]);
+
+  const currentGovernanceContext = (expectedVersion: number) => {
+    const context = readStoredBusinessContext();
+    if (!context?.businessRole || !currentProjectId) return null;
+    return {
+      project_id: currentProjectId,
+      business_role: context.businessRole,
+      data_class: readStoredDataClass(),
+      expected_version: expectedVersion,
+      idempotency_key: `v63:initiation:${currentProjectId}:${crypto.randomUUID()}`,
+    };
+  };
+
+  const postGovernance = async (body: Record<string, unknown>) => {
+    const response = await fetch("/api/initiation", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const payload = await response.json() as { detail?: string; error?: string };
+    if (!response.ok) throw new Error(payload.detail || payload.error || "正式成果保存失败");
+    await loadInitiationData();
+  };
+
+  const handleSaveInitiation = async () => {
+    const context = currentGovernanceContext(initiationRecord?.version ?? 0);
+    if (!context) { setBusinessEvidenceActionMessage("请先选择已授权的当前项目。"); return; }
+    if (!projectInfo.sponsor.trim() || !projectInfo.businessJustification.trim()) { setBusinessEvidenceActionMessage("请填写项目发起人和业务立项理由。"); return; }
+    setGovernanceSaving("save_initiation");
+    try {
+      await postGovernance({ operation: "save_initiation", ...context, content: { project_type: projectInfo.type, project_level: projectInfo.level, apply_date: projectInfo.applyDate, expected_start: projectInfo.expectedStart, sponsor: projectInfo.sponsor, business_justification: projectInfo.businessJustification } });
+      setBusinessEvidenceActionMessage("立项信息已保存到Supabase正式项目记录。");
+    } catch (error) { setBusinessEvidenceActionMessage(`立项保存失败：${error instanceof Error ? error.message : "未知错误"}`); }
+    finally { setGovernanceSaving(null); }
+  };
+
+  const handleSaveArtifact = async (kind: "business" | "charter") => {
+    const record = kind === "business" ? businessArtifact : charterArtifact;
+    const context = currentGovernanceContext(record?.version ?? 0);
+    if (!context) { setBusinessEvidenceActionMessage("请先选择已授权的当前项目。"); return; }
+    setGovernanceSaving(`save_${kind}`);
+    try {
+      await postGovernance({
+        operation: kind === "business" ? "save_business_case" : "save_charter",
+        ...context,
+        title: `${currentProjectName || projectInfo.name}-${kind === "business" ? "商业论证" : "项目章程"}`,
+        content: kind === "business" ? businessCase : { ...projectCharter, signoff: undefined },
+        source_type: kind === "business" && businessEvidence ? "ai_assisted" : "human_input",
+      });
+      setBusinessEvidenceActionMessage(`${kind === "business" ? "商业论证" : "项目章程"}草稿已正式保存。`);
+    } catch (error) { setBusinessEvidenceActionMessage(`成果保存失败：${error instanceof Error ? error.message : "未知错误"}`); }
+    finally { setGovernanceSaving(null); }
+  };
+
+  const handleTransitionArtifact = async (kind: "business" | "charter", transition: "submit" | "approve" | "reject" | "request_changes" | "revise") => {
+    const record = kind === "business" ? businessArtifact : charterArtifact;
+    if (!record) { setBusinessEvidenceActionMessage("请先保存正式草稿。"); return; }
+    const context = currentGovernanceContext(record.version);
+    if (!context) { setBusinessEvidenceActionMessage("请先选择已授权的当前项目。"); return; }
+    if (["approve", "reject", "request_changes"].includes(transition) && !reviewComment.trim()) { setBusinessEvidenceActionMessage("审批、拒绝或退回修改时必须填写审批意见。"); return; }
+    setGovernanceSaving(`${transition}_${kind}`);
+    try {
+      await postGovernance({ operation: "transition_artifact", ...context, artifact_id: record.id, transition, comment: reviewComment.trim() });
+      setReviewComment("");
+      setBusinessEvidenceActionMessage(`${kind === "business" ? "商业论证" : "项目章程"}状态已更新并写入审计轨迹。`);
+    } catch (error) { setBusinessEvidenceActionMessage(`状态变更失败：${error instanceof Error ? error.message : "未知错误"}`); }
+    finally { setGovernanceSaving(null); }
+  };
 
   const handleSaveProjectToFeishu = async () => {
     setFeishuSaveResult(null);
@@ -405,7 +518,7 @@ export default function InitiationPage() {
       const generatedResponse = await fetch("/api/initiation", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ operation: "generate_business_case", project_name: projectInfo.name, project_type: projectInfo.type, project_level: projectInfo.level, sponsor: projectInfo.sponsor, business_justification: projectInfo.businessJustification }),
+        body: JSON.stringify({ operation: "generate_business_case", ...currentGovernanceContext(0), project_name: projectInfo.name, project_type: projectInfo.type, project_level: projectInfo.level, sponsor: projectInfo.sponsor, business_justification: projectInfo.businessJustification }),
       });
       const generatedPayload = await generatedResponse.json() as { result?: BusinessCase; detail?: string; error?: string; model?: string };
       if (!generatedResponse.ok || !generatedPayload.result) throw new Error(generatedPayload.detail || generatedPayload.error || "AI商业论证生成失败");
@@ -440,7 +553,7 @@ export default function InitiationPage() {
     }
     setAiLoading("charter");
     try {
-      const response = await fetch("/api/initiation", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ operation: "generate_charter", project_name: projectInfo.name, project_type: projectInfo.type, project_level: projectInfo.level, sponsor: projectInfo.sponsor, business_justification: projectInfo.businessJustification }) });
+      const response = await fetch("/api/initiation", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ operation: "generate_charter", ...currentGovernanceContext(0), project_name: projectInfo.name, project_type: projectInfo.type, project_level: projectInfo.level, sponsor: projectInfo.sponsor, business_justification: projectInfo.businessJustification }) });
       const payload = await response.json() as { result?: Omit<ProjectCharter, "signoff">; detail?: string; error?: string };
       if (!response.ok || !payload.result) throw new Error(payload.detail || payload.error || "AI项目章程生成失败");
       setProjectCharter(previous => ({ ...previous, ...payload.result!, signoff: previous.signoff }));
@@ -504,7 +617,13 @@ export default function InitiationPage() {
   const requirementContext = () => {
     const context = readStoredBusinessContext();
     return context?.businessRole && currentProjectId
-      ? { project_id: currentProjectId, business_role: context.businessRole, data_class: readStoredDataClass() }
+      ? {
+          project_id: currentProjectId,
+          business_role: context.businessRole,
+          data_class: readStoredDataClass(),
+          expected_version: 0,
+          idempotency_key: `v63:requirement:${currentProjectId}:${crypto.randomUUID()}`,
+        }
       : null;
   };
 
@@ -742,14 +861,19 @@ export default function InitiationPage() {
                   <div style={{ fontWeight: 600, fontSize: "0.85rem", marginBottom: 4 }}>💡 快速操作</div>
                   <div style={{ fontSize: "0.8rem", color: "var(--text2)" }}>保存立项信息后可继续填写商业论证和项目任务书</div>
                 </div>
-                <button
-                  className="btn-primary"
-                  onClick={handleSaveProjectToFeishu}
-                  disabled={feishuSaving}
-                  style={{ background: "var(--feishu)", borderColor: "var(--feishu)", opacity: feishuSaving ? 0.7 : 1 }}
-                >
-                  {feishuSaving ? "保存中..." : "保存至飞书"}
-                </button>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button className="btn-primary" onClick={() => void handleSaveInitiation()} disabled={governanceSaving === "save_initiation"}>
+                    {governanceSaving === "save_initiation" ? "保存中..." : initiationRecord ? `保存新版本 v${initiationRecord.version + 1}` : "保存正式立项记录"}
+                  </button>
+                  <button
+                    className="btn-secondary"
+                    onClick={handleSaveProjectToFeishu}
+                    disabled={feishuSaving}
+                    style={{ color: "var(--feishu)", borderColor: "var(--feishu)", opacity: feishuSaving ? 0.7 : 1 }}
+                  >
+                    {feishuSaving ? "同步中..." : "同步至飞书"}
+                  </button>
+                </div>
               </div>
               {feishuSaveResult && (
                 <div style={{
@@ -966,6 +1090,24 @@ export default function InitiationPage() {
                 ))}
               </div>
             </SectionCard>
+            <SectionCard title="商业论证正式流转" icon="🔐">
+              <div style={{ marginBottom: 12, fontSize: "0.82rem", color: "var(--text2)" }}>
+                当前状态：<strong style={{ color: "var(--accent)" }}>{businessArtifact?.status || "未保存"}</strong>
+                {businessArtifact ? ` · 版本 v${businessArtifact.version}` : " · 请先由项目成员保存草稿"}
+              </div>
+              <LabelTextarea label="审批意见" placeholder="审批、拒绝或退回修改时必填；提交草稿时可留空" value={reviewComment} onChange={setReviewComment} rows={2} />
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                <button className="btn-primary" onClick={() => void handleSaveArtifact("business")} disabled={Boolean(governanceSaving) || Boolean(businessArtifact && !["draft", "changes_requested", "rejected"].includes(businessArtifact.status))}>
+                  {governanceSaving === "save_business" ? "保存中..." : businessArtifact ? "保存新版本" : "保存草稿"}
+                </button>
+                <button className="btn-secondary" onClick={() => void handleTransitionArtifact("business", "submit")} disabled={Boolean(governanceSaving) || businessArtifact?.status !== "draft"}>提交审批</button>
+                <button className="btn-secondary" onClick={() => void handleTransitionArtifact("business", "approve")} disabled={Boolean(governanceSaving) || businessArtifact?.status !== "submitted"} style={{ color: "var(--green)" }}>批准</button>
+                <button className="btn-secondary" onClick={() => void handleTransitionArtifact("business", "request_changes")} disabled={Boolean(governanceSaving) || businessArtifact?.status !== "submitted"} style={{ color: "var(--amber)" }}>退回修改</button>
+                <button className="btn-secondary" onClick={() => void handleTransitionArtifact("business", "reject")} disabled={Boolean(governanceSaving) || businessArtifact?.status !== "submitted"} style={{ color: "var(--red)" }}>拒绝</button>
+                <button className="btn-secondary" onClick={() => void handleTransitionArtifact("business", "revise")} disabled={Boolean(governanceSaving) || !businessArtifact || !["changes_requested", "rejected"].includes(businessArtifact.status)}>重新修订</button>
+              </div>
+              <div style={{ marginTop: 10, color: "var(--text2)", fontSize: "0.75rem" }}>项目成员负责输入和提交；PMO、发起人或业务负责人负责审批。所有动作均校验角色、版本并写入审计记录。</div>
+            </SectionCard>
           </div>
         )}
 
@@ -1104,44 +1246,23 @@ export default function InitiationPage() {
                   请项目发起人或高层管理者确认签发
                 </div>
               </div>
-              <div style={{ display: "flex", gap: 12, marginTop: 16 }}>
-                <button
-                  disabled
-                  title="章程审批流尚未接入持久化和正式审批权限，不得在本地假装批准。"
-                  style={{
-                    flex: 1,
-                    padding: "10px 16px",
-                    borderRadius: 8,
-                    border: "1px solid var(--green)",
-                    background: "rgba(34,197,94,0.15)",
-                    color: "var(--green)",
-                    fontWeight: 600,
-                    cursor: "not-allowed",
-                    opacity: 0.55,
-                  }}
-                >
-                  ✅ 批准
-                </button>
-                <button
-                  disabled
-                  title="章程审批流尚未接入持久化和正式审批权限，不得在本地假装拒绝。"
-                  style={{
-                    flex: 1,
-                    padding: "10px 16px",
-                    borderRadius: 8,
-                    border: "1px solid var(--red)",
-                    background: "rgba(239,68,68,0.15)",
-                    color: "var(--red)",
-                    fontWeight: 600,
-                    cursor: "not-allowed",
-                    opacity: 0.55,
-                  }}
-                >
-                  ❌ 拒绝
-                </button>
-              </div>
-              <div style={{ marginTop: 10, color: "var(--amber)", fontSize: "0.75rem", textAlign: "center" }}>
-                审批操作已关闭：项目章程需接入正式审批流、审批人权限和Supabase审计记录后才可启用。
+              <div style={{ marginTop: 16, textAlign: "left" }}>
+                <div style={{ marginBottom: 10, fontSize: "0.82rem", color: "var(--text2)" }}>
+                  正式状态：<strong style={{ color: "var(--accent)" }}>{charterArtifact?.status || "未保存"}</strong>
+                  {charterArtifact ? ` · 版本 v${charterArtifact.version}` : ""}
+                </div>
+                <LabelTextarea label="签发/审批意见" placeholder="批准、拒绝或退回修改时必填" value={reviewComment} onChange={setReviewComment} rows={2} />
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  <button className="btn-primary" onClick={() => void handleSaveArtifact("charter")} disabled={Boolean(governanceSaving) || Boolean(charterArtifact && !["draft", "changes_requested", "rejected"].includes(charterArtifact.status))}>
+                    {governanceSaving === "save_charter" ? "保存中..." : charterArtifact ? "保存新版本" : "保存章程草稿"}
+                  </button>
+                  <button className="btn-secondary" onClick={() => void handleTransitionArtifact("charter", "submit")} disabled={Boolean(governanceSaving) || charterArtifact?.status !== "draft"}>提交签发</button>
+                  <button className="btn-secondary" onClick={() => void handleTransitionArtifact("charter", "approve")} disabled={Boolean(governanceSaving) || charterArtifact?.status !== "submitted"} style={{ color: "var(--green)" }}>✅ 批准签发</button>
+                  <button className="btn-secondary" onClick={() => void handleTransitionArtifact("charter", "request_changes")} disabled={Boolean(governanceSaving) || charterArtifact?.status !== "submitted"} style={{ color: "var(--amber)" }}>退回修改</button>
+                  <button className="btn-secondary" onClick={() => void handleTransitionArtifact("charter", "reject")} disabled={Boolean(governanceSaving) || charterArtifact?.status !== "submitted"} style={{ color: "var(--red)" }}>❌ 拒绝</button>
+                  <button className="btn-secondary" onClick={() => void handleTransitionArtifact("charter", "revise")} disabled={Boolean(governanceSaving) || !charterArtifact || !["changes_requested", "rejected"].includes(charterArtifact.status)}>重新修订</button>
+                </div>
+                <div style={{ marginTop: 10, color: "var(--text2)", fontSize: "0.75rem" }}>只有具备当前项目审批角色的用户可签发，前端按钮不会绕过服务端权限。</div>
               </div>
             </SectionCard>
           </div>
