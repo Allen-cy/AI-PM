@@ -35,6 +35,12 @@ The easiest way to deploy your Next.js app is to use the [Vercel Platform](https
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
 
+## AI-PMO System V6.3.1
+
+V6.3.1 完成 WBS、关键路径、挣值和资源容量四条交付控制链的真实化。WBS 进入版本化保存、人工提交/审批和工作包实绩管理；CPM 只能从当前项目已持久化 WBS 读取任务与前置关系，并保存确定性计算快照；EVM 只能使用已批准成本基准、已批准 WBS、工作包实绩和真实成本台账形成指标；资源页面使用已授权项目成员建立 8–12 周容量计划，超配自动生成责任到人、有期限、有证据复核的冲突动作。
+
+正式页面不再以内置任务、`TEST_*`、随机人员能力或浏览器本地状态作为权威数据。所有写入继续强制校验项目 UUID、业务角色、数据分类、幂等键和期望版本；数据库对象启用 RLS，并撤销 `PUBLIC`、`anon`、`authenticated` 的直接权限。详细接口与部署门禁见 `docs/v631-delivery-control-realization.md`。
+
 ## AI-PMO System V6.3.0
 
 V6.3.0 完成立项与规划第一条真实业务链：项目经理录入立项事实，AI 可基于当前项目事实辅助起草商业论证、项目章程和管理计划，但保存、提交、退回、批准与发起新版本必须由有权限的真实用户完成。范围、进度、成本三类基准均进入 Supabase 正式状态机，页面刷新后仍能恢复记录，不再依赖浏览器本地状态或“示例项目”。
@@ -59,7 +65,7 @@ V6.1.0 建立“安全与数据库治理门禁”：所有应用自有 `public` 
 
 风险主链路现在强制 `org_id + project_id + data_class + business context`，新增项目级唯一键、乐观锁、幂等回执、状态/事件原子事务和软归档。未关联项目的 18 条历史风险保留原记录并进入组织隔离治理队列；安全中心新增可视化治理页，只能选择当前授权项目，不再输入 UUID 或 JSON。同时修复用户中心错误链接与 375px 手机登录页布局。
 
-V6.1.0 是 V6.1–V6.6 全模块真实化计划的第一个版本；后续 V6.2.0 已完成八类飞书事实同步与对账底座，当前进入 V6.3.0 全业务模块真实化。
+V6.1.0 是 V6.1–V6.6 全模块真实化计划的第一个版本；V6.2.0 已完成八类飞书事实同步与对账底座，V6.3.0 完成立项与规划持久化，当前由 V6.3.1 推进交付控制真实化。
 
 ## AI-PMO System V6.0.10
 

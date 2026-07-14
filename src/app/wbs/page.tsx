@@ -1,498 +1,258 @@
 "use client";
 
-import { useState } from "react";
 import Link from "next/link";
-import mammoth from "mammoth";
-import { SYSTEM_PROMPTS } from "@/lib/llm-prompts";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  loadCurrentBusinessContextSearchParams,
+  readStoredBusinessContext,
+  readStoredCurrentProject,
+  readStoredDataClass,
+} from "@/features/operating-model/client-context";
 
-const PROJECT_TYPES = [
-  { value: "it", label: "信息化系统集成" },
-  { value: "content", label: "课程内容开发" },
-  { value: "engineering", label: "工程基建施工" },
-  { value: "ops", label: "运营服务交付" },
-];
-
-interface SOWData {
-  projectBackground: string;
-  constructionGoal: string;
-  projectRequirements: string;
-  deliverables: string;
-  scheduleGoal: string;
-  qualityGoal: string;
-  deliveryForm: string;
-  acceptanceCriteria: string;
-  projectScope: string;
-  teamMembers: string;
-  riskNotes: string;
-}
-
-interface WBSItem {
-  id: string;
-  name: string;
-  duration: number;
+type WbsItem = {
+  id?: string;
+  item_code: string;
+  parent_item_code: string | null;
   level: number;
-  parent?: string;
+  name: string;
+  description: string;
+  duration_days: number;
+  predecessors: string[];
+  planned_start?: string | null;
+  planned_end?: string | null;
+  planned_value: number;
+  acceptance_criteria: string;
+};
+
+type WbsVersion = {
+  id: string;
+  title: string;
+  revision_no: number;
+  status: string;
+  version: number;
+  source_type: string;
+  updated_at: string;
+};
+
+type DeliveryActual = {
+  id: string;
+  wbs_item_id: string;
+  actual_start?: string | null;
+  actual_end?: string | null;
+  percent_complete: number;
+  status: string;
+  actual_cost: number;
+  version: number;
+};
+
+const blankItem = (index: number): WbsItem => ({
+  item_code: String(index + 1),
+  parent_item_code: null,
+  level: 1,
+  name: "",
+  description: "",
+  duration_days: 5,
+  predecessors: [],
+  planned_start: null,
+  planned_end: null,
+  planned_value: 0,
+  acceptance_criteria: "",
+});
+
+export default function WbsPage() {
+  const [projectName, setProjectName] = useState("");
+  const [current, setCurrent] = useState<WbsVersion | null>(null);
+  const [versions, setVersions] = useState<WbsVersion[]>([]);
+  const [items, setItems] = useState<WbsItem[]>([]);
+  const [actuals, setActuals] = useState<DeliveryActual[]>([]);
+  const [title, setTitle] = useState("项目WBS");
+  const [scopeInput, setScopeInput] = useState("");
+  const [reviewComment, setReviewComment] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState("");
+  const [message, setMessage] = useState("");
+
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const params = await loadCurrentBusinessContextSearchParams({ preferredRole: "pm" });
+      if (!params.get("project_id")) throw new Error("请先在顶部选择已授权项目。");
+      const response = await fetch(`/api/wbs?${params.toString()}`, { cache: "no-store" });
+      const payload = await response.json() as { data?: { project?: { name?: string }; current?: WbsVersion | null; versions?: WbsVersion[]; items?: WbsItem[]; actuals?: DeliveryActual[] }; detail?: string; error?: string };
+      if (!response.ok) throw new Error(payload.detail || payload.error || "WBS读取失败");
+      const data = payload.data;
+      setProjectName(data?.project?.name || "当前项目");
+      setCurrent(data?.current ?? null);
+      setVersions(data?.versions ?? []);
+      setItems((data?.items?.length ? data.items : [blankItem(0)]).map((item) => ({ ...item, predecessors: Array.isArray(item.predecessors) ? item.predecessors : [] })));
+      setActuals(data?.actuals ?? []);
+      setTitle(data?.current?.title || `${data?.project?.name || "当前项目"}-WBS`);
+      setMessage("");
+    } catch (error) {
+      setProjectName(""); setCurrent(null); setVersions([]); setItems([blankItem(0)]); setActuals([]);
+      setMessage(error instanceof Error ? error.message : "WBS数据源不可用");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    const first = window.setTimeout(() => void loadData(), 0);
+    const reload = () => void loadData();
+    window.addEventListener("ai-pmo:project-context-changed", reload);
+    window.addEventListener("ai-pmo:business-context-changed", reload);
+    window.addEventListener("ai-pmo:data-class-changed", reload);
+    return () => {
+      window.clearTimeout(first);
+      window.removeEventListener("ai-pmo:project-context-changed", reload);
+      window.removeEventListener("ai-pmo:business-context-changed", reload);
+      window.removeEventListener("ai-pmo:data-class-changed", reload);
+    };
+  }, [loadData]);
+
+  const writeContext = (expectedVersion: number) => {
+    const context = readStoredBusinessContext();
+    const projectId = readStoredCurrentProject();
+    if (!context?.businessRole || !projectId) return null;
+    return {
+      project_id: projectId,
+      business_role: context.businessRole,
+      data_class: readStoredDataClass(),
+      expected_version: expectedVersion,
+      idempotency_key: `v631:wbs:${projectId}:${crypto.randomUUID()}`,
+    };
+  };
+
+  const post = async (body: Record<string, unknown>) => {
+    const response = await fetch("/api/wbs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const payload = await response.json() as { data?: unknown; detail?: string; error?: string };
+    if (!response.ok) throw new Error(payload.detail || payload.error || "WBS操作失败");
+    return payload.data;
+  };
+
+  const updateItem = (index: number, patch: Partial<WbsItem>) => setItems((currentItems) => currentItems.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item));
+
+  const saveVersion = async () => {
+    const context = writeContext(current?.version ?? 0);
+    if (!context) return setMessage("请先选择当前项目和业务身份。");
+    if (items.some((item) => !item.item_code.trim() || !item.name.trim() || Number(item.duration_days) <= 0)) return setMessage("工作包编码、名称和大于0的工期均为必填项。");
+    setBusy("save");
+    try {
+      await post({ operation: "save_version", ...context, title, scope_source: { user_input: scopeInput }, source_type: "human_input", items });
+      setMessage("WBS版本已保存到Supabase；草稿尚未成为批准基准。");
+      await loadData();
+    } catch (error) { setMessage(`保存失败：${error instanceof Error ? error.message : "未知错误"}`); }
+    finally { setBusy(""); }
+  };
+
+  const aiAssist = async () => {
+    if (!scopeInput.trim()) return setMessage("请先录入真实的范围、交付物和约束信息。");
+    const context = writeContext(current?.version ?? 0);
+    if (!context) return setMessage("请先选择当前项目和业务身份。");
+    setBusy("ai");
+    try {
+      const result = await post({ operation: "assist", ...context, scope_input: { narrative: scopeInput, existing_items: items.filter((item) => item.name.trim()) } }) as { items?: WbsItem[] };
+      if (!result?.items?.length) throw new Error("AI未返回可复核工作包");
+      setItems(result.items);
+      setMessage("AI候选WBS已载入编辑区，尚未保存；请逐项复核后点击“保存WBS版本”。");
+    } catch (error) { setMessage(`AI辅助失败：${error instanceof Error ? error.message : "未知错误"}`); }
+    finally { setBusy(""); }
+  };
+
+  const transition = async (action: string) => {
+    if (!current) return;
+    const context = writeContext(current.version);
+    if (!context) return;
+    if (["approve", "reject", "request_changes"].includes(action) && !reviewComment.trim()) return setMessage("审批、驳回和退回修改必须填写意见。");
+    setBusy(action);
+    try {
+      await post({ operation: "transition_version", ...context, wbs_version_id: current.id, transition: action, comment: reviewComment.trim() });
+      setReviewComment(""); setMessage("WBS状态已更新并写入审计事件。"); await loadData();
+    } catch (error) { setMessage(`状态流转失败：${error instanceof Error ? error.message : "未知错误"}`); }
+    finally { setBusy(""); }
+  };
+
+  const saveActual = async (item: WbsItem, patch: Partial<DeliveryActual>) => {
+    if (!item.id) return;
+    const prior = actuals.find((actual) => actual.wbs_item_id === item.id);
+    const context = writeContext(prior?.version ?? 0);
+    if (!context) return;
+    setBusy(`actual-${item.id}`);
+    try {
+      await post({ operation: "save_actual", ...context, wbs_item_id: item.id, actual_start: patch.actual_start ?? prior?.actual_start ?? null, actual_end: patch.actual_end ?? prior?.actual_end ?? null, percent_complete: patch.percent_complete ?? prior?.percent_complete ?? 0, status: patch.status ?? prior?.status ?? "pending", actual_cost: patch.actual_cost ?? prior?.actual_cost ?? 0, evidence: [] });
+      setMessage(`工作包“${item.name}”实绩已保存。`); await loadData();
+    } catch (error) { setMessage(`实绩保存失败：${error instanceof Error ? error.message : "未知错误"}`); }
+    finally { setBusy(""); }
+  };
+
+  const actualByItem = useMemo(() => new Map(actuals.map((actual) => [actual.wbs_item_id, actual])), [actuals]);
+  const editable = !current || ["draft", "rejected", "changes_requested", "superseded"].includes(current.status);
+
+  return <div style={{ minHeight: "100vh", background: "var(--bg)" }}>
+    <header style={{ padding: "14px 28px", background: "var(--surface)", borderBottom: "1px solid var(--border)", display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>
+      <Link href="/">← 返回首页</Link><strong>🧩 WBS版本与交付实绩</strong>
+      <span className="tag tag-blue">{current ? `R${current.revision_no} · ${current.status} · v${current.version}` : "未建立正式版本"}</span>
+      <span style={{ marginLeft: "auto", color: "var(--text2)", fontSize: 13 }}>{projectName || "未选择项目"}</span>
+    </header>
+    <main style={{ maxWidth: 1440, margin: "0 auto", padding: 28 }}>
+      {message && <div className="card" style={{ marginBottom: 18, padding: 14, borderLeft: "4px solid var(--accent)" }}>{message}</div>}
+      <section className="card" style={{ padding: 22, marginBottom: 20 }}>
+        <h2 style={{ marginTop: 0 }}>输入与版本控制</h2>
+        <p style={{ color: "var(--text2)" }}>当前页面只处理已选项目。AI可辅助拆解，但正式WBS必须由用户保存、提交和审批。</p>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(240px, 1fr) 2fr", gap: 16 }}>
+          <div><label className="label">版本标题</label><input className="input" value={title} onChange={(event) => setTitle(event.target.value)} disabled={!editable} /></div>
+          <div><label className="label">范围、交付物与约束（AI输入依据）</label><textarea className="input" rows={3} value={scopeInput} onChange={(event) => setScopeInput(event.target.value)} placeholder="录入范围边界、交付物、验收标准、里程碑和已知约束" /></div>
+        </div>
+        <div style={{ display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
+          <button className="btn btn-secondary" onClick={aiAssist} disabled={Boolean(busy)}>{busy === "ai" ? "生成中…" : "AI辅助拆解"}</button>
+          <button className="btn btn-primary" onClick={saveVersion} disabled={Boolean(busy) || !editable}>{busy === "save" ? "保存中…" : "保存WBS版本"}</button>
+          <button className="btn btn-secondary" onClick={() => setItems((value) => [...value, blankItem(value.length)])} disabled={!editable}>新增工作包</button>
+        </div>
+      </section>
+
+      <section className="card" style={{ padding: 20, overflowX: "auto", marginBottom: 20 }}>
+        <h2 style={{ marginTop: 0 }}>工作分解结构</h2>
+        <table style={{ width: "100%", minWidth: 1120, borderCollapse: "collapse" }}><thead><tr>{["编码", "父级", "名称", "工期(天)", "前置编码", "计划开始", "计划完成", "计划价值", "验收标准", "操作"].map((label) => <th key={label} style={{ textAlign: "left", padding: 8, borderBottom: "1px solid var(--border)" }}>{label}</th>)}</tr></thead>
+          <tbody>{items.map((item, index) => <tr key={`${item.id || "draft"}-${index}`}>
+            <td><input className="input" style={{ width: 80 }} value={item.item_code} onChange={(e) => updateItem(index, { item_code: e.target.value })} disabled={!editable} /></td>
+            <td><input className="input" style={{ width: 80 }} value={item.parent_item_code || ""} onChange={(e) => updateItem(index, { parent_item_code: e.target.value || null, level: e.target.value ? 2 : 1 })} disabled={!editable} /></td>
+            <td><input className="input" style={{ minWidth: 170 }} value={item.name} onChange={(e) => updateItem(index, { name: e.target.value })} disabled={!editable} /></td>
+            <td><input className="input" type="number" style={{ width: 90 }} value={item.duration_days} onChange={(e) => updateItem(index, { duration_days: Number(e.target.value) })} disabled={!editable} /></td>
+            <td><input className="input" style={{ width: 120 }} value={item.predecessors.join(",")} onChange={(e) => updateItem(index, { predecessors: e.target.value.split(",").map((value) => value.trim()).filter(Boolean) })} disabled={!editable} /></td>
+            <td><input className="input" type="date" value={item.planned_start || ""} onChange={(e) => updateItem(index, { planned_start: e.target.value || null })} disabled={!editable} /></td>
+            <td><input className="input" type="date" value={item.planned_end || ""} onChange={(e) => updateItem(index, { planned_end: e.target.value || null })} disabled={!editable} /></td>
+            <td><input className="input" type="number" style={{ width: 110 }} value={item.planned_value} onChange={(e) => updateItem(index, { planned_value: Number(e.target.value) })} disabled={!editable} /></td>
+            <td><input className="input" style={{ minWidth: 170 }} value={item.acceptance_criteria} onChange={(e) => updateItem(index, { acceptance_criteria: e.target.value })} disabled={!editable} /></td>
+            <td><button className="btn btn-secondary" onClick={() => setItems((value) => value.filter((_, itemIndex) => itemIndex !== index))} disabled={!editable || items.length === 1}>删除</button></td>
+          </tr>)}</tbody></table>
+      </section>
+
+      {current && <section className="card" style={{ padding: 20, marginBottom: 20 }}>
+        <h2 style={{ marginTop: 0 }}>人工流转</h2>
+        <textarea className="input" rows={2} value={reviewComment} onChange={(event) => setReviewComment(event.target.value)} placeholder="审批、驳回、退回修改或替代旧版时填写意见" />
+        <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+          {current.status === "draft" && <button className="btn btn-primary" onClick={() => transition("submit")}>提交审批</button>}
+          {current.status === "submitted" && <><button className="btn btn-primary" onClick={() => transition("approve")}>批准</button><button className="btn btn-secondary" onClick={() => transition("request_changes")}>退回修改</button><button className="btn btn-secondary" onClick={() => transition("reject")}>驳回</button></>}
+          {["rejected", "changes_requested"].includes(current.status) && <button className="btn btn-primary" onClick={() => transition("revise")}>转为修订草稿</button>}
+          {current.status === "approved" && <button className="btn btn-secondary" onClick={() => transition("supersede")}>启动新版本</button>}
+        </div>
+      </section>}
+
+      {current && items.some((item) => item.id) && <section className="card" style={{ padding: 20, overflowX: "auto", marginBottom: 20 }}>
+        <h2 style={{ marginTop: 0 }}>执行实绩（供EVM与监控使用）</h2>
+        <table style={{ width: "100%", minWidth: 900, borderCollapse: "collapse" }}><thead><tr>{["工作包", "状态", "完成率", "实际成本", "实际开始", "实际完成", "保存"].map((label) => <th key={label} style={{ textAlign: "left", padding: 8, borderBottom: "1px solid var(--border)" }}>{label}</th>)}</tr></thead>
+          <tbody>{items.filter((item) => item.id).map((item) => {
+            const actual = actualByItem.get(item.id!);
+            return <ActualRow key={`${item.id}-${actual?.version ?? 0}`} item={item} actual={actual} busy={busy === `actual-${item.id}`} onSave={(patch) => saveActual(item, patch)} />;
+          })}</tbody></table>
+      </section>}
+
+      <section className="card" style={{ padding: 20 }}><h2 style={{ marginTop: 0 }}>版本历史</h2>{loading ? "读取中…" : versions.length ? versions.map((version) => <div key={version.id} style={{ padding: "10px 0", borderBottom: "1px solid var(--border)" }}>R{version.revision_no} · {version.status} · v{version.version} · {new Date(version.updated_at).toLocaleString("zh-CN")}</div>) : "尚无正式版本"}</section>
+    </main>
+  </div>;
 }
 
-const emptySOW: SOWData = {
-  projectBackground: "",
-  constructionGoal: "",
-  projectRequirements: "",
-  deliverables: "",
-  scheduleGoal: "",
-  qualityGoal: "",
-  deliveryForm: "",
-  acceptanceCriteria: "",
-  projectScope: "",
-  teamMembers: "",
-  riskNotes: "",
-};
-
-export default function WBSPage() {
-  const [projectType, setProjectType] = useState("it");
-  const [projectName, setProjectName] = useState("");
-  const [sow, setSow] = useState<SOWData>(emptySOW);
-  const [scope, setScope] = useState("");
-  const [fileName, setFileName] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState("");
-  const [wbsData, setWbsData] = useState<WBSItem[]>([]);
-  const [error, setError] = useState("");
-  const [activeTab, setActiveTab] = useState<"structured" | "manual">("structured");
-
-  const updateSow = (field: keyof SOWData, value: string) => {
-    setSow(prev => ({ ...prev, [field]: value }));
-  };
-
-  const buildPromptFromSOW = () => {
-    return `项目类型：${PROJECT_TYPES.find(t => t.value === projectType)?.label}
-项目名称：${projectName || "未命名项目"}
-
-【项目背景】
-${sow.projectBackground}
-
-【建设目标】
-${sow.constructionGoal}
-
-【项目需求】
-${sow.projectRequirements}
-
-【交付内容】
-${sow.deliverables}
-
-【进度目标】
-${sow.scheduleGoal}
-
-【质量目标】
-${sow.qualityGoal}
-
-【交付形式】
-${sow.deliveryForm}
-
-【验收标准】
-${sow.acceptanceCriteria}
-
-【项目范围及边际】
-${sow.projectScope}
-
-【项目团队】
-${sow.teamMembers}
-
-【风险备注】
-${sow.riskNotes}`;
-  };
-
-  const handleGenerate = async () => {
-    const source = activeTab === "structured" ? buildPromptFromSOW() : scope;
-    if (!source.trim()) {
-      setError("请填写项目范围描述");
-      return;
-    }
-
-    setLoading(true);
-    setError("");
-    setResult("");
-
-    try {
-      const prompt = activeTab === "structured"
-        ? source
-        : `项目类型：${PROJECT_TYPES.find(t => t.value === projectType)?.label}\n项目名称：${projectName || "未命名项目"}\n项目范围：${source}`;
-
-      const response = await fetch("/api/wbs", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          scene: "wbs",
-          systemPrompt: activeTab === "structured" ? `项目类型：${PROJECT_TYPES.find(t => t.value === projectType)?.label}\n项目名称：${projectName || "未命名项目"}\n\n${SYSTEM_PROMPTS.wbs}` : SYSTEM_PROMPTS.wbs,
-          userMessage: prompt,
-        }),
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "生成失败");
-      setResult(data.content || "");
-
-      const content = data.content || "";
-      const lines = content.split("\n").filter((l: string) => l.match(/^\d+\.\d+/));
-      const items: WBSItem[] = lines.slice(0, 30).map((line: string, i: number) => {
-        const match = line.match(/^(\d+(?:\.\d+)*)\s+(.+?)(?:\s+(\d+)天?)?$/);
-        return {
-          id: `wbs-${i}`,
-          name: match ? match[2].trim() : line.replace(/^\d+\.\d+\s*/, "").trim(),
-          duration: match ? parseInt(match[3]) || 5 : 5,
-          level: match ? match[1].split(".").length : 1,
-        };
-      });
-      setWbsData(items);
-    } catch (e: unknown) {
-      setError(`生成失败：${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const fileName = file.name;
-    const isDocx = fileName.toLowerCase().endsWith(".docx");
-
-    setFileName(fileName);
-    setLoading(true);
-    setError("");
-
-    try {
-      let text: string;
-      if (isDocx) {
-        const arrayBuffer = await file.arrayBuffer();
-        const result = await mammoth.extractRawText({ arrayBuffer });
-        text = result.value;
-      } else {
-        text = await file.text();
-      }
-      setScope(text);
-      setActiveTab("manual");
-    } catch (err) {
-      setError(`文件读取失败：${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const fieldLabels: Record<keyof SOWData, string> = {
-  projectBackground: "项目背景",
-  constructionGoal: "建设目标",
-  projectRequirements: "项目需求",
-  deliverables: "交付内容",
-  scheduleGoal: "进度目标",
-  qualityGoal: "质量目标",
-  deliveryForm: "交付形式",
-  acceptanceCriteria: "验收标准",
-  projectScope: "范围与边界",
-  teamMembers: "项目团队",
-  riskNotes: "风险备注",
-};
-
-const fieldPlaceholders: Record<keyof SOWData, string> = {
-  projectBackground: "项目背景、项目介绍、建设缘由...",
-  constructionGoal: "建设目标、预期成果、系统架构...",
-  projectRequirements: "详细功能需求、非功能需求、技术要求...",
-  deliverables: "交付物清单、可交付成果...",
-  scheduleGoal: "项目周期、里程碑时间节点...",
-  qualityGoal: "质量标准、验收指标...",
-  deliveryForm: "交付形式：本地部署/云服务/混合...",
-  acceptanceCriteria: "验收标准、通过条件...",
-  projectScope: "项目范围、边界、除外责任...",
-  teamMembers: "项目团队规模、角色分工...",
-  riskNotes: "已知风险、特殊约束、历史遗留问题...",
-};
-
-const renderField = (field: keyof SOWData) => {
-  const label = fieldLabels[field];
-  const placeholder = fieldPlaceholders[field];
-  return (
-    <div style={{ marginBottom: 16 }}>
-      <label className="label" style={{ fontSize: "0.78rem", color: "var(--text2)", fontWeight: 600, marginBottom: 6, display: "block" }}>{label}</label>
-      <textarea
-        className="input"
-        rows={field === "riskNotes" ? 2 : 3}
-        placeholder={placeholder}
-        value={sow[field]}
-        onChange={e => updateSow(field, e.target.value)}
-        style={{ resize: "vertical", fontSize: "0.85rem" }}
-      />
-    </div>
-  );
-};
-
-  return (
-    <div style={{ minHeight: "100vh", background: "var(--bg)", display: "flex", flexDirection: "column" }}>
-      {/* Header */}
-      <header style={{
-        borderBottom: "1px solid var(--border)",
-        padding: "14px 32px",
-        display: "flex",
-        alignItems: "center",
-        gap: 16,
-        background: "var(--surface)",
-      }}>
-        <Link href="/" style={{ color: "var(--text2)", textDecoration: "none", fontSize: "0.85rem" }}>← 返回首页</Link>
-        <span style={{ color: "var(--border)" }}>|</span>
-        <span style={{ fontWeight: 700 }}>🧩 AI WBS智能拆解</span>
-        <span className="tag tag-blue" style={{ fontSize: "0.7rem" }}>MiniMax</span>
-      </header>
-
-      <main style={{ flex: 1, padding: "32px", maxWidth: 1100, margin: "0 auto", width: "100%" }}>
-        {/* Input Section */}
-        <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "28px", marginBottom: 24 }}>
-          <div style={{ fontSize: "0.85rem", fontWeight: 700, color: "var(--text2)", marginBottom: 20, textTransform: "uppercase", letterSpacing: "0.1em" }}>
-            输入项目信息
-          </div>
-
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 20 }}>
-            <div>
-              <label className="label">项目类型</label>
-              <select className="input" value={projectType} onChange={e => setProjectType(e.target.value)}>
-                {PROJECT_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="label">项目名称（可选）</label>
-              <input className="input" placeholder="例如：XX智慧作业项目" value={projectName} onChange={e => setProjectName(e.target.value)} />
-            </div>
-          </div>
-
-          {/* Tab Switcher */}
-          <div style={{ display: "flex", gap: 0, marginBottom: 24, borderBottom: "1px solid var(--border)" }}>
-            <button
-              onClick={() => setActiveTab("structured")}
-              style={{
-                padding: "10px 24px",
-                background: "none",
-                border: "none",
-                borderBottom: activeTab === "structured" ? "2px solid var(--accent)" : "2px solid transparent",
-                color: activeTab === "structured" ? "var(--accent)" : "var(--text2)",
-                fontWeight: activeTab === "structured" ? 700 : 400,
-                fontSize: "0.85rem",
-                cursor: "pointer",
-                transition: "all 0.2s",
-              }}
-            >
-              📋 结构化输入
-            </button>
-            <button
-              onClick={() => setActiveTab("manual")}
-              style={{
-                padding: "10px 24px",
-                background: "none",
-                border: "none",
-                borderBottom: activeTab === "manual" ? "2px solid var(--accent)" : "2px solid transparent",
-                color: activeTab === "manual" ? "var(--accent)" : "var(--text2)",
-                fontWeight: activeTab === "manual" ? 700 : 400,
-                fontSize: "0.85rem",
-                cursor: "pointer",
-                transition: "all 0.2s",
-              }}
-            >
-              📝 自由文本输入
-            </button>
-          </div>
-
-          {/* Structured Input */}
-          {activeTab === "structured" && (
-            <div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 24px" }}>
-                {renderField("projectBackground")}
-                {renderField("constructionGoal")}
-                {renderField("projectRequirements")}
-                {renderField("deliverables")}
-                {renderField("scheduleGoal")}
-                {renderField("qualityGoal")}
-                {renderField("deliveryForm")}
-                {renderField("acceptanceCriteria")}
-                {renderField("projectScope")}
-                {renderField("teamMembers")}
-              </div>
-              {renderField("riskNotes")}
-            </div>
-          )}
-
-          {/* Manual Input */}
-          {activeTab === "manual" && (
-            <div>
-              <div style={{ marginBottom: 20 }}>
-                <label className="label">项目范围描述（SOW）</label>
-                <textarea
-                  className="input"
-                  rows={8}
-                  placeholder="请详细描述项目的交付内容、目标、关键技术要求等..."
-                  value={scope}
-                  onChange={e => setScope(e.target.value)}
-                  style={{ resize: "vertical", minHeight: 160 }}
-                />
-              </div>
-              <div style={{ marginBottom: 16 }}>
-                <label className="label">或上传SOW文件</label>
-                <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-                  <label style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 8,
-                    padding: "10px 20px",
-                    background: "var(--surface2)",
-                    border: "1px solid var(--border)",
-                    borderRadius: "var(--radius)",
-                    cursor: "pointer",
-                    fontSize: "0.85rem",
-                    color: "var(--text2)",
-                  }}>
-                    <span>📄</span>
-                    {fileName || "选择文件"}
-                    <input type="file" accept=".txt,.md,.doc,.docx,.pdf" onChange={handleFileChange} style={{ display: "none" }} />
-                  </label>
-                  {scope && fileName && <span style={{ fontSize: "0.8rem", color: "var(--green)" }}>✓ 已导入 {fileName}</span>}
-                  {scope && (
-                    <button onClick={() => { setScope(""); setFileName(""); }} style={{ background: "none", border: "none", color: "var(--text2)", cursor: "pointer", fontSize: "0.8rem" }}>清除</button>
-                  )}
-                </div>
-                <div style={{ fontSize: "0.75rem", color: "var(--text2)", marginTop: 8 }}>支持 .txt / .md / .doc / .docx / .pdf</div>
-              </div>
-            </div>
-          )}
-
-          {error && (
-            <div style={{ background: "rgba(239,68,68,0.1)", border: "1px solid var(--red)", borderRadius: 8, padding: "12px 16px", color: "var(--red)", fontSize: "0.85rem", marginBottom: 16 }}>
-              {error}
-            </div>
-          )}
-
-          <button
-            className="btn-primary"
-            onClick={handleGenerate}
-            disabled={loading}
-            style={{ opacity: loading ? 0.6 : 1 }}
-          >
-            {loading ? "🤖 AI生成中..." : "🧩 智能生成WBS"}
-          </button>
-        </div>
-
-        {/* Loading State */}
-        {loading && (
-          <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "40px", textAlign: "center", color: "var(--text2)" }}>
-            <div style={{ fontSize: "2rem", marginBottom: 12 }}>⏳</div>
-            <p>MiniMax正在分析项目范围，生成WBS结构...</p>
-            <p style={{ fontSize: "0.8rem", marginTop: 8 }}>通常需要5-15秒</p>
-          </div>
-        )}
-
-        {/* WBS Tree Preview */}
-        {wbsData.length > 0 && (
-          <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "28px", marginBottom: 24 }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
-              <div style={{ fontSize: "0.85rem", fontWeight: 700, color: "var(--text2)", textTransform: "uppercase", letterSpacing: "0.1em" }}>
-                📊 WBS 结构预览
-              </div>
-              <div style={{ display: "flex", gap: 12 }}>
-                <span className="tag tag-green">{wbsData.length}个工作包</span>
-                <span className="tag tag-blue">MiniMax-M2.7</span>
-              </div>
-            </div>
-            <div style={{ fontFamily: "system-ui, sans-serif", fontSize: "0.9rem" }}>
-              {wbsData.map((item, i) => (
-                <div key={item.id} style={{
-                  padding: "10px 12px",
-                  paddingLeft: (item.level - 1) * 32 + 12,
-                  borderBottom: "1px solid var(--border)",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 12,
-                  position: "relative",
-                  background: item.level === 1 ? "rgba(59, 130, 246, 0.05)" : item.level === 2 ? "rgba(16, 185, 129, 0.03)" : "transparent",
-                }}>
-                  {/* Tree lines */}
-                  {item.level > 1 && (
-                    <>
-                      <div style={{
-                        position: "absolute",
-                        left: (item.level - 2) * 32 + 20,
-                        top: 0,
-                        bottom: 0,
-                        width: 1,
-                        background: "var(--border)",
-                      }} />
-                    </>
-                  )}
-                  {/* Level icon */}
-                  <span style={{
-                    width: 28,
-                    height: 28,
-                    borderRadius: "50%",
-                    background: item.level === 1 ? "var(--accent)" : item.level === 2 ? "var(--green)" : "var(--text2)",
-                    color: item.level <= 2 ? "#fff" : "var(--bg)",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    fontSize: "0.7rem",
-                    fontWeight: 700,
-                    flexShrink: 0,
-                  }}>
-                    {item.level === 1 ? "📋" : item.level === 2 ? "📦" : "⚙️"}
-                  </span>
-                  {/* Level badge */}
-                  <span style={{
-                    fontSize: "0.65rem",
-                    color: "var(--text2)",
-                    background: "var(--surface2)",
-                    padding: "2px 6px",
-                    borderRadius: 4,
-                    fontFamily: "monospace",
-                    flexShrink: 0,
-                  }}>
-                    L{item.level}
-                  </span>
-                  {/* Item name */}
-                  <span style={{
-                    color: item.level === 1 ? "var(--text)" : "var(--text2)",
-                    fontWeight: item.level === 1 ? 600 : item.level === 2 ? 500 : 400,
-                    flex: 1,
-                  }}>
-                    {item.name}
-                  </span>
-                  {/* Duration badge */}
-                  <span style={{
-                    fontSize: "0.75rem",
-                    color: "var(--green)",
-                    background: "rgba(16, 185, 129, 0.1)",
-                    padding: "4px 10px",
-                    borderRadius: 12,
-                    fontWeight: 600,
-                    flexShrink: 0,
-                  }}>
-                    ⏱ {item.duration}天
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Full Result */}
-        {result && (
-          <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius)", padding: "28px" }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-              <div style={{ fontSize: "0.85rem", fontWeight: 700, color: "var(--text2)", textTransform: "uppercase", letterSpacing: "0.1em" }}>
-                完整WBS输出
-              </div>
-              <button className="btn-secondary" onClick={() => navigator.clipboard.writeText(result)} style={{ fontSize: "0.8rem", padding: "6px 14px" }}>
-                复制内容
-              </button>
-            </div>
-            <div className="prose" dangerouslySetInnerHTML={{
-              __html: result.replace(/\n/g, "<br/>").replace(/^\d+\.\d+/gm, "<strong>$&</strong>")
-            }} />
-          </div>
-        )}
-      </main>
-    </div>
-  );
+function ActualRow({ item, actual, busy, onSave }: { item: WbsItem; actual?: DeliveryActual; busy: boolean; onSave: (patch: Partial<DeliveryActual>) => void }) {
+  const [draft, setDraft] = useState<Partial<DeliveryActual>>({ status: actual?.status || "pending", percent_complete: actual?.percent_complete || 0, actual_cost: actual?.actual_cost || 0, actual_start: actual?.actual_start || null, actual_end: actual?.actual_end || null });
+  return <tr><td style={{ padding: 8 }}>{item.item_code} {item.name}</td><td><select className="input" value={draft.status} onChange={(e) => setDraft((value) => ({ ...value, status: e.target.value }))}><option value="pending">未开始</option><option value="in_progress">进行中</option><option value="completed">已完成</option><option value="blocked">阻塞</option><option value="cancelled">已取消</option></select></td><td><input className="input" type="number" min={0} max={100} value={draft.percent_complete} onChange={(e) => setDraft((value) => ({ ...value, percent_complete: Number(e.target.value) }))} /></td><td><input className="input" type="number" min={0} value={draft.actual_cost} onChange={(e) => setDraft((value) => ({ ...value, actual_cost: Number(e.target.value) }))} /></td><td><input className="input" type="date" value={draft.actual_start || ""} onChange={(e) => setDraft((value) => ({ ...value, actual_start: e.target.value || null }))} /></td><td><input className="input" type="date" value={draft.actual_end || ""} onChange={(e) => setDraft((value) => ({ ...value, actual_end: e.target.value || null }))} /></td><td><button className="btn btn-primary" disabled={busy} onClick={() => onSave(draft)}>{busy ? "保存中…" : "保存实绩"}</button></td></tr>;
 }

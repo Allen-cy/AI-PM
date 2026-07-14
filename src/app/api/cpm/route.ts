@@ -1,197 +1,173 @@
-// CPM API Route - deterministic CPM first, AI explanation second
+import { createHash } from "node:crypto";
 
-import { NextRequest, NextResponse } from "next/server";
+import { parseDeliveryWriteContract } from "@/features/delivery-control/contracts";
+import {
+  deliveryErrorMessage,
+  deliveryErrorStatus,
+  deliveryJson,
+  deliverySource,
+  deliverySuccess,
+  deliverySupabase,
+  resolveDeliveryProject,
+} from "@/features/delivery-control/server";
 import { calculateCPM, type Task } from "@/lib/cpm";
 import { llmComplete } from "@/lib/llm";
 
-interface CPMRequest {
-  tasks: Task[];
-}
+export const runtime = "nodejs";
 
-interface CPMResponse {
-  tasks: Array<Task & {
-    es: number;
-    ef: number;
-    ls: number;
-    lf: number;
-    totalFloat: number;
-    isCritical: boolean;
-  }>;
-  criticalPath: string[];
-  projectDuration: number;
-  reasoning: string;
-  aiStatus: "succeeded" | "fallback";
-  aiWarning?: string;
-}
+type StoredWbsItem = {
+  id: string;
+  item_code: string;
+  name: string;
+  duration_days: number | string;
+  predecessors: unknown;
+};
 
-function responseTasks(result: ReturnType<typeof calculateCPM>): CPMResponse["tasks"] {
-  return result.tasks.map(task => ({
-    ...task,
-    es: task.es ?? 0,
-    ef: task.ef ?? task.duration,
-    ls: task.ls ?? 0,
-    lf: task.lf ?? task.duration,
-    totalFloat: task.totalFloat ?? 0,
-    isCritical: task.isCritical ?? false,
-  }));
-}
-
-const CPM_SYSTEM_PROMPT = `你是一位资深项目管理专家，精通关键路径法（CPM，Critical Path Method）。
-
-请根据输入的任务列表，使用CPM算法计算关键路径。
-
-## CPM计算规则：
-
-### 前向传递（Forward Pass）：
-- 最早开始时间（ES）= 所有紧前任务最早完成时间（EF）的最大值
-- 最早完成时间（EF）= ES + 工期
-
-### 后向传递（Backward Pass）：
-- 最晚完成时间（LF）= 所有紧后任务最晚开始时间（LS）的最小值
-- 最晚开始时间（LS）= LF - 工期
-- 总浮动（TF）= LS - ES（或 LF - EF）
-
-### 关键路径判定：
-- 总浮动为0的任务即为关键任务
-- 关键路径是所有关键任务按顺序排列形成的最长路径
-
-请基于系统已经计算出的 CPM 结果，用中文解释：
-1. 项目总工期；
-2. 关键路径任务顺序；
-3. 前向传递和后向传递的关键结论；
-4. 哪些任务有浮动时间，以及这些浮动时间如何用于项目调度。
-
-只返回解释文字，不要返回 JSON。`;
-
-function normalizeTasks(rawTasks: Task[]): Task[] {
-  return rawTasks.map((task, index) => ({
-    id: String(task.id || `T${index + 1}`).trim(),
-    name: String(task.name || task.id || `任务${index + 1}`).trim(),
-    duration: Math.max(0, Number(task.duration) || 0),
-    predecessors: Array.isArray(task.predecessors)
-      ? task.predecessors.map(item => String(item).trim()).filter(Boolean)
+function tasksFromWbs(items: StoredWbsItem[]): Task[] {
+  const tasks = items.map((item) => ({
+    id: String(item.item_code).trim(),
+    name: String(item.name).trim(),
+    duration: Number(item.duration_days),
+    predecessors: Array.isArray(item.predecessors)
+      ? item.predecessors.map((value) => String(value).trim()).filter(Boolean)
       : [],
   }));
-}
-
-function validateTasks(tasks: Task[]): string | null {
+  if (tasks.length === 0) throw new Error("PERSISTED_WBS_ITEMS_REQUIRED");
   const ids = new Set<string>();
   for (const task of tasks) {
-    if (!task.id) return "任务ID不能为空";
-    if (ids.has(task.id)) return `任务ID重复：${task.id}`;
+    if (!task.id || ids.has(task.id) || !Number.isFinite(task.duration) || task.duration <= 0) throw new Error("WBS_TASK_INPUT_INVALID");
     ids.add(task.id);
-    if (task.duration <= 0) return `任务 ${task.id} 的工期必须大于0`;
   }
   for (const task of tasks) {
-    for (const predecessor of task.predecessors) {
-      if (!ids.has(predecessor)) return `任务 ${task.id} 的前置任务不存在：${predecessor}`;
-      if (predecessor === task.id) return `任务 ${task.id} 不能依赖自身`;
+    if (task.predecessors.some((predecessor) => !ids.has(predecessor) || predecessor === task.id)) {
+      throw new Error("WBS_PREDECESSOR_INVALID");
     }
   }
-
-  const inDegree = new Map(tasks.map(task => [task.id, task.predecessors.length]));
-  const successors = new Map(tasks.map(task => [task.id, [] as string[]]));
-  for (const task of tasks) {
-    for (const predecessor of task.predecessors) {
-      successors.get(predecessor)?.push(task.id);
-    }
-  }
-  const queue = tasks.filter(task => task.predecessors.length === 0).map(task => task.id);
+  const inDegree = new Map(tasks.map((task) => [task.id, task.predecessors.length]));
+  const successors = new Map(tasks.map((task) => [task.id, [] as string[]]));
+  tasks.forEach((task) => task.predecessors.forEach((predecessor) => successors.get(predecessor)?.push(task.id)));
+  const queue = tasks.filter((task) => task.predecessors.length === 0).map((task) => task.id);
   let visited = 0;
-  while (queue.length > 0) {
-    const id = queue.shift()!;
+  while (queue.length) {
+    const current = queue.shift()!;
     visited += 1;
-    for (const successor of successors.get(id) ?? []) {
-      const nextDegree = (inDegree.get(successor) ?? 0) - 1;
-      inDegree.set(successor, nextDegree);
-      if (nextDegree === 0) queue.push(successor);
+    for (const successor of successors.get(current) ?? []) {
+      const degree = (inDegree.get(successor) ?? 0) - 1;
+      inDegree.set(successor, degree);
+      if (degree === 0) queue.push(successor);
     }
   }
-  return visited === tasks.length ? null : "任务依赖存在循环，无法计算关键路径";
+  if (visited !== tasks.length) throw new Error("WBS_DEPENDENCY_CYCLE");
+  return tasks;
 }
 
-function buildFallbackReasoning(result: ReturnType<typeof calculateCPM>): string {
-  const criticalNames = result.criticalPath
-    .map(id => result.tasks.find(task => task.id === id))
-    .filter(Boolean)
-    .map(task => `${task!.id} ${task!.name}`)
-    .join(" → ");
-  const floatTasks = result.tasks
-    .filter(task => !task.isCritical)
-    .map(task => `${task.id}(${task.totalFloat ?? 0}天)`)
-    .join("、") || "无";
-  return [
-    `本次使用本地 CPM 算法完成计算，项目总工期为 ${result.projectDuration} 天。`,
-    `关键路径为：${criticalNames || "未识别到关键路径"}。关键路径上的任务总浮动为 0，任何延期都会直接推迟项目总工期。`,
-    `非关键任务浮动时间：${floatTasks}。这些任务可在不影响总工期的前提下做资源平衡，但不能超过对应总浮动。`,
-  ].join("\n");
+function normalizedResult(result: ReturnType<typeof calculateCPM>) {
+  return {
+    tasks: result.tasks.map((task) => ({
+      ...task,
+      es: task.es ?? 0,
+      ef: task.ef ?? task.duration,
+      ls: task.ls ?? 0,
+      lf: task.lf ?? task.duration,
+      totalFloat: task.totalFloat ?? 0,
+      isCritical: Boolean(task.isCritical),
+    })),
+    criticalPath: result.criticalPath,
+    projectDuration: result.projectDuration,
+    criticalDuration: result.criticalDuration,
+  };
 }
 
-export async function POST(request: NextRequest) {
+async function loadSchedule(projectId: string, dataClass: string) {
+  const supabase = deliverySupabase();
+  const [wbs, snapshots] = await Promise.all([
+    supabase.from("project_wbs_versions").select("*").eq("project_id", projectId).eq("data_class", dataClass).neq("status", "superseded").order("revision_no", { ascending: false }).limit(1).maybeSingle(),
+    supabase.from("project_schedule_snapshots").select("*").eq("project_id", projectId).eq("data_class", dataClass).order("calculation_version", { ascending: false }).limit(20),
+  ]);
+  if (wbs.error || snapshots.error) throw wbs.error || snapshots.error;
+  const items = wbs.data
+    ? await supabase.from("project_wbs_items").select("id,item_code,name,duration_days,predecessors,planned_start,planned_end").eq("wbs_version_id", wbs.data.id).order("item_code")
+    : { data: [], error: null };
+  if (items.error) throw items.error;
+  return { wbs: wbs.data ?? null, items: items.data ?? [], snapshots: snapshots.data ?? [], latest: snapshots.data?.[0] ?? null };
+}
+
+export async function GET(request: Request) {
+  const requestId = crypto.randomUUID();
+  const resolved = await resolveDeliveryProject(request);
+  if (!resolved.ok) return deliveryJson({ ...resolved, request_id: requestId }, resolved.status, requestId);
   try {
-    const body: CPMRequest = await request.json();
-    const tasks = normalizeTasks(body.tasks ?? []);
-
-    if (!tasks || !Array.isArray(tasks) || tasks.length === 0) {
-      return NextResponse.json(
-        { error: "需要提供任务列表（tasks数组）" },
-        { status: 400 }
-      );
-    }
-
-    const validationError = validateTasks(tasks);
-    if (validationError) {
-      return NextResponse.json({ error: validationError }, { status: 400 });
-    }
-
-    const deterministicResult = calculateCPM(tasks);
-    let reasoning = buildFallbackReasoning(deterministicResult);
-    let aiStatus: CPMResponse["aiStatus"] = "fallback";
-    let aiWarning: string | undefined = "AI解释未生成，已使用本地CPM算法结果。";
-
-    const taskListStr = deterministicResult.tasks
-      .map(t => `- ${t.id}: ${t.name}，工期=${t.duration}天，前置任务=[${t.predecessors.join(", ") || "无"}]，ES=${t.es}，EF=${t.ef}，LS=${t.ls}，LF=${t.lf}，TF=${t.totalFloat}，关键任务=${t.isCritical ? "是" : "否"}`)
-      .join("\n");
-
-    const userMessage = `以下是系统已完成的 CPM 计算结果，请生成面向项目经理的解释：
-
-${taskListStr}
-
-关键路径：${deterministicResult.criticalPath.join(" → ")}
-项目总工期：${deterministicResult.projectDuration}天`;
-
-    try {
-      const response = await llmComplete(
-        "cpm",
-        CPM_SYSTEM_PROMPT,
-        userMessage,
-        { temperature: 0.1 }
-      );
-      const content = response.content.trim();
-      if (content) {
-        reasoning = content;
-        aiStatus = "succeeded";
-        aiWarning = undefined;
-      }
-    } catch (aiError) {
-      console.error("[CPM API] AI explanation failed:", aiError);
-    }
-
-    return NextResponse.json({
-      tasks: responseTasks(deterministicResult),
-      criticalPath: deterministicResult.criticalPath,
-      projectDuration: deterministicResult.projectDuration,
-      reasoning,
-      aiStatus,
-      aiWarning,
-    } satisfies CPMResponse);
+    const data = await loadSchedule(resolved.projectId, resolved.dataClass);
+    return deliverySuccess(resolved, requestId, data, { updatedAt: data.latest?.created_at ?? data.wbs?.updated_at ?? null });
   } catch (error) {
-    console.error("[CPM API] Error:", error);
-    return NextResponse.json(
-      {
-        error: error instanceof Error ? error.message : "CPM计算失败",
-      },
-      { status: 500 }
-    );
+    const detail = deliveryErrorMessage(error);
+    const missing = /project_(wbs|schedule)|relation|does not exist/i.test(detail);
+    return deliveryJson({
+      error: missing ? "V631_DELIVERY_STORAGE_NOT_READY" : "CPM_DATA_LOAD_FAILED",
+      detail: missing ? "请先应用V6.3.1交付控制迁移。" : detail,
+      request_id: requestId,
+      source: deliverySource(resolved.dataClass),
+    }, 503, requestId);
+  }
+}
+
+export async function POST(request: Request) {
+  const requestId = crypto.randomUUID();
+  let body: Record<string, unknown>;
+  try {
+    body = await request.json() as Record<string, unknown>;
+  } catch {
+    return deliveryJson({ error: "INVALID_JSON", request_id: requestId }, 400, requestId);
+  }
+  const resolved = await resolveDeliveryProject(request, body);
+  if (!resolved.ok) return deliveryJson({ ...resolved, request_id: requestId }, resolved.status, requestId);
+  if (String(body.operation ?? "calculate") !== "calculate") return deliveryJson({ error: "CPM_OPERATION_INVALID", request_id: requestId }, 400, requestId);
+
+  let contract;
+  try {
+    contract = parseDeliveryWriteContract(body);
+  } catch (error) {
+    return deliveryJson({ error: "WRITE_CONTRACT_INVALID", detail: deliveryErrorMessage(error), request_id: requestId }, 400, requestId);
+  }
+  if (contract.projectId !== resolved.projectId || contract.businessRole !== resolved.businessRole || contract.dataClass !== resolved.dataClass) {
+    return deliveryJson({ error: "WRITE_CONTEXT_MISMATCH", request_id: requestId }, 409, requestId);
+  }
+
+  const supabase = deliverySupabase();
+  try {
+    const stored = await loadSchedule(resolved.projectId, resolved.dataClass);
+    if (!stored.wbs) throw new Error("PERSISTED_WBS_REQUIRED");
+    if (stored.wbs.version !== contract.expectedVersion) throw new Error("VERSION_CONFLICT");
+    const tasks = tasksFromWbs(stored.items as StoredWbsItem[]);
+    const deterministic = normalizedResult(calculateCPM(tasks));
+    const inputHash = createHash("sha256").update(JSON.stringify({ wbs: stored.wbs.id, version: stored.wbs.version, tasks })).digest("hex");
+    let reasoning = `项目总工期为${deterministic.projectDuration}天；关键路径为${deterministic.criticalPath.join(" → ") || "无"}。关键任务总浮动为0，非关键任务可在各自总浮动范围内进行资源平衡。`;
+    let model: string | null = null;
+    const warnings: string[] = [];
+    try {
+      const ai = await llmComplete("cpm", "你是项目进度分析助手。只能解释系统给出的确定性CPM计算结果，不得修改工期、关键路径或浮动时间。用中文输出简洁的调度建议。", JSON.stringify(deterministic), { temperature: 0.1 });
+      if (ai.content.trim()) reasoning = ai.content.trim();
+      model = ai.model;
+    } catch {
+      warnings.push("AI解释未生成，CPM确定性计算结果不受影响。");
+    }
+    const payload = { ...deterministic, reasoning, model, inputHash, wbsVersionId: stored.wbs.id, wbsRevision: stored.wbs.revision_no };
+    const saved = await supabase.rpc("save_project_schedule_snapshot_tx", {
+      p_org_id: resolved.orgId,
+      p_project_id: resolved.projectId,
+      p_data_class: resolved.dataClass,
+      p_business_role: resolved.businessRole,
+      p_actor_user_id: resolved.user.id,
+      p_idempotency_key: contract.idempotencyKey,
+      p_expected_version: contract.expectedVersion,
+      p_wbs_version_id: stored.wbs.id,
+      p_input_hash: inputHash,
+      p_result: payload,
+    });
+    if (saved.error) throw saved.error;
+    return deliverySuccess(resolved, requestId, { snapshot: saved.data, result: payload, wbs: stored.wbs }, { warnings });
+  } catch (error) {
+    const detail = deliveryErrorMessage(error);
+    return deliveryJson({ error: "CPM_CALCULATION_FAILED", detail, request_id: requestId }, deliveryErrorStatus(detail), requestId);
   }
 }

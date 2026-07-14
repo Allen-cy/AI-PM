@@ -1,167 +1,181 @@
-// EVM API Route - AI-enhanced Earned Value Management analysis
+import { createHash } from "node:crypto";
 
-import { NextRequest, NextResponse } from "next/server";
+import { parseDeliveryWriteContract } from "@/features/delivery-control/contracts";
+import { calculateGovernedEvm, type GovernedEvmPeriod } from "@/features/delivery-control/evm";
+import {
+  deliveryErrorMessage,
+  deliveryErrorStatus,
+  deliveryJson,
+  deliverySource,
+  deliverySuccess,
+  deliverySupabase,
+  resolveDeliveryProject,
+} from "@/features/delivery-control/server";
 import { llmComplete } from "@/lib/llm";
 
-interface EVMTaskInput {
+export const runtime = "nodejs";
+
+type WbsValueItem = {
+  id: string;
+  item_code: string;
+  name: string;
+  planned_value: number | string;
+  planned_start: string | null;
+  planned_end: string | null;
+};
+
+type DeliveryActual = {
+  wbs_item_id: string;
+  percent_complete: number | string;
+};
+
+type CostRecord = {
   period: string;
-  plannedValue: number;   // PV
-  actualCost: number;     // AC
-  completionPercent: number; // 0-100
+  actual_cost: number | string;
+  source_updated_at?: string | null;
+};
+
+function monthKey(value: string | null | undefined) {
+  const normalized = String(value ?? "").trim();
+  const match = normalized.match(/^(\d{4})[-/]?(\d{2})/);
+  return match ? `${match[1]}-${match[2]}` : "未排期";
 }
 
-interface EVMRequest {
-  projectName: string;
-  tasks: EVMTaskInput[];
-  budgetAtCompletion: number;
+function buildPeriods(items: WbsValueItem[], actuals: DeliveryActual[], costs: CostRecord[]): GovernedEvmPeriod[] {
+  if (items.length === 0) throw new Error("APPROVED_WBS_ITEMS_REQUIRED");
+  if (actuals.length === 0) throw new Error("DELIVERY_ACTUALS_REQUIRED");
+  if (costs.length === 0 || costs.every((cost) => Number(cost.actual_cost) <= 0)) throw new Error("REAL_COST_RECORDS_REQUIRED");
+
+  const actualByItem = new Map(actuals.map((actual) => [actual.wbs_item_id, Number(actual.percent_complete) || 0]));
+  const periods = new Map<string, GovernedEvmPeriod>();
+  const ensure = (period: string) => {
+    const current = periods.get(period) ?? { period, plannedValue: 0, earnedValue: 0, actualCost: 0 };
+    periods.set(period, current);
+    return current;
+  };
+  for (const item of items) {
+    const period = monthKey(item.planned_end || item.planned_start);
+    const planned = Number(item.planned_value) || 0;
+    const completion = Math.min(100, Math.max(0, actualByItem.get(item.id) ?? 0));
+    const row = ensure(period);
+    row.plannedValue += planned;
+    row.earnedValue += planned * completion / 100;
+  }
+  for (const cost of costs) ensure(monthKey(cost.period)).actualCost += Number(cost.actual_cost) || 0;
+  return [...periods.values()]
+    .filter((period) => period.plannedValue > 0 || period.earnedValue > 0 || period.actualCost > 0)
+    .sort((a, b) => a.period.localeCompare(b.period));
 }
 
-interface EVMResponse {
-  ev: number;
-  pv: number;
-  ac: number;
-  cv: number;
-  sv: number;
-  spi: number;
-  cpi: number;
-  eac: number;
-  etc: number;
-  aiReasoning: string;
+async function loadEvm(projectId: string, dataClass: string) {
+  const supabase = deliverySupabase();
+  const [baseline, wbs, costs, snapshots] = await Promise.all([
+    supabase.from("project_plan_baselines").select("*").eq("project_id", projectId).eq("data_class", dataClass).eq("baseline_type", "cost").eq("status", "approved").order("approved_at", { ascending: false }).limit(1).maybeSingle(),
+    supabase.from("project_wbs_versions").select("*").eq("project_id", projectId).eq("data_class", dataClass).eq("status", "approved").order("revision_no", { ascending: false }).limit(1).maybeSingle(),
+    supabase.from("cost_records").select("id,period,planned_value,actual_cost,earned_value,source_system,source_updated_at,updated_at").eq("project_id", projectId).eq("data_class", dataClass).eq("is_source_deleted", false).order("period"),
+    supabase.from("project_evm_snapshots").select("*").eq("project_id", projectId).eq("data_class", dataClass).order("snapshot_version", { ascending: false }).limit(20),
+  ]);
+  const error = baseline.error || wbs.error || costs.error || snapshots.error;
+  if (error) throw error;
+  const [items, actuals] = wbs.data
+    ? await Promise.all([
+      supabase.from("project_wbs_items").select("id,item_code,name,planned_value,planned_start,planned_end").eq("wbs_version_id", wbs.data.id).order("item_code"),
+      supabase.from("project_delivery_actuals").select("id,wbs_item_id,percent_complete,status,actual_cost,updated_at").eq("wbs_version_id", wbs.data.id).order("updated_at", { ascending: false }),
+    ])
+    : [{ data: [], error: null }, { data: [], error: null }];
+  if (items.error || actuals.error) throw items.error || actuals.error;
+  return {
+    baseline: baseline.data ?? null,
+    wbs: wbs.data ?? null,
+    items: items.data ?? [],
+    actuals: actuals.data ?? [],
+    costs: costs.data ?? [],
+    snapshots: snapshots.data ?? [],
+    latest: snapshots.data?.[0] ?? null,
+  };
 }
 
-const EVM_SYSTEM_PROMPT = `你是资深项目管理专家，精通挣值管理（EVM, Earned Value Management）。
-
-## EVM核心公式：
-- EV（挣值）= Σ(PV_i × 完成百分比_i) — 每个时期的计划价值乘以完成百分比之和
-- PV = Σ各时期计划价值之和
-- AC = Σ各时期实际成本之和
-- SV（进度偏差）= EV - PV
-- CV（成本偏差）= EV - AC
-- SPI（进度绩效指数）= EV / PV
-- CPI（成本绩效指数）= EV / AC
-- EAC（完工估算）= BAC / CPI
-- ETC（完工尚需）= EAC - AC
-
-## 分析维度：
-1. 进度状态：SPI > 1 超前，SPI = 1 正常，SPI < 1 落后
-2. 成本状态：CPI > 1 节约， CPI = 1 正常， CPI < 1 超支
-3. 完工预测：EAC与BAC的偏差分析
-4. 风险识别：进度和成本双重风险
-
-## 输出要求：
-返回JSON格式：
-{
-  "ev": 挣值总数（万元）,
-  "pv": 计划价值总数（万元）,
-  "ac": 实际成本总数（万元）,
-  "sv": 进度偏差（万元）,
-  "cv": 成本偏差（万元）,
-  "spi": 进度绩效指数（小数）,
-  "cpi": 成本绩效指数（小数）,
-  "eac": 完工估算（万元）,
-  "etc": 完工尚需估算（万元）,
-  "aiReasoning": "详细的中文推理分析，说明项目当前状态、偏差原因、风险点和预测"
-}`;
-
-export async function POST(request: NextRequest) {
+export async function GET(request: Request) {
+  const requestId = crypto.randomUUID();
+  const resolved = await resolveDeliveryProject(request);
+  if (!resolved.ok) return deliveryJson({ ...resolved, request_id: requestId }, resolved.status, requestId);
   try {
-    const body: EVMRequest = await request.json();
-    const { projectName, tasks, budgetAtCompletion } = body;
-
-    if (!tasks || !Array.isArray(tasks) || tasks.length === 0) {
-      return NextResponse.json(
-        { error: "需要提供任务数据（tasks数组）" },
-        { status: 400 }
-      );
-    }
-
-    // Calculate EV = sum of (PV_i × completion_i)
-    const totalPV = tasks.reduce((sum, t) => sum + t.plannedValue, 0);
-    const totalAC = tasks.reduce((sum, t) => sum + t.actualCost, 0);
-    const totalEV = tasks.reduce((sum, t) => sum + (t.plannedValue * t.completionPercent / 100), 0);
-
-    const sv = totalEV - totalPV;
-    const cv = totalEV - totalAC;
-    const spi = totalPV > 0 ? totalEV / totalPV : 0;
-    const cpi = totalAC > 0 ? totalEV / totalAC : 0;
-    const eac = cpi > 0 ? budgetAtCompletion / cpi : budgetAtCompletion;
-    const etc = eac - totalAC;
-
-    // Build task data string for LLM
-    const taskDataStr = tasks
-      .map(t => `- ${t.period}: PV=${t.plannedValue}万, AC=${t.actualCost}万, 完成率=${t.completionPercent}% → EV=${(t.plannedValue * t.completionPercent / 100).toFixed(1)}万`)
-      .join("\n");
-
-    const userMessage = `项目名称：${projectName}
-BAC（完工预算）：${budgetAtCompletion}万元
-
-各时期数据：
-${taskDataStr}
-
-计算结果：
-- ΣPV = ${totalPV}万
-- ΣAC = ${totalAC}万
-- ΣEV = ${totalEV.toFixed(1)}万
-
-请进行EVM分析，输出JSON格式的完整结果。`;
-
-    // Call llmComplete with scene="evm"
-    const response = await llmComplete(
-      "evm",
-      EVM_SYSTEM_PROMPT,
-      userMessage,
-      { temperature: 0.1 }
-    );
-
-    // Parse JSON from response
-    let evmResult: EVMResponse;
-    try {
-      const content = response.content.trim();
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        evmResult = JSON.parse(jsonMatch[0]);
-      } else {
-        throw new Error("无法解析LLM返回的JSON结果");
-      }
-    } catch (parseError) {
-      console.error("[EVM API] Parse error:", parseError);
-      return NextResponse.json(
-        {
-          error: "LLM返回格式错误",
-          rawResponse: response.content,
-          // Fallback to calculated values
-          ev: totalEV,
-          pv: totalPV,
-          ac: totalAC,
-          cv,
-          sv,
-          spi,
-          cpi,
-          eac,
-          etc,
-          aiReasoning: "AI解析失败，使用本地计算结果。",
-        },
-        { status: 200 }
-      );
-    }
-
-    // Ensure we have the calculated values
-    evmResult.ev = totalEV;
-    evmResult.pv = totalPV;
-    evmResult.ac = totalAC;
-    evmResult.cv = cv;
-    evmResult.sv = sv;
-    evmResult.spi = spi;
-    evmResult.cpi = cpi;
-    evmResult.eac = eac;
-    evmResult.etc = etc;
-
-    return NextResponse.json(evmResult);
+    const data = await loadEvm(resolved.projectId, resolved.dataClass);
+    return deliverySuccess(resolved, requestId, data, { updatedAt: data.latest?.created_at ?? data.costs.at(-1)?.updated_at ?? null });
   } catch (error) {
-    console.error("[EVM API] Error:", error);
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "EVM计算失败" },
-      { status: 500 }
-    );
+    const detail = deliveryErrorMessage(error);
+    const missing = /project_(wbs|evm|plan_baselines)|relation|does not exist/i.test(detail);
+    return deliveryJson({
+      error: missing ? "V631_DELIVERY_STORAGE_NOT_READY" : "EVM_DATA_LOAD_FAILED",
+      detail: missing ? "请先应用V6.3.1交付控制迁移。" : detail,
+      request_id: requestId,
+      source: deliverySource(resolved.dataClass),
+    }, 503, requestId);
+  }
+}
+
+export async function POST(request: Request) {
+  const requestId = crypto.randomUUID();
+  let body: Record<string, unknown>;
+  try {
+    body = await request.json() as Record<string, unknown>;
+  } catch {
+    return deliveryJson({ error: "INVALID_JSON", request_id: requestId }, 400, requestId);
+  }
+  const resolved = await resolveDeliveryProject(request, body);
+  if (!resolved.ok) return deliveryJson({ ...resolved, request_id: requestId }, resolved.status, requestId);
+  if (String(body.operation ?? "calculate") !== "calculate") return deliveryJson({ error: "EVM_OPERATION_INVALID", request_id: requestId }, 400, requestId);
+
+  let contract;
+  try {
+    contract = parseDeliveryWriteContract(body);
+  } catch (error) {
+    return deliveryJson({ error: "WRITE_CONTRACT_INVALID", detail: deliveryErrorMessage(error), request_id: requestId }, 400, requestId);
+  }
+  if (contract.projectId !== resolved.projectId || contract.businessRole !== resolved.businessRole || contract.dataClass !== resolved.dataClass) {
+    return deliveryJson({ error: "WRITE_CONTEXT_MISMATCH", request_id: requestId }, 409, requestId);
+  }
+
+  const supabase = deliverySupabase();
+  try {
+    const stored = await loadEvm(resolved.projectId, resolved.dataClass);
+    if (!stored.baseline || Number(stored.baseline.baseline_value) <= 0) throw new Error("APPROVED_COST_BASELINE_REQUIRED");
+    if (!stored.wbs) throw new Error("APPROVED_WBS_REQUIRED");
+    if (stored.wbs.version !== contract.expectedVersion) throw new Error("VERSION_CONFLICT");
+    const periods = buildPeriods(stored.items as WbsValueItem[], stored.actuals as DeliveryActual[], stored.costs as CostRecord[]);
+    const metrics = calculateGovernedEvm({ budgetAtCompletion: Number(stored.baseline.baseline_value), periods });
+    const asOfDate = String(body.as_of_date ?? new Date().toISOString().slice(0, 10));
+    const inputHash = createHash("sha256").update(JSON.stringify({ baseline: stored.baseline.id, wbs: stored.wbs.id, periods, asOfDate })).digest("hex");
+    let analysis = `截至${asOfDate}，SPI为${metrics.spi}，CPI为${metrics.cpi}，预计完工成本EAC为${metrics.eac}。`;
+    let model: string | null = null;
+    const warnings: string[] = [];
+    try {
+      const ai = await llmComplete("evm", "你是项目绩效分析助手。只能解释系统根据已批准成本基准、WBS实绩和成本台账确定性计算的EVM指标，不得修改任何数值。请说明偏差、风险和需人工确认的纠偏动作。", JSON.stringify({ metrics, periods }), { temperature: 0.1 });
+      if (ai.content.trim()) analysis = ai.content.trim();
+      model = ai.model;
+    } catch {
+      warnings.push("AI分析未生成，EVM确定性计算结果不受影响。");
+    }
+    const result = { ...metrics, periods, analysis, model, inputHash };
+    const saved = await supabase.rpc("save_project_evm_snapshot_tx", {
+      p_org_id: resolved.orgId,
+      p_project_id: resolved.projectId,
+      p_data_class: resolved.dataClass,
+      p_business_role: resolved.businessRole,
+      p_actor_user_id: resolved.user.id,
+      p_idempotency_key: contract.idempotencyKey,
+      p_expected_version: contract.expectedVersion,
+      p_wbs_version_id: stored.wbs.id,
+      p_cost_baseline_id: stored.baseline.id,
+      p_as_of_date: asOfDate,
+      p_input_hash: inputHash,
+      p_periods: periods,
+      p_result: result,
+    });
+    if (saved.error) throw saved.error;
+    return deliverySuccess(resolved, requestId, { snapshot: saved.data, result, baseline: stored.baseline, wbs: stored.wbs }, { warnings });
+  } catch (error) {
+    const detail = deliveryErrorMessage(error);
+    return deliveryJson({ error: "EVM_CALCULATION_FAILED", detail, request_id: requestId }, deliveryErrorStatus(detail), requestId);
   }
 }

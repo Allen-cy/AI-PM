@@ -1,105 +1,158 @@
-// AI Resource Optimization API
-import { NextRequest, NextResponse } from "next/server";
+import { parseDeliveryWriteContract } from "@/features/delivery-control/contracts";
+import {
+  deliveryErrorMessage,
+  deliveryErrorStatus,
+  deliveryJson,
+  deliverySource,
+  deliverySuccess,
+  deliverySupabase,
+  resolveDeliveryProject,
+} from "@/features/delivery-control/server";
 import { llmComplete } from "@/lib/llm";
-import { TeamMember, Allocation } from "@/lib/resource";
 
-const SYSTEM_PROMPT = `你是资源管理专家，精通人员配置和项目资源优化。
-根据团队成员分配情况和项目需求，提供资源优化建议。
-规则：
-1. 识别超负荷成员（>100%）和低利用率成员（<60%）
-2. 识别项目资源冲突（同一成员同时分配到多个高负荷项目）
-3. 提供具体的调整建议，包括项目转移、工期调整、人员增减
-4. 输出JSON格式，包含优化后的分配方案和建议列表`;
+export const runtime = "nodejs";
 
-export async function POST(request: NextRequest) {
+function arrayOfRecords(value: unknown, label: string) {
+  if (!Array.isArray(value)) throw new Error(`${label}必须为结构化数组。`);
+  return value.map((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error(`${label}包含不合法记录。`);
+    return item as Record<string, unknown>;
+  });
+}
+
+function requiredText(value: unknown, label: string, maximum = 240) {
+  const result = String(value ?? "").trim();
+  if (!result || result.length > maximum) throw new Error(`${label}为必填项，且不得超过${maximum}字符。`);
+  return result;
+}
+
+async function loadResources(orgId: string, projectId: string, dataClass: string) {
+  const supabase = deliverySupabase();
+  const [plan, wbs, roles] = await Promise.all([
+    supabase.from("project_resource_plans").select("*").eq("project_id", projectId).eq("data_class", dataClass).maybeSingle(),
+    supabase.from("project_wbs_versions").select("id,revision_no,title,status,version,updated_at").eq("project_id", projectId).eq("data_class", dataClass).neq("status", "superseded").order("revision_no", { ascending: false }).limit(1).maybeSingle(),
+    supabase.from("user_business_roles").select("user_id,business_role,subject_scope,subject_id,status,valid_until").eq("org_id", orgId).eq("status", "active").or(`subject_id.eq.${projectId},subject_scope.eq.organization`),
+  ]);
+  const error = plan.error || wbs.error || roles.error;
+  if (error) throw error;
+  const [periods, assignments, conflicts, items] = await Promise.all([
+    plan.data ? supabase.from("project_resource_capacity_periods").select("*").eq("resource_plan_id", plan.data.id).order("period_start") : Promise.resolve({ data: [], error: null }),
+    plan.data ? supabase.from("project_resource_assignments").select("*").eq("resource_plan_id", plan.data.id).order("created_at") : Promise.resolve({ data: [], error: null }),
+    plan.data ? supabase.from("project_resource_conflict_actions").select("*").eq("resource_plan_id", plan.data.id).order("due_at") : Promise.resolve({ data: [], error: null }),
+    wbs.data ? supabase.from("project_wbs_items").select("id,item_code,name,assignee_user_id,assignee_name").eq("wbs_version_id", wbs.data.id).order("item_code") : Promise.resolve({ data: [], error: null }),
+  ]);
+  const childError = periods.error || assignments.error || conflicts.error || items.error;
+  if (childError) throw childError;
+  const userIds = [...new Set((roles.data ?? []).map((role) => role.user_id))];
+  const users = userIds.length
+    ? await supabase.from("app_users").select("id,name,email,phone,status").in("id", userIds).eq("status", "active")
+    : { data: [], error: null };
+  if (users.error) throw users.error;
+  const roleByUser = new Map<string, string[]>();
+  for (const role of roles.data ?? []) roleByUser.set(role.user_id, [...(roleByUser.get(role.user_id) ?? []), role.business_role]);
+  return {
+    plan: plan.data ?? null,
+    periods: periods.data ?? [],
+    assignments: assignments.data ?? [],
+    conflicts: conflicts.data ?? [],
+    wbs: wbs.data ?? null,
+    wbsItems: items.data ?? [],
+    members: (users.data ?? []).map((user) => ({ ...user, business_roles: roleByUser.get(user.id) ?? [] })),
+  };
+}
+
+export async function GET(request: Request) {
+  const requestId = crypto.randomUUID();
+  const resolved = await resolveDeliveryProject(request);
+  if (!resolved.ok) return deliveryJson({ ...resolved, request_id: requestId }, resolved.status, requestId);
   try {
-    const body = await request.json();
-    const { members, projects, targetUtilization = 80 } = body as {
-      members: TeamMember[];
-      projects: string[];
-      targetUtilization: number;
-    };
-
-    // Calculate current utilization
-    const memberData = members.map(m => {
-      const totalAllocated = m.allocation.reduce((sum, a) => sum + a.allocatedHours, 0);
-      const utilization = Math.round((totalAllocated / m.availableHours) * 100);
-      return {
-        name: m.name,
-        role: m.role,
-        utilization,
-        allocated: totalAllocated,
-        available: m.availableHours,
-        allocation: m.allocation.map(a => `${a.projectName}(${a.allocatedHours}h)`).join(", "),
-      };
-    });
-
-    const userMessage = `
-当前团队资源配置分析：
-目标利用率: ${targetUtilization}%
-
-团队成员状态:
-${memberData.map(m =>
-  `- ${m.name} (${m.role}): 利用率 ${m.utilization}% (分配${m.allocated}h / 可用${m.available}h)
-    当前项目: ${m.allocation || "无"}`
-).join("\n")}
-
-项目列表: ${projects.join(", ")}
-
-请提供：
-1. 优化后的资源分配方案
-2. 具体调整建议（JSON格式）
-`;
-
-    const result = await llmComplete("planning", SYSTEM_PROMPT, userMessage);
-
-    // Parse the AI response to extract optimized allocations and suggestions
-    let optimizedAllocations: Allocation[] = [];
-    let suggestions: string[] = [];
-    let conflicts: string[] = [];
-
-    try {
-      const parsed = JSON.parse(result.content) as Partial<{
-        optimizedAllocations: Allocation[];
-        suggestions: string[];
-        conflicts: string[];
-      }>;
-      if (parsed.optimizedAllocations) {
-        optimizedAllocations = parsed.optimizedAllocations;
-      }
-      if (parsed.suggestions) {
-        suggestions = parsed.suggestions;
-      }
-      if (parsed.conflicts) {
-        conflicts = parsed.conflicts;
-      }
-    } catch {
-      // If not valid JSON, use the content as suggestions
-      suggestions = result.content.split("\n").filter((line: string) => line.trim());
-    }
-
-    // Add system-generated suggestions based on utilization
-    const systemSuggestions: string[] = [];
-    for (const m of memberData) {
-      if (m.utilization > 100) {
-        systemSuggestions.push(`⚠️ ${m.name} 超负荷 ${m.utilization - 100}%，需要立即调整`);
-      } else if (m.utilization < 60) {
-        systemSuggestions.push(`📊 ${m.name} 利用率偏低 ${m.utilization}%，建议增加任务`);
-      }
-    }
-
-    return NextResponse.json({
-      success: true,
-      optimizedAllocations,
-      suggestions: [...systemSuggestions, ...suggestions],
-      conflicts,
-      raw: result.content,
-    });
+    const data = await loadResources(resolved.orgId, resolved.projectId, resolved.dataClass);
+    return deliverySuccess(resolved, requestId, data, { updatedAt: data.plan?.updated_at ?? data.wbs?.updated_at ?? null });
   } catch (error) {
-    console.error("[resource/optimize] Error:", error);
-    return NextResponse.json(
-      { success: false, error: "资源优化失败，请稍后重试" },
-      { status: 500 }
-    );
+    const detail = deliveryErrorMessage(error);
+    const missing = /project_resource_|relation|does not exist/i.test(detail);
+    return deliveryJson({
+      error: missing ? "V631_DELIVERY_STORAGE_NOT_READY" : "RESOURCE_DATA_LOAD_FAILED",
+      detail: missing ? "请先应用V6.3.1交付控制迁移。" : detail,
+      request_id: requestId,
+      source: deliverySource(resolved.dataClass),
+    }, 503, requestId);
+  }
+}
+
+export async function POST(request: Request) {
+  const requestId = crypto.randomUUID();
+  let body: Record<string, unknown>;
+  try {
+    body = await request.json() as Record<string, unknown>;
+  } catch {
+    return deliveryJson({ error: "INVALID_JSON", request_id: requestId }, 400, requestId);
+  }
+  const resolved = await resolveDeliveryProject(request, body);
+  if (!resolved.ok) return deliveryJson({ ...resolved, request_id: requestId }, resolved.status, requestId);
+  const operation = String(body.operation ?? "").trim();
+  const supabase = deliverySupabase();
+
+  if (operation === "assist") {
+    try {
+      const stored = await loadResources(resolved.orgId, resolved.projectId, resolved.dataClass);
+      if (!stored.plan || stored.periods.length === 0) throw new Error("PERSISTED_RESOURCE_PLAN_REQUIRED");
+      const result = await llmComplete("planning", "你是资源容量分析助手。只能根据当前项目已保存的8–12周容量、分配和冲突数据给出调整建议，不得改变分配、关闭冲突或编造人员。返回严格JSON：{\"suggestions\":[],\"warnings\":[]}。", JSON.stringify({ plan: stored.plan, periods: stored.periods, assignments: stored.assignments, conflicts: stored.conflicts }), { temperature: 0.1 });
+      const match = result.content.match(/\{[\s\S]*\}/);
+      const parsed = JSON.parse(match?.[0] ?? result.content);
+      return deliverySuccess(resolved, requestId, parsed, { sourceType: "llm+supabase", warnings: ["AI建议不会自动改变资源计划或关闭冲突。"] });
+    } catch (error) {
+      return deliveryJson({ error: "RESOURCE_AI_FAILED", detail: deliveryErrorMessage(error), request_id: requestId }, 503, requestId);
+    }
+  }
+
+  let contract;
+  try {
+    contract = parseDeliveryWriteContract(body);
+  } catch (error) {
+    return deliveryJson({ error: "WRITE_CONTRACT_INVALID", detail: deliveryErrorMessage(error), request_id: requestId }, 400, requestId);
+  }
+  if (contract.projectId !== resolved.projectId || contract.businessRole !== resolved.businessRole || contract.dataClass !== resolved.dataClass) {
+    return deliveryJson({ error: "WRITE_CONTEXT_MISMATCH", request_id: requestId }, 409, requestId);
+  }
+  const common = {
+    p_org_id: resolved.orgId,
+    p_project_id: resolved.projectId,
+    p_data_class: resolved.dataClass,
+    p_business_role: resolved.businessRole,
+    p_actor_user_id: resolved.user.id,
+    p_idempotency_key: contract.idempotencyKey,
+    p_expected_version: contract.expectedVersion,
+  };
+  try {
+    if (operation === "save_plan") {
+      const periods = arrayOfRecords(body.periods, "容量期间");
+      const assignments = arrayOfRecords(body.assignments ?? [], "资源分配");
+      const result = await supabase.rpc("save_project_resource_plan_tx", {
+        ...common,
+        p_title: requiredText(body.title, "容量计划标题"),
+        p_horizon_start: requiredText(body.horizon_start, "计划开始日期", 20),
+        p_horizon_end: requiredText(body.horizon_end, "计划结束日期", 20),
+        p_periods: periods,
+        p_assignments: assignments,
+      });
+      if (result.error) throw result.error;
+      return deliverySuccess(resolved, requestId, result.data, { updatedAt: String(result.data?.plan?.updated_at ?? "") });
+    }
+    if (operation === "transition_conflict") {
+      const result = await supabase.rpc("transition_project_resource_conflict_tx", {
+        ...common,
+        p_conflict_id: requiredText(body.conflict_id, "资源冲突ID", 80),
+        p_operation: requiredText(body.transition, "状态动作", 40),
+        p_comment: String(body.comment ?? "").trim() || null,
+        p_evidence: Array.isArray(body.evidence) ? body.evidence : [],
+      });
+      if (result.error) throw result.error;
+      return deliverySuccess(resolved, requestId, result.data, { updatedAt: String(result.data?.updated_at ?? "") });
+    }
+    return deliveryJson({ error: "RESOURCE_OPERATION_INVALID", request_id: requestId }, 400, requestId);
+  } catch (error) {
+    const detail = deliveryErrorMessage(error);
+    return deliveryJson({ error: "RESOURCE_OPERATION_FAILED", detail, request_id: requestId }, deliveryErrorStatus(detail), requestId);
   }
 }
