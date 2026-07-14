@@ -35,6 +35,14 @@ The easiest way to deploy your Next.js app is to use the [Vercel Platform](https
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
 
+## AI-PMO System V6.3.0
+
+V6.3.0 完成立项与规划第一条真实业务链：项目经理录入立项事实，AI 可基于当前项目事实辅助起草商业论证、项目章程和管理计划，但保存、提交、退回、批准与发起新版本必须由有权限的真实用户完成。范围、进度、成本三类基准均进入 Supabase 正式状态机，页面刷新后仍能恢复记录，不再依赖浏览器本地状态或“示例项目”。
+
+所有写入强制稳定 `project_id`、组织、业务角色、数据分类、幂等键与乐观版本；状态机支持草稿、提交、批准、拒绝、退回修改和已批准成果的新版本流程。审批决定、操作回执与追加式事件链均持久化，已批准内容不能无痕覆盖。正式接口统一返回业务上下文、来源、数据分类、生成时间、警告和真实数据。
+
+Supabase 生产库已应用并登记 `20260713223000_v63_initiation_planning_realization.sql`。新增 6 张表均启用 RLS，`PUBLIC`、`anon`、`authenticated` 的直接权限为 0；5 个业务事务函数仅允许 `service_role` 执行，安全顾问无错误项。发布前 362/362 自动化测试、TypeScript、Lint 与生产构建门禁通过。详细接口与状态机见 `docs/v63-initiation-planning-realization.md`。
+
 ## AI-PMO System V6.2.0
 
 V6.2.0 建立“飞书业务事实源 → Supabase 受治理镜像”的统一真实数据底座。项目、里程碑、任务、风险、合同、回款、成本和同步账本八类数据支持人工触发与每日定时对账，按飞书记录 ID 或项目编号形成稳定 UUID，禁止按项目名称关联；重复请求通过幂等键复用同一批次，源端删除只生成软删除标记，不物理删除历史事实。
