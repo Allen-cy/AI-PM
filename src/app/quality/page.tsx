@@ -1,585 +1,131 @@
 "use client";
 
-import { useState } from "react";
 import Link from "next/link";
-import {
-  testDefects,
-  testAcceptanceCriteria,
-  qualityTrends,
-  severityConfig,
-  defectStatusConfig,
-  generateChecklist,
-  calculateDefectMetrics,
-  evaluateAcceptance,
-  type Defect,
-  type ChecklistItem,
-  type AcceptanceCriteria,
-  type Severity,
-} from "@/lib/quality";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { loadCurrentBusinessContextSearchParams, readStoredBusinessContext, readStoredCurrentProject, readStoredDataClass } from "@/features/operating-model/client-context";
 
-const PROJECT_TYPES = [
-  { value: "it", label: "信息化系统集成" },
-  { value: "content", label: "课程内容开发" },
-  { value: "engineering", label: "工程基建施工" },
-  { value: "ops", label: "运营服务交付" },
-];
+type QualityPlan = { id: string; title: string; phase: string; standards: unknown[]; acceptance_strategy?: string | null; status: string; revision_no: number; version: number; updated_at: string };
+type CheckItem = { id: string; quality_plan_id: string; item_code: string; category?: string | null; item_text: string; required: boolean; owner_name?: string | null; due_date?: string | null; result: string; evidence: unknown[]; version: number };
+type Defect = { id: string; defect_code: string; title: string; description: string; severity: string; owner_name?: string | null; due_at?: string | null; root_cause?: string | null; corrective_action?: string | null; verification_result?: string | null; status: string; version: number; updated_at: string };
+type Acceptance = { id: string; acceptance_code: string; title: string; scope: string; planned_date?: string | null; decision?: string | null; decision_comment?: string | null; status: string; version: number; updated_at: string };
+type AcceptanceItem = { id: string; acceptance_record_id: string; item_code: string; description: string; target: string; actual?: string | null; result: string; evidence: unknown[]; version: number };
+type Signoff = { id: string; acceptance_record_id: string; signoff_role: string; signer_name?: string | null; decision: string; comments?: string | null; signed_at?: string | null; version: number; updated_at: string };
+type QualityData = { project?: { name?: string }; plans: QualityPlan[]; checkItems: CheckItem[]; defects: Defect[]; acceptances: Acceptance[]; acceptanceItems: AcceptanceItem[]; signoffs: Signoff[] };
 
-const QUALITY_PHASES = [
-  { value: "启动", label: "启动" },
-  { value: "规划", label: "规划" },
-  { value: "执行", label: "执行" },
-  { value: "监控", label: "监控" },
-  { value: "收尾", label: "收尾" },
-];
+const blankCheck = (index: number) => ({ item_code: `QC-${index + 1}`, category: "交付物", item_text: "", required: true, owner_name: "", due_date: "", result: "pending", evidence: [] as unknown[] });
+const blankAcceptanceItem = (index: number) => ({ item_code: `AC-${index + 1}`, description: "", target: "", actual: "", result: "pending", evidence: [] as unknown[] });
+const transitions: Record<string, Array<[string,string]>> = {
+  "quality_plan:draft": [["submit","提交"]], "quality_plan:submitted": [["approve","批准"],["request_changes","退回修改"]], "quality_plan:changes_requested": [["revise","修订"]], "quality_plan:approved": [["supersede","发起新版本"]],
+  "defect:open": [["start","开始处理"],["reject","认定无效"]], "defect:in_progress": [["submit_verification","提交复验"]], "defect:ready_for_verification": [["verify","复验通过"],["reject_verification","复验退回"]],
+  "acceptance:draft": [["submit","提交验收"]], "acceptance:submitted": [], "acceptance:in_review": [["approve","验收通过"],["request_changes","要求整改"],["reject","验收拒绝"]], "acceptance:changes_requested": [["revise","修订"]], "acceptance:approved": [["close","关闭验收"]],
+};
 
-const SEVERITY_ORDER: Severity[] = ["critical", "major", "minor", "cosmetic"];
+function CheckResultEditor({ item, disabled, onSave }: { item: CheckItem; disabled: boolean; onSave: (result: string) => void }) {
+  const [result, setResult] = useState(item.result);
+  return <div style={{ display: "flex", gap: 6, marginTop: 8 }}><select className="input" value={result} onChange={(event) => setResult(event.target.value)} disabled={disabled}>{['pending','passed','failed','waived'].map((value) => <option key={value}>{value}</option>)}</select><button className="btn-secondary" disabled={disabled} onClick={() => onSave(result)}>保存检查结论</button></div>;
+}
+
+function AcceptanceItemEditor({ item, disabled, onSave }: { item: AcceptanceItem; disabled: boolean; onSave: (actual: string, result: string) => void }) {
+  const [actual, setActual] = useState(item.actual || ""); const [result, setResult] = useState(item.result);
+  return <div style={{ display: "grid", gridTemplateColumns: "1fr 130px auto", gap: 8, marginTop: 8 }}><input className="input" placeholder="人工填写实际验收结果" value={actual} onChange={(event) => setActual(event.target.value)} disabled={disabled}/><select className="input" value={result} onChange={(event) => setResult(event.target.value)} disabled={disabled}>{['pending','passed','failed','waived'].map((value) => <option key={value}>{value}</option>)}</select><button className="btn-secondary" disabled={disabled} onClick={() => onSave(actual, result)}>保存验收结果</button></div>;
+}
 
 export default function QualityPage() {
-  const [activeTab, setActiveTab] = useState<"dashboard" | "checklist" | "defect" | "acceptance">("dashboard");
-  const [projectType, setProjectType] = useState("it");
-  const [phase, setPhase] = useState("启动");
-  const [checklist, setChecklist] = useState<ChecklistItem[]>([]);
-  const [aiResult, setAiResult] = useState<{ issues: string[]; suggestions: string[]; riskLevel: string } | null>(null);
-  const [aiLoading, setAiLoading] = useState(false);
-  const [criteria] = useState<AcceptanceCriteria[]>(testAcceptanceCriteria);
-  const [defects] = useState<Defect[]>(testDefects);
-  const [checklistFilter, setChecklistFilter] = useState<"all" | "pending" | "completed">("all");
+  const [data, setData] = useState<QualityData>({ plans: [], checkItems: [], defects: [], acceptances: [], acceptanceItems: [], signoffs: [] });
+  const [projectName, setProjectName] = useState("");
+  const [active, setActive] = useState<"dashboard" | "plan" | "defect" | "acceptance">(() => typeof window !== "undefined" && new URLSearchParams(window.location.search).get("tab") === "acceptance" ? "acceptance" : "dashboard");
+  const [loading, setLoading] = useState(true); const [busy, setBusy] = useState(""); const [message, setMessage] = useState(""); const [reviewComment, setReviewComment] = useState(""); const [aiSuggestion, setAiSuggestion] = useState("");
+  const [planForm, setPlanForm] = useState({ id: "", version: 0, title: "项目质量计划", phase: "执行", standards: "", acceptance_strategy: "" });
+  const [checkItems, setCheckItems] = useState([blankCheck(0)]);
+  const [defectForm, setDefectForm] = useState({ id: "", version: 0, defect_code: "", title: "", description: "", severity: "major", owner_name: "", due_at: "", root_cause: "", corrective_action: "", verification_result: "" });
+  const [acceptanceForm, setAcceptanceForm] = useState({ id: "", version: 0, acceptance_code: "", title: "", scope: "", planned_date: "" });
+  const [acceptanceItems, setAcceptanceItems] = useState([blankAcceptanceItem(0)]);
+  const [signoffForm, setSignoffForm] = useState({ id: "", version: 0, acceptance_record_id: "", signoff_role: "客户/业务负责人", signer_name: "", decision: "pending", comments: "" });
+  const [aiFacts, setAiFacts] = useState("");
 
-  const metrics = calculateDefectMetrics(defects);
-  const acceptance = evaluateAcceptance(criteria);
-
-  const handleGenerateChecklist = () => {
-    setChecklist(generateChecklist(projectType, phase));
-  };
-
-  const handleToggleCheck = (id: string) => {
-    setChecklist(prev => prev.map(item =>
-      item.id === id ? { ...item, checked: !item.checked } : item
-    ));
-  };
-
-  const handleAiCheck = async () => {
-    setAiLoading(true);
-    setAiResult(null);
+  const loadData = useCallback(async () => {
+    setLoading(true);
     try {
-      const response = await fetch("/api/quality", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectType, phase }),
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error);
-      setAiResult(data);
-    } catch (e) {
-      setAiResult({
-        issues: [`检查失败: ${e instanceof Error ? e.message : String(e)}`],
-        suggestions: [],
-        riskLevel: "medium",
-      });
-    } finally {
-      setAiLoading(false);
-    }
+      const params = await loadCurrentBusinessContextSearchParams({ preferredRole: "quality" });
+      if (!params.get("project_id")) throw new Error("请先在顶部选择已授权项目。");
+      const response = await fetch(`/api/quality?${params.toString()}`, { cache: "no-store" });
+      const payload = await response.json() as { data?: QualityData; detail?: string; error?: string };
+      if (!response.ok) throw new Error(payload.detail || payload.error || "质量数据读取失败");
+      const next = payload.data ?? { plans: [], checkItems: [], defects: [], acceptances: [], acceptanceItems: [], signoffs: [] };
+      setData(next); setProjectName(next.project?.name || "当前项目"); setMessage("");
+    } catch (error) { setData({ plans: [], checkItems: [], defects: [], acceptances: [], acceptanceItems: [], signoffs: [] }); setProjectName(""); setMessage(error instanceof Error ? error.message : "质量数据源不可用"); }
+    finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => {
+    const first = window.setTimeout(() => void loadData(), 0); const reload = () => void loadData();
+    window.addEventListener("ai-pmo:project-context-changed", reload); window.addEventListener("ai-pmo:business-context-changed", reload); window.addEventListener("ai-pmo:data-class-changed", reload);
+    return () => { window.clearTimeout(first); window.removeEventListener("ai-pmo:project-context-changed", reload); window.removeEventListener("ai-pmo:business-context-changed", reload); window.removeEventListener("ai-pmo:data-class-changed", reload); };
+  }, [loadData]);
+
+  const writeContext = (expectedVersion: number) => { const context = readStoredBusinessContext(); const projectId = readStoredCurrentProject(); if (!context?.businessRole || !projectId) return null; return { project_id: projectId, business_role: context.businessRole, data_class: readStoredDataClass(), expected_version: expectedVersion, idempotency_key: `v632:quality:${projectId}:${crypto.randomUUID()}` }; };
+  const post = async (body: Record<string, unknown>) => { const response = await fetch("/api/quality", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); const payload = await response.json() as { data?: { suggestion?: string }; detail?: string; error?: string }; if (!response.ok) throw new Error(payload.detail || payload.error || "质量操作失败"); return payload.data; };
+
+  const currentPlan = data.plans[0] ?? null;
+  const stats = useMemo(() => ({ checks: data.checkItems.length, passed: data.checkItems.filter((item) => item.result === "passed").length, openDefects: data.defects.filter((item) => !["closed","rejected"].includes(item.status)).length, critical: data.defects.filter((item) => item.severity === "critical" && item.status !== "closed").length, acceptancePending: data.acceptances.filter((item) => !["approved","closed"].includes(item.status)).length, pendingSignoff: data.signoffs.filter((item) => item.decision === "pending").length }), [data]);
+
+  const savePlan = async () => {
+    const context = writeContext(planForm.version); if (!context) return setMessage("请先选择当前项目和业务身份。"); if (!planForm.title.trim() || !planForm.phase.trim() || checkItems.some((item) => !item.item_code.trim() || !item.item_text.trim())) return setMessage("质量计划标题、阶段、检查项编码和内容为必填项。");
+    setBusy("plan"); try { await post({ operation: "save_plan", ...context, record_id: planForm.id || null, payload: { title: planForm.title, phase: planForm.phase, standards: planForm.standards.split('\n').filter(Boolean), acceptance_strategy: planForm.acceptance_strategy }, items: checkItems }); setMessage("质量计划和检查清单已保存。"); await loadData(); }
+    catch (error) { setMessage(`质量计划保存失败：${error instanceof Error ? error.message : "未知错误"}`); } finally { setBusy(""); }
   };
+  const saveDefect = async () => {
+    const context = writeContext(defectForm.version); if (!context) return setMessage("请先选择当前项目和业务身份。"); if (!defectForm.defect_code.trim() || !defectForm.title.trim() || !defectForm.description.trim() || !defectForm.owner_name.trim() || !defectForm.due_at) return setMessage("缺陷编号、标题、描述、责任人和deadline为必填项。");
+    setBusy("defect"); try { await post({ operation: "save_defect", ...context, record_id: defectForm.id || null, payload: { ...defectForm, due_at: defectForm.due_at || null, source_type: "human_input" } }); setDefectForm({ id: "", version: 0, defect_code: "", title: "", description: "", severity: "major", owner_name: "", due_at: "", root_cause: "", corrective_action: "", verification_result: "" }); setMessage("缺陷记录已保存。"); await loadData(); }
+    catch (error) { setMessage(`缺陷保存失败：${error instanceof Error ? error.message : "未知错误"}`); } finally { setBusy(""); }
+  };
+  const saveCheckResult = async (item: CheckItem, result: string) => {
+    const context = writeContext(item.version); if (!context) return setMessage("请先选择当前项目和业务身份。");
+    if (!reviewComment.trim()) return setMessage("质量检查结论必须填写检查意见或证据说明。");
+    setBusy(`check-${item.id}`); try { await post({ operation: "save_check_result", ...context, record_id: item.id, result, evidence: [], comment: reviewComment }); setReviewComment(""); setMessage("质量检查结果已保存并形成审计事件。"); await loadData(); }
+    catch (error) { setMessage(`检查结果保存失败：${error instanceof Error ? error.message : "未知错误"}`); } finally { setBusy(""); }
+  };
+  const saveAcceptance = async () => {
+    const context = writeContext(acceptanceForm.version); if (!context) return setMessage("请先选择当前项目和业务身份。"); if (!acceptanceForm.acceptance_code.trim() || !acceptanceForm.title.trim() || !acceptanceForm.scope.trim() || acceptanceItems.some((item) => !item.item_code.trim() || !item.description.trim() || !item.target.trim())) return setMessage("验收编号、标题、范围及每项验收标准为必填项。");
+    setBusy("acceptance"); try { await post({ operation: "save_acceptance", ...context, record_id: acceptanceForm.id || null, payload: { ...acceptanceForm, source_type: "human_input" }, items: acceptanceItems }); setMessage("验收申请和验收标准已保存。"); await loadData(); }
+    catch (error) { setMessage(`验收保存失败：${error instanceof Error ? error.message : "未知错误"}`); } finally { setBusy(""); }
+  };
+  const saveSignoff = async () => {
+    const context = writeContext(signoffForm.version); if (!context) return setMessage("请先选择当前项目和业务身份。"); if (!signoffForm.acceptance_record_id || !signoffForm.signoff_role || !signoffForm.signer_name || signoffForm.decision === "pending") return setMessage("验收单、签发角色、签发人和明确决定为必填项。");
+    setBusy("signoff"); try { await post({ operation: "save_signoff", ...context, record_id: signoffForm.id || null, payload: signoffForm }); setMessage("人工签发决定已保存并写入审计事件。"); await loadData(); }
+    catch (error) { setMessage(`签发失败：${error instanceof Error ? error.message : "未知错误"}`); } finally { setBusy(""); }
+  };
+  const saveAcceptanceItemResult = async (item: AcceptanceItem, actual: string, result: string) => {
+    const context = writeContext(item.version); if (!context) return setMessage("请先选择当前项目和业务身份。");
+    if (!actual.trim() || !reviewComment.trim()) return setMessage("验收实际结果和评审意见为必填项。");
+    setBusy(`acceptance-item-${item.id}`); try { await post({ operation: "save_acceptance_item_result", ...context, record_id: item.id, actual, result, evidence: [], comment: reviewComment }); setReviewComment(""); setMessage("验收项实际结果已保存。"); await loadData(); }
+    catch (error) { setMessage(`验收项保存失败：${error instanceof Error ? error.message : "未知错误"}`); } finally { setBusy(""); }
+  };
+  const transition = async (recordType: string, record: { id: string; version: number }, action: string) => {
+    const context = writeContext(record.version); if (!context) return; if (["approve","request_changes","reject","verify","reject_verification","activate","close"].includes(action) && !reviewComment.trim()) return setMessage("审批、复验、退回或关闭动作必须填写意见。");
+    setBusy(`${recordType}-${record.id}`); try { await post({ operation: "transition", ...context, record_type: recordType, record_id: record.id, transition: action, comment: reviewComment }); setReviewComment(""); setMessage("状态已更新并写入追加式事件。"); await loadData(); }
+    catch (error) { setMessage(`状态流转失败：${error instanceof Error ? error.message : "未知错误"}`); } finally { setBusy(""); }
+  };
+  const aiAssist = async () => { const context = writeContext(0); if (!context) return setMessage("请先选择当前项目和业务身份。"); if (!aiFacts.trim()) return setMessage("请先录入真实交付物、标准、检查结果或缺陷事实。"); setBusy("ai"); try { const result = await post({ operation: "assist", ...context, facts: { narrative: aiFacts, plan: currentPlan, open_defects: data.defects.filter((item) => item.status !== 'closed'), acceptance: data.acceptances[0] ?? null } }); setAiSuggestion(result?.suggestion || "AI未返回建议"); setMessage("AI候选分析已生成，未改变任何检查、缺陷、验收或签发状态。"); } catch (error) { setMessage(`AI质量分析失败：${error instanceof Error ? error.message : "未知错误"}`); } finally { setBusy(""); } };
 
-  const maxTrendDefects = Math.max(...qualityTrends.map(t => t.defects));
+  const actionButtons = (recordType: string, record: { id: string; version: number; status: string }) => (transitions[`${recordType}:${record.status}`] || []).map(([action,label]) => <button key={action} className="btn-secondary" onClick={() => transition(recordType, record, action)} disabled={Boolean(busy)}>{label}</button>);
 
-  const filteredChecklist = checklist.filter(item => {
-    if (checklistFilter === "pending") return !item.checked;
-    if (checklistFilter === "completed") return item.checked;
-    return true;
-  });
+  return <div style={{ minHeight: "100vh", background: "var(--bg)" }}>
+    <header style={{ padding: "14px 28px", background: "var(--surface)", borderBottom: "1px solid var(--border)", display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}><Link href="/">← 返回首页</Link><strong>✅ 质量、缺陷、验收与签发闭环</strong><span className="tag tag-blue">V6.3.2真实数据</span><span style={{ marginLeft: "auto", color: "var(--text2)", fontSize: 13 }}>{projectName || "未选择项目"}</span></header>
+    <main style={{ maxWidth: 1500, margin: "0 auto", padding: 28 }}>
+      {message && <div className="card" style={{ padding: 14, marginBottom: 16, borderLeft: "4px solid var(--accent)" }}>{message}</div>}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 14, marginBottom: 18 }}>{[['检查项',stats.checks],['已通过',stats.passed],['未关闭缺陷',stats.openDefects],['严重缺陷',stats.critical],['待验收',stats.acceptancePending],['待签发',stats.pendingSignoff]].map(([label,value]) => <div className="stat-card" key={label}><div className="stat-num" style={{ color: ['严重缺陷','待签发'].includes(String(label)) && Number(value) ? 'var(--red)' : 'var(--accent)' }}>{value}</div><div className="stat-label">{label}</div></div>)}</div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 18, flexWrap: "wrap" }}>{([['dashboard','质量驾驶舱'],['plan','质量计划与检查'],['defect','缺陷整改复验'],['acceptance','验收与签发']] as const).map(([key,label]) => <button key={key} className={active === key ? "btn-primary" : "btn-secondary"} onClick={() => setActive(key)}>{label}</button>)}</div>
 
-  const checklistProgress = checklist.length > 0
-    ? Math.round((checklist.filter(i => i.required && i.checked).length / checklist.filter(i => i.required).length) * 100)
-    : 0;
+      {active === "dashboard" && <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18 }}><section className="card" style={{ padding: 22 }}><h2 style={{ marginTop: 0 }}>质量闭环状态</h2><p>质量计划：{currentPlan ? `${currentPlan.title} · R${currentPlan.revision_no} · ${currentPlan.status}` : '未建立'}</p><p>检查通过率：{stats.checks ? (stats.passed / stats.checks * 100).toFixed(1) : '0'}%</p><p>缺陷：{data.defects.length}项，其中未关闭{stats.openDefects}项</p><p>验收：{data.acceptances.length}单，待签发{stats.pendingSignoff}项</p></section><section className="card" style={{ padding: 22 }}><h2 style={{ marginTop: 0 }}>AI质量分析（候选）</h2><textarea className="input" rows={5} value={aiFacts} onChange={(event) => setAiFacts(event.target.value)} placeholder="录入交付物、质量标准、检查事实、缺陷或验收背景"/><button className="btn-secondary" style={{ marginTop: 10 }} disabled={Boolean(busy)} onClick={aiAssist}>{busy === 'ai' ? '分析中…' : 'AI分析问题与建议'}</button></section>{aiSuggestion && <section className="card" style={{ padding: 22, gridColumn: "1 / -1", borderLeft: "4px solid #8b5cf6" }}><h2 style={{ marginTop: 0 }}>AI候选分析（未保存、未审批）</h2><pre style={{ whiteSpace: "pre-wrap", fontFamily: "inherit" }}>{aiSuggestion}</pre></section>}</div>}
 
-  return (
-    <div style={{ minHeight: "100vh", background: "var(--bg)", color: "var(--text)" }}>
-      {/* Header */}
-      <header style={{
-        borderBottom: "1px solid var(--border)",
-        padding: "14px 32px",
-        display: "flex",
-        alignItems: "center",
-        gap: 16,
-        background: "var(--surface)",
-      }}>
-        <Link href="/" style={{ color: "var(--text2)", textDecoration: "none", fontSize: "0.85rem" }}>← 返回首页</Link>
-        <span style={{ color: "var(--border)" }}>|</span>
-        <span style={{ fontWeight: 700 }}>Quality Management</span>
-        <span className="tag" style={{ background: "rgba(16,185,129,0.15)", color: "var(--green)", fontSize: "0.7rem" }}>质量管理</span>
-      </header>
+      {active === "plan" && <div style={{ display: "grid", gridTemplateColumns: "minmax(330px,.8fr) 1.5fr", gap: 18 }}><section className="card" style={{ padding: 20 }}><h2 style={{ marginTop: 0 }}>{planForm.id ? '编辑质量计划' : '建立质量计划'}</h2><label><span className="label">计划标题</span><input className="input" value={planForm.title} onChange={(event) => setPlanForm((v) => ({ ...v, title: event.target.value }))}/></label><label><span className="label">适用阶段</span><select className="input" value={planForm.phase} onChange={(event) => setPlanForm((v) => ({ ...v, phase: event.target.value }))}>{['启动','规划','执行','监控','收尾'].map((item) => <option key={item}>{item}</option>)}</select></label><label><span className="label">适用标准（每行一项）</span><textarea className="input" rows={3} value={planForm.standards} onChange={(event) => setPlanForm((v) => ({ ...v, standards: event.target.value }))}/></label><label><span className="label">验收策略</span><textarea className="input" rows={3} value={planForm.acceptance_strategy} onChange={(event) => setPlanForm((v) => ({ ...v, acceptance_strategy: event.target.value }))}/></label><button className="btn-primary" disabled={Boolean(busy)} onClick={savePlan}>{busy === 'plan' ? '保存中…' : '保存质量计划与检查清单'}</button></section><section className="card" style={{ padding: 20 }}><h2 style={{ marginTop: 0 }}>质量检查清单（输入→检查→证据→结果）</h2>{checkItems.map((item,index) => <div key={index} style={{ display: "grid", gridTemplateColumns: "100px 120px 1fr 130px 130px", gap: 8, marginBottom: 8 }}><input className="input" value={item.item_code} onChange={(event) => setCheckItems((items) => items.map((v,i) => i === index ? { ...v, item_code: event.target.value } : v))}/><input className="input" value={item.category} onChange={(event) => setCheckItems((items) => items.map((v,i) => i === index ? { ...v, category: event.target.value } : v))}/><input className="input" placeholder="检查项内容" value={item.item_text} onChange={(event) => setCheckItems((items) => items.map((v,i) => i === index ? { ...v, item_text: event.target.value } : v))}/><input className="input" placeholder="责任人" value={item.owner_name} onChange={(event) => setCheckItems((items) => items.map((v,i) => i === index ? { ...v, owner_name: event.target.value } : v))}/><input className="input" type="date" value={item.due_date} onChange={(event) => setCheckItems((items) => items.map((v,i) => i === index ? { ...v, due_date: event.target.value } : v))}/></div>)}<button className="btn-secondary" onClick={() => setCheckItems((items) => [...items, blankCheck(items.length)])}>新增检查项</button>{currentPlan && <div style={{ marginTop: 18, paddingTop: 14, borderTop: "1px solid var(--border)" }}><label><span className="label">审批/退回意见</span><input className="input" value={reviewComment} onChange={(event) => setReviewComment(event.target.value)}/></label><div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}><button className="btn-secondary" onClick={() => { setPlanForm({ id: currentPlan.id, version: currentPlan.version, title: currentPlan.title, phase: currentPlan.phase, standards: Array.isArray(currentPlan.standards) ? currentPlan.standards.join('\n') : '', acceptance_strategy: currentPlan.acceptance_strategy || '' }); setCheckItems(data.checkItems.filter((item) => item.quality_plan_id === currentPlan.id).map((item) => ({ item_code: item.item_code, category: item.category || '', item_text: item.item_text, required: item.required, owner_name: item.owner_name || '', due_date: item.due_date || '', result: item.result, evidence: item.evidence || [] }))); }}>载入当前版本</button>{actionButtons('quality_plan', currentPlan)}</div></div>}</section><section className="card" style={{ padding: 20, gridColumn: "1 / -1" }}><h2 style={{ marginTop: 0 }}>已保存检查项</h2><div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(260px,1fr))", gap: 10 }}>{data.checkItems.map((item) => <div key={item.id} className="card" style={{ padding: 12 }}><strong>{item.item_code} · {item.item_text}</strong><div style={{ color: "var(--text2)", fontSize: 13 }}>{item.category} · {item.owner_name || '未设置责任人'} · {item.due_date || '未设置deadline'}</div><span className="tag tag-blue">{item.result}</span></div>)}</div></section></div>}
 
-      <main style={{ padding: "32px", maxWidth: 1200, margin: "0 auto" }}>
+      {active === "defect" && <div style={{ display: "grid", gridTemplateColumns: "minmax(330px,.8fr) 1.5fr", gap: 18 }}><section className="card" style={{ padding: 20 }}><h2 style={{ marginTop: 0 }}>{defectForm.id ? '更新缺陷整改信息' : '登记缺陷'}</h2>{[['缺陷编号','defect_code'],['标题','title'],['责任人','owner_name'],['deadline','due_at'],['根因','root_cause'],['整改措施','corrective_action'],['复验结果','verification_result']].map(([label,key]) => <label key={key}><span className="label">{label}</span><input className="input" type={key === 'due_at' ? 'datetime-local' : 'text'} value={String(defectForm[key as keyof typeof defectForm])} onChange={(event) => setDefectForm((v) => ({ ...v, [key]: event.target.value }))}/></label>)}<label><span className="label">严重度</span><select className="input" value={defectForm.severity} onChange={(event) => setDefectForm((v) => ({ ...v, severity: event.target.value }))}>{['critical','major','minor','cosmetic'].map((item) => <option key={item}>{item}</option>)}</select></label><label><span className="label">描述</span><textarea className="input" rows={4} value={defectForm.description} onChange={(event) => setDefectForm((v) => ({ ...v, description: event.target.value }))}/></label><button className="btn-primary" disabled={Boolean(busy)} onClick={saveDefect}>{busy === 'defect' ? '保存中…' : '保存缺陷'}</button></section><section className="card" style={{ padding: 20 }}><h2 style={{ marginTop: 0 }}>缺陷跟踪管理</h2><label><span className="label">处理/复验意见</span><input className="input" value={reviewComment} onChange={(event) => setReviewComment(event.target.value)}/></label>{data.defects.map((item) => <div key={item.id} style={{ padding: 14, border: `1px solid ${item.severity === 'critical' ? 'var(--red)' : 'var(--border)'}`, borderRadius: 10, marginTop: 10 }}><div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}><strong>{item.defect_code} · {item.title}</strong><span className="tag tag-blue">{item.severity} · {item.status} · v{item.version}</span></div><p>{item.description}</p><div style={{ color: "var(--text2)", fontSize: 13 }}>责任人{item.owner_name || '未设置'} · deadline {item.due_at || '未设置'}</div>{item.root_cause && <p>根因：{item.root_cause}</p>}{item.corrective_action && <p>整改：{item.corrective_action}</p>}{item.verification_result && <p>复验：{item.verification_result}</p>}<div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}><button className="btn-secondary" onClick={() => setDefectForm({ id: item.id, version: item.version, defect_code: item.defect_code, title: item.title, description: item.description, severity: item.severity, owner_name: item.owner_name || '', due_at: item.due_at?.slice(0,16) || '', root_cause: item.root_cause || '', corrective_action: item.corrective_action || '', verification_result: item.verification_result || '' })}>编辑信息</button>{actionButtons('defect', item)}</div></div>)}{!data.defects.length && <p style={{ color: "var(--text2)" }}>{loading ? '读取中…' : '当前项目没有正式缺陷记录'}</p>}</section></div>}
 
-        {/* Tabs */}
-        <div style={{ display: "flex", gap: 0, marginBottom: 28, borderBottom: "1px solid var(--border)" }}>
-          {[
-            { key: "dashboard", label: "📊 质量概览" },
-            { key: "checklist", label: "📋 检查清单" },
-            { key: "defect", label: "🐛 缺陷追踪" },
-            { key: "acceptance", label: "✅ 验收标准" },
-          ].map(tab => (
-            <button
-              key={tab.key}
-              onClick={() => setActiveTab(tab.key as typeof activeTab)}
-              style={{
-                padding: "12px 24px",
-                background: "none",
-                border: "none",
-                borderBottom: activeTab === tab.key ? "2px solid var(--green)" : "2px solid transparent",
-                color: activeTab === tab.key ? "var(--green)" : "var(--text2)",
-                fontWeight: activeTab === tab.key ? 700 : 400,
-                fontSize: "0.88rem",
-                cursor: "pointer",
-                transition: "all 0.2s",
-              }}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-
-        {/* ===== DASHBOARD TAB ===== */}
-        {activeTab === "dashboard" && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-            {/* KPI Cards */}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 16 }}>
-              <div className="stat-card">
-                <div className="stat-num" style={{ color: "var(--green)" }}>{metrics.total}</div>
-                <div className="stat-label">缺陷总数</div>
-              </div>
-              <div className="stat-card">
-                <div className="stat-num" style={{ color: "var(--green)" }}>{metrics.resolved}</div>
-                <div className="stat-label">已解决</div>
-              </div>
-              <div className="stat-card">
-                <div className="stat-num" style={{ color: "var(--amber)" }}>{metrics.open}</div>
-                <div className="stat-label">待处理</div>
-              </div>
-              <div className="stat-card">
-                <div className="stat-num" style={{ color: "var(--red)" }}>{metrics.critical}</div>
-                <div className="stat-label">严重缺陷</div>
-              </div>
-              <div className="stat-card">
-                <div className="stat-num" style={{ color: "var(--accent2)" }}>{metrics.testCoverage}%</div>
-                <div className="stat-label">测试覆盖率</div>
-              </div>
-            </div>
-
-            {/* Secondary Metrics */}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}>
-              <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 12, padding: 20 }}>
-                <div style={{ fontSize: "0.75rem", color: "var(--text2)", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.05em" }}>缺陷漏检率</div>
-                <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-                  <span style={{ fontSize: "2rem", fontWeight: 800, color: "var(--green)" }}>{metrics.leakageRate}%</span>
-                  <span style={{ fontSize: "0.8rem", color: "var(--text2)" }}>目标 &lt; 5%</span>
-                </div>
-                <div style={{ marginTop: 10, height: 6, background: "var(--surface2)", borderRadius: 3, overflow: "hidden" }}>
-                  <div style={{ height: "100%", width: `${metrics.leakageRate}%`, background: "var(--green)", borderRadius: 3, maxWidth: "100%" }} />
-                </div>
-              </div>
-              <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 12, padding: 20 }}>
-                <div style={{ fontSize: "0.75rem", color: "var(--text2)", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.05em" }}>一次验收通过率</div>
-                <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-                  <span style={{ fontSize: "2rem", fontWeight: 800, color: "var(--green)" }}>{metrics.firstPassRate}%</span>
-                  <span style={{ fontSize: "0.8rem", color: "var(--text2)" }}>目标 ≥ 85%</span>
-                </div>
-                <div style={{ marginTop: 10, height: 6, background: "var(--surface2)", borderRadius: 3, overflow: "hidden" }}>
-                  <div style={{ height: "100%", width: `${metrics.firstPassRate}%`, background: metrics.firstPassRate >= 85 ? "var(--green)" : "var(--amber)", borderRadius: 3, maxWidth: "100%" }} />
-                </div>
-              </div>
-              <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 12, padding: 20 }}>
-                <div style={{ fontSize: "0.75rem", color: "var(--text2)", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.05em" }}>验收标准达成</div>
-                <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-                  <span style={{ fontSize: "2rem", fontWeight: 800, color: "var(--green)" }}>{acceptance.passRate}%</span>
-                  <span style={{ fontSize: "0.8rem", color: "var(--text2)" }}>{acceptance.passed}/{acceptance.total} 项</span>
-                </div>
-                <div style={{ marginTop: 10, height: 6, background: "var(--surface2)", borderRadius: 3, overflow: "hidden" }}>
-                  <div style={{ height: "100%", width: `${acceptance.passRate}%`, background: acceptance.passRate >= 75 ? "var(--green)" : "var(--amber)", borderRadius: 3, maxWidth: "100%" }} />
-                </div>
-              </div>
-            </div>
-
-            {/* Quality Trends Chart */}
-            <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 12, padding: 24 }}>
-              <div className="section-title" style={{ marginBottom: 20 }}>
-                <span>📈 缺陷趋势</span>
-              </div>
-              <div style={{ display: "flex", alignItems: "flex-end", gap: 12, height: 120 }}>
-                {qualityTrends.map((item, i) => (
-                  <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
-                    <div style={{
-                      width: "100%",
-                      height: `${(item.defects / maxTrendDefects) * 100}px`,
-                      background: item.defects > 5 ? "rgba(239,68,68,0.4)" : "rgba(16,185,129,0.5)",
-                      borderRadius: "4px 4px 0 0",
-                      transition: "height 0.3s ease",
-                    }} />
-                    <span style={{ fontSize: "0.7rem", color: "var(--text2)" }}>{item.period}</span>
-                    <span style={{ fontSize: "0.7rem", fontWeight: 700, color: "var(--text)" }}>{item.defects}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Severity Summary */}
-            <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 12, padding: 24 }}>
-              <div className="section-title" style={{ marginBottom: 16 }}>
-                <span>🏷️ 缺陷等级分布</span>
-              </div>
-              <div style={{ display: "flex", gap: 16 }}>
-                {SEVERITY_ORDER.map(sev => {
-                  const cfg = severityConfig[sev];
-                  const count = sev === "critical" ? metrics.critical
-                    : sev === "major" ? metrics.major
-                    : sev === "minor" ? metrics.minor
-                    : metrics.cosmetic;
-                  return (
-                    <div key={sev} style={{
-                      flex: 1,
-                      background: cfg.bg,
-                      border: `1px solid ${cfg.text}30`,
-                      borderRadius: 10,
-                      padding: "16px",
-                      textAlign: "center",
-                    }}>
-                      <div style={{ fontSize: "1.8rem", fontWeight: 800, color: cfg.text }}>{count}</div>
-                      <div style={{ fontSize: "0.75rem", color: cfg.text, marginTop: 4 }}>{cfg.label}</div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ===== CHECKLIST TAB ===== */}
-        {activeTab === "checklist" && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-            {/* Generator Controls */}
-            <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 12, padding: 24 }}>
-              <div className="section-title" style={{ marginBottom: 16 }}>
-                <span>🤖 AI 质量检查</span>
-                <span className="tag" style={{ background: "rgba(16,185,129,0.15)", color: "var(--green)", fontSize: "0.7rem" }}>AI Assistant</span>
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr auto", gap: 16, alignItems: "flex-end" }}>
-                <div>
-                  <label className="label">项目类型</label>
-                  <select className="input" value={projectType} onChange={e => setProjectType(e.target.value)}>
-                    {PROJECT_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="label">项目阶段</label>
-                  <select className="input" value={phase} onChange={e => setPhase(e.target.value)}>
-                    {QUALITY_PHASES.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="label">操作</label>
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <button className="btn-primary" onClick={handleGenerateChecklist} style={{ background: "var(--green)", flex: 1 }}>
-                      📋 生成清单
-                    </button>
-                    <button
-                      className="btn-secondary"
-                      onClick={handleAiCheck}
-                      disabled={aiLoading}
-                      style={{ opacity: aiLoading ? 0.6 : 1, flex: 1 }}
-                    >
-                      {aiLoading ? "🤖 分析中..." : "✨ AI检查"}
-                    </button>
-                  </div>
-                </div>
-                <div style={{ fontSize: "0.75rem", color: "var(--text2)", textAlign: "center", lineHeight: 1.5 }}>
-                  MiniMax<br />AI驱动
-                </div>
-              </div>
-            </div>
-
-            {/* AI Result */}
-            {aiResult && (
-              <div style={{
-                background: "var(--surface)",
-                border: `1px solid ${aiResult.riskLevel === "high" ? "var(--red)" : aiResult.riskLevel === "medium" ? "var(--amber)" : "var(--green)"}40`,
-                borderRadius: 12,
-                padding: 24,
-              }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-                  <div className="section-title">
-                    <span>🔍 AI 质量评审结果</span>
-                  </div>
-                  <span className="tag" style={{
-                    background: aiResult.riskLevel === "high" ? "rgba(239,68,68,0.15)" : aiResult.riskLevel === "medium" ? "rgba(245,158,11,0.15)" : "rgba(16,185,129,0.15)",
-                    color: aiResult.riskLevel === "high" ? "var(--red)" : aiResult.riskLevel === "medium" ? "var(--amber)" : "var(--green)",
-                  }}>
-                    风险等级: {aiResult.riskLevel === "high" ? "高" : aiResult.riskLevel === "medium" ? "中" : "低"}
-                  </span>
-                </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
-                  <div>
-                    <div style={{ fontSize: "0.75rem", color: "var(--red)", fontWeight: 700, marginBottom: 10, textTransform: "uppercase" }}>🔴 发现的问题</div>
-                    {aiResult.issues.length > 0 ? (
-                      <ul style={{ paddingLeft: 16, display: "flex", flexDirection: "column", gap: 6 }}>
-                        {aiResult.issues.map((issue, i) => (
-                          <li key={i} style={{ fontSize: "0.85rem", color: "var(--text2)", lineHeight: 1.6 }}>{issue}</li>
-                        ))}
-                      </ul>
-                    ) : (
-                      <div style={{ fontSize: "0.85rem", color: "var(--text2)" }}>未发现问题</div>
-                    )}
-                  </div>
-                  <div>
-                    <div style={{ fontSize: "0.75rem", color: "var(--green)", fontWeight: 700, marginBottom: 10, textTransform: "uppercase" }}>🟢 改进建议</div>
-                    {aiResult.suggestions.length > 0 ? (
-                      <ul style={{ paddingLeft: 16, display: "flex", flexDirection: "column", gap: 6 }}>
-                        {aiResult.suggestions.map((s, i) => (
-                          <li key={i} style={{ fontSize: "0.85rem", color: "var(--text2)", lineHeight: 1.6 }}>{s}</li>
-                        ))}
-                      </ul>
-                    ) : (
-                      <div style={{ fontSize: "0.85rem", color: "var(--text2)" }}>暂无建议</div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Checklist */}
-            {checklist.length > 0 && (
-              <>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                  <div style={{ display: "flex", gap: 8 }}>
-                    {([["all","全部"], ["pending","待检查"], ["completed","已完成"]] as const).map(([k, l]) => (
-                      <button
-                        key={k}
-                        onClick={() => setChecklistFilter(k)}
-                        style={{
-                          padding: "6px 14px",
-                          borderRadius: 20,
-                          border: `1px solid ${checklistFilter === k ? "var(--green)" : "var(--border)"}`,
-                          background: checklistFilter === k ? "rgba(16,185,129,0.1)" : "transparent",
-                          color: checklistFilter === k ? "var(--green)" : "var(--text2)",
-                          fontSize: "0.8rem",
-                          cursor: "pointer",
-                        }}
-                      >
-                        {l}
-                      </button>
-                    ))}
-                  </div>
-                  <div style={{ fontSize: "0.85rem", color: "var(--text2)" }}>
-                    必检项完成进度: <strong style={{ color: "var(--green)" }}>{checklistProgress}%</strong>
-                    <span style={{ color: "var(--text2)" }}> ({checklist.filter(i => i.required && i.checked).length}/{checklist.filter(i => i.required).length})</span>
-                  </div>
-                </div>
-
-                <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 12, padding: 24 }}>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                    {filteredChecklist.map(item => (
-                      <div key={item.id} style={{
-                        background: item.checked ? "rgba(16,185,129,0.08)" : "var(--surface2)",
-                        border: `1px solid ${item.checked ? "rgba(16,185,129,0.3)" : "var(--border)"}`,
-                        borderRadius: 10,
-                        padding: "14px 18px",
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 14,
-                        opacity: item.checked ? 0.8 : 1,
-                      }}>
-                        <button
-                          onClick={() => handleToggleCheck(item.id)}
-                          style={{
-                            width: 22,
-                            height: 22,
-                            borderRadius: 6,
-                            border: `2px solid ${item.checked ? "var(--green)" : "var(--border)"}`,
-                            background: item.checked ? "var(--green)" : "transparent",
-                            cursor: "pointer",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            flexShrink: 0,
-                          }}
-                        >
-                          {item.checked && <span style={{ color: "white", fontSize: "0.8rem" }}>✓</span>}
-                        </button>
-                        <div style={{ flex: 1 }}>
-                          <span style={{ fontSize: "0.9rem", color: item.checked ? "var(--text2)" : "var(--text)", textDecoration: item.checked ? "line-through" : "none" }}>
-                            {item.text}
-                          </span>
-                        </div>
-                        <span style={{ fontSize: "0.7rem", color: "var(--text2)", padding: "2px 8px", borderRadius: 10, background: "var(--surface)", border: "1px solid var(--border)" }}>
-                          {item.category}
-                        </span>
-                        {item.required && (
-                          <span style={{ fontSize: "0.65rem", fontWeight: 700, color: "var(--red)", padding: "2px 6px", borderRadius: 4, background: "rgba(239,68,68,0.1)" }}>
-                            必检
-                          </span>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </>
-            )}
-
-            {checklist.length === 0 && !aiResult && (
-              <div style={{ textAlign: "center", padding: "60px 0", color: "var(--text2)" }}>
-                <div style={{ fontSize: "3rem", marginBottom: 16 }}>📋</div>
-                <div style={{ fontSize: "1rem", fontWeight: 600, marginBottom: 8 }}>暂无检查清单</div>
-                <div style={{ fontSize: "0.85rem" }}>选择项目类型和阶段，点击&quot;生成清单&quot;开始质量检查</div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ===== DEFECT TAB ===== */}
-        {activeTab === "defect" && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-            {/* Defect Stats */}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 12 }}>
-              {([
-                ["total", "全部", "var(--text)"],
-                ["open", "待处理", "var(--red)"],
-                ["inProgress", "处理中", "var(--amber)"],
-                ["resolved", "已解决", "var(--green)"],
-                ["closed", "已关闭", "var(--text2)"],
-                ["rejected", "已驳回", "var(--purple)"],
-              ] as const).map(([k, l, c]) => {
-                const key = k as keyof typeof metrics;
-                return (
-                  <div key={k} className="stat-card" style={{ cursor: "default" }}>
-                    <div className="stat-num" style={{ color: c }}>{metrics[key]}</div>
-                    <div className="stat-label">{l}</div>
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* Defect Table */}
-            <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 12, overflow: "hidden" }}>
-              <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--border)" }}>
-                <div className="section-title" style={{ margin: 0 }}>
-                  <span>🐛 缺陷追踪表</span>
-                </div>
-              </div>
-              <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.85rem" }}>
-                  <thead>
-                    <tr style={{ background: "var(--surface2)", borderBottom: "1px solid var(--border)" }}>
-                      {["ID", "描述", "严重程度", "状态", "负责人", "创建日期", "解决日期"].map(h => (
-                        <th key={h} style={{ padding: "12px 16px", textAlign: "left", color: "var(--text2)", fontWeight: 600, whiteSpace: "nowrap" }}>{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {defects.map((d, i) => {
-                      const sevCfg = severityConfig[d.severity];
-                      const stCfg = defectStatusConfig[d.status];
-                      return (
-                        <tr key={d.id} style={{ borderBottom: i < defects.length - 1 ? "1px solid var(--border)" : "none", background: "var(--surface)" }}>
-                          <td style={{ padding: "12px 16px", fontFamily: "monospace", color: "var(--text2)", whiteSpace: "nowrap" }}>{d.id}</td>
-                          <td style={{ padding: "12px 16px", color: "var(--text)", maxWidth: 260 }}>{d.description}</td>
-                          <td style={{ padding: "12px 16px" }}>
-                            <span style={{ padding: "3px 10px", borderRadius: 12, fontSize: "0.72rem", fontWeight: 700, background: sevCfg.bg, color: sevCfg.text }}>
-                              {sevCfg.label}
-                            </span>
-                          </td>
-                          <td style={{ padding: "12px 16px" }}>
-                            <span style={{ padding: "3px 10px", borderRadius: 12, fontSize: "0.72rem", fontWeight: 700, background: stCfg.bg, color: stCfg.text }}>
-                              {stCfg.label}
-                            </span>
-                          </td>
-                          <td style={{ padding: "12px 16px", color: "var(--text2)", whiteSpace: "nowrap" }}>{d.assignee}</td>
-                          <td style={{ padding: "12px 16px", color: "var(--text2)", whiteSpace: "nowrap" }}>{d.createdAt}</td>
-                          <td style={{ padding: "12px 16px", color: d.resolvedAt ? "var(--green)" : "var(--text2)", whiteSpace: "nowrap" }}>{d.resolvedAt || "—"}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ===== ACCEPTANCE TAB ===== */}
-        {activeTab === "acceptance" && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-            {/* Acceptance Summary */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-              <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 12, padding: 24, display: "flex", flexDirection: "column", gap: 12 }}>
-                <div style={{ fontSize: "0.75rem", color: "var(--text2)", textTransform: "uppercase", letterSpacing: "0.05em" }}>验收通过率</div>
-                <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-                  <span style={{ fontSize: "3rem", fontWeight: 800, color: acceptance.passRate >= 75 ? "var(--green)" : "var(--amber)" }}>{acceptance.passRate}%</span>
-                  <span style={{ fontSize: "1rem", color: "var(--text2)" }}>{acceptance.passed} / {acceptance.total} 项</span>
-                </div>
-                <div style={{ height: 8, background: "var(--surface2)", borderRadius: 4, overflow: "hidden" }}>
-                  <div style={{ height: "100%", width: `${acceptance.passRate}%`, background: acceptance.passRate >= 75 ? "var(--green)" : "var(--amber)", transition: "width 0.5s ease" }} />
-                </div>
-              </div>
-              <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 12, padding: 24 }}>
-                <div style={{ fontSize: "0.75rem", color: "var(--text2)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 16 }}>验收结果分布</div>
-                <div style={{ display: "flex", gap: 12 }}>
-                  <div style={{ flex: 1, background: "rgba(16,185,129,0.15)", borderRadius: 8, padding: "12px", textAlign: "center" }}>
-                    <div style={{ fontSize: "1.5rem", fontWeight: 800, color: "var(--green)" }}>{acceptance.passed}</div>
-                    <div style={{ fontSize: "0.72rem", color: "var(--text2)" }}>通过</div>
-                  </div>
-                  <div style={{ flex: 1, background: "rgba(239,68,68,0.15)", borderRadius: 8, padding: "12px", textAlign: "center" }}>
-                    <div style={{ fontSize: "1.5rem", fontWeight: 800, color: "var(--red)" }}>{acceptance.total - acceptance.passed}</div>
-                    <div style={{ fontSize: "0.72rem", color: "var(--text2)" }}>未通过</div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Acceptance Criteria Table */}
-            <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 12, overflow: "hidden" }}>
-              <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--border)" }}>
-                <div className="section-title" style={{ margin: 0 }}>
-                  <span>✅ 验收标准追踪</span>
-                  <span className="tag" style={{ background: "rgba(16,185,129,0.15)", color: "var(--green)", fontSize: "0.7rem" }}>Criteria Tracker</span>
-                </div>
-              </div>
-              <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.85rem" }}>
-                  <thead>
-                    <tr style={{ background: "var(--surface2)", borderBottom: "1px solid var(--border)" }}>
-                      {["ID", "验收标准", "目标值", "实际值", "结果"].map(h => (
-                        <th key={h} style={{ padding: "12px 16px", textAlign: "left", color: "var(--text2)", fontWeight: 600 }}>{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {criteria.map((c, i) => (
-                      <tr key={c.id} style={{ borderBottom: i < criteria.length - 1 ? "1px solid var(--border)" : "none", background: "var(--surface)" }}>
-                        <td style={{ padding: "12px 16px", fontFamily: "monospace", color: "var(--text2)" }}>{c.id}</td>
-                        <td style={{ padding: "12px 16px", color: "var(--text)", maxWidth: 300 }}>{c.description}</td>
-                        <td style={{ padding: "12px 16px", color: "var(--text2)", whiteSpace: "nowrap" }}>{c.target}</td>
-                        <td style={{ padding: "12px 16px", color: c.passed ? "var(--green)" : "var(--red)", fontWeight: 600, whiteSpace: "nowrap" }}>{c.actual || "—"}</td>
-                        <td style={{ padding: "12px 16px" }}>
-                          <span style={{
-                            padding: "3px 10px",
-                            borderRadius: 12,
-                            fontSize: "0.72rem",
-                            fontWeight: 700,
-                            background: c.passed ? "rgba(16,185,129,0.15)" : "rgba(239,68,68,0.15)",
-                            color: c.passed ? "var(--green)" : "var(--red)",
-                          }}>
-                            {c.passed ? "通过" : "未通过"}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-        )}
-      </main>
-    </div>
-  );
+      {active === "acceptance" && <div style={{ display: "grid", gridTemplateColumns: "repeat(2,minmax(330px,1fr))", gap: 18 }}><section className="card" style={{ padding: 20 }}><h2 style={{ marginTop: 0 }}>{acceptanceForm.id ? '编辑验收申请' : '建立验收申请'}</h2>{[['验收编号','acceptance_code'],['验收标题','title'],['计划验收日','planned_date']].map(([label,key]) => <label key={key}><span className="label">{label}</span><input className="input" type={key.includes('date') ? 'date' : 'text'} value={String(acceptanceForm[key as keyof typeof acceptanceForm])} onChange={(event) => setAcceptanceForm((v) => ({ ...v, [key]: event.target.value }))}/></label>)}<label><span className="label">验收范围</span><textarea className="input" rows={4} value={acceptanceForm.scope} onChange={(event) => setAcceptanceForm((v) => ({ ...v, scope: event.target.value }))}/></label><h3>验收标准与实际结果</h3>{acceptanceItems.map((item,index) => <div key={index} className="card" style={{ padding: 10, marginBottom: 8 }}><div style={{ display: "grid", gridTemplateColumns: "100px 1fr", gap: 8 }}><input className="input" value={item.item_code} onChange={(event) => setAcceptanceItems((items) => items.map((v,i) => i === index ? { ...v, item_code: event.target.value } : v))}/><input className="input" placeholder="验收项描述" value={item.description} onChange={(event) => setAcceptanceItems((items) => items.map((v,i) => i === index ? { ...v, description: event.target.value } : v))}/></div><input className="input" placeholder="目标/标准" value={item.target} onChange={(event) => setAcceptanceItems((items) => items.map((v,i) => i === index ? { ...v, target: event.target.value } : v))}/><input className="input" placeholder="实际结果（验收时人工填写）" value={item.actual} onChange={(event) => setAcceptanceItems((items) => items.map((v,i) => i === index ? { ...v, actual: event.target.value } : v))}/><select className="input" value={item.result} onChange={(event) => setAcceptanceItems((items) => items.map((v,i) => i === index ? { ...v, result: event.target.value } : v))}>{['pending','passed','failed','waived'].map((status) => <option key={status}>{status}</option>)}</select></div>)}<button className="btn-secondary" onClick={() => setAcceptanceItems((items) => [...items, blankAcceptanceItem(items.length)])}>新增验收项</button><button className="btn-primary" style={{ marginLeft: 8 }} disabled={Boolean(busy)} onClick={saveAcceptance}>{busy === 'acceptance' ? '保存中…' : '保存验收申请'}</button></section><section className="card" style={{ padding: 20 }}><h2 style={{ marginTop: 0 }}>人工签发</h2><select className="input" value={signoffForm.acceptance_record_id} onChange={(event) => setSignoffForm((v) => ({ ...v, acceptance_record_id: event.target.value }))}><option value="">选择验收单</option>{data.acceptances.map((item) => <option key={item.id} value={item.id}>{item.acceptance_code} · {item.title} · {item.status}</option>)}</select>{[['签发角色','signoff_role'],['签发人','signer_name'],['意见','comments']].map(([label,key]) => <label key={key}><span className="label">{label}</span><input className="input" value={String(signoffForm[key as keyof typeof signoffForm])} onChange={(event) => setSignoffForm((v) => ({ ...v, [key]: event.target.value }))}/></label>)}<label><span className="label">签发决定</span><select className="input" value={signoffForm.decision} onChange={(event) => setSignoffForm((v) => ({ ...v, decision: event.target.value }))}>{['pending','signed','rejected'].map((item) => <option key={item}>{item}</option>)}</select></label><button className="btn-primary" disabled={Boolean(busy)} onClick={saveSignoff}>{busy === 'signoff' ? '签发中…' : '确认人工签发'}</button><p style={{ color: "var(--text2)", fontSize: 13 }}>AI不能替代客户、业务负责人或发起人的签发决定。</p></section><section className="card" style={{ padding: 20, gridColumn: "1 / -1" }}><h2 style={{ marginTop: 0 }}>验收工作流与签发回执</h2><label><span className="label">验收评审意见</span><input className="input" value={reviewComment} onChange={(event) => setReviewComment(event.target.value)} placeholder="评审、整改、通过或拒绝时必填"/></label>{data.acceptances.map((item) => { const items = data.acceptanceItems.filter((record) => record.acceptance_record_id === item.id); const signs = data.signoffs.filter((record) => record.acceptance_record_id === item.id); return <div key={item.id} style={{ padding: 16, border: "1px solid var(--border)", borderRadius: 10, marginTop: 10 }}><div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}><strong>{item.acceptance_code} · {item.title}</strong><span className="tag tag-blue">{item.status} · v{item.version}</span></div><p>{item.scope}</p><div style={{ color: "var(--text2)", fontSize: 13 }}>{items.length}项标准 · {items.filter((record) => record.result === 'passed').length}项通过 · {signs.filter((record) => record.decision === 'signed').length}/{signs.length}签发</div>{item.decision_comment && <p>评审意见：{item.decision_comment}</p>}<div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}><button className="btn-secondary" onClick={() => { setAcceptanceForm({ id: item.id, version: item.version, acceptance_code: item.acceptance_code, title: item.title, scope: item.scope, planned_date: item.planned_date || '' }); setAcceptanceItems(items.map((record) => ({ item_code: record.item_code, description: record.description, target: record.target, actual: record.actual || '', result: record.result, evidence: record.evidence || [] }))); }}>载入编辑</button>{item.status === 'submitted' && <button className="btn-secondary" onClick={() => transition('acceptance',item,'start_review')}>开始评审</button>}{actionButtons('acceptance', item)}</div>{signs.map((sign) => <div key={sign.id} style={{ marginTop: 8, padding: 8, background: "var(--surface2)", borderRadius: 8 }}>{sign.signoff_role} · {sign.signer_name || '待指定'} · {sign.decision} · {sign.signed_at || '未签发'} {sign.comments ? `· ${sign.comments}` : ''}</div>)}</div>})}{!data.acceptances.length && <p style={{ color: "var(--text2)" }}>当前项目尚无正式验收申请。</p>}</section></div>}
+      {active === "plan" && currentPlan && ['submitted','approved'].includes(currentPlan.status) && <section className="card" style={{ padding: 20, marginTop: 18 }}><h2 style={{ marginTop: 0 }}>执行质量检查并保存证据结论</h2><p style={{ color: "var(--text2)" }}>质量计划提交或批准后，由质量责任人逐项执行检查。保存前请在上方“审批/退回意见”填写检查说明。</p><div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(320px,1fr))", gap: 10 }}>{data.checkItems.filter((item) => item.quality_plan_id === currentPlan.id).map((item) => <div className="card" key={item.id} style={{ padding: 12 }}><strong>{item.item_code} · {item.item_text}</strong><div style={{ color: "var(--text2)", fontSize: 13 }}>{item.owner_name || '未设置责任人'} · deadline {item.due_date || '未设置'}</div><CheckResultEditor key={`${item.id}:${item.version}`} item={item} disabled={Boolean(busy)} onSave={(result) => saveCheckResult(item, result)}/></div>)}</div></section>}
+      {active === "acceptance" && <section className="card" style={{ padding: 20, marginTop: 18 }}><h2 style={{ marginTop: 0 }}>逐项记录验收实际结果</h2><p style={{ color: "var(--text2)" }}>验收单提交或进入评审后，由质量、业务负责人或发起人逐项录入实际结果；保存前请填写上方验收评审意见。</p>{data.acceptances.filter((item) => ['submitted','in_review'].includes(item.status)).map((acceptance) => <div key={acceptance.id} style={{ marginBottom: 16 }}><strong>{acceptance.acceptance_code} · {acceptance.title}</strong>{data.acceptanceItems.filter((item) => item.acceptance_record_id === acceptance.id).map((item) => <div className="card" key={item.id} style={{ padding: 12, marginTop: 8 }}><div><strong>{item.item_code} · {item.description}</strong></div><div style={{ color: "var(--text2)", fontSize: 13 }}>目标：{item.target}</div><AcceptanceItemEditor key={`${item.id}:${item.version}`} item={item} disabled={Boolean(busy)} onSave={(actual, result) => saveAcceptanceItemResult(item, actual, result)}/></div>)}</div>)}</section>}
+    </main>
+  </div>;
 }

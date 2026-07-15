@@ -1,98 +1,72 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { llmComplete } from '@/lib/llm';
-import type { Stakeholder } from '@/lib/stakeholder';
+import { parseCommercialQualityWriteContract, requireObject } from "@/features/commercial-quality/contracts";
+import { deliveryErrorMessage, deliveryErrorStatus, deliveryJson, deliverySource, deliverySuccess, deliverySupabase, resolveDeliveryProject } from "@/features/delivery-control/server";
+import { llmComplete } from "@/lib/llm";
 
-const STAKEHOLDER_PROMPT = `你是项目管理专家，精通PMBOK干系人管理知识。
+export const runtime = "nodejs";
 
-根据提供的干系人列表，为每个干系人生成管理策略建议。
+async function loadStakeholders(projectId: string, dataClass: string) {
+  const supabase = deliverySupabase();
+  const project = await supabase.from("projects").select("id,name,oa_no,data_class,updated_at").eq("id", projectId).eq("data_class", dataClass).maybeSingle();
+  if (project.error) throw project.error;
+  if (!project.data) throw new Error("PROJECT_NOT_FOUND");
+  const [stakeholders, actions, events] = await Promise.all([
+    supabase.from("project_stakeholder_records").select("*").eq("project_id", projectId).eq("data_class", dataClass).order("updated_at", { ascending: false }),
+    supabase.from("project_stakeholder_engagement_actions").select("*").eq("project_id", projectId).eq("data_class", dataClass).order("due_at", { ascending: true }),
+    supabase.from("project_commercial_quality_events").select("id,aggregate_type,aggregate_id,event_type,aggregate_version,business_role,actor_user_id,payload,created_at").eq("project_id", projectId).eq("data_class", dataClass).in("aggregate_type", ["stakeholder", "stakeholder_action"]).order("created_at", { ascending: false }).limit(50),
+  ]);
+  const error = stakeholders.error || actions.error || events.error;
+  if (error) throw error;
+  return { project: project.data, stakeholders: stakeholders.data ?? [], actions: actions.data ?? [], events: events.data ?? [] };
+}
 
-分析维度：
-1. 权力-利益矩阵分类：高权力×高利益=重点管理，高权力×低利益=保持满意，低权力×高利益=随时告知，低权力×低利益=监督
-2. 当前参与度与期望参与度的差距
-3. 沟通偏好（频率和方式）
-
-输出要求：
-- 为每个干系人优化 managementStrategy 字段
-- 提供具体的沟通频率和方式建议
-- 识别需要优先关注的干系人
-- 用JSON格式输出，包含suggestions数组和aiReasoning说明`;
-
-export async function POST(request: NextRequest) {
+export async function GET(request: Request) {
+  const requestId = crypto.randomUUID();
+  const resolved = await resolveDeliveryProject(request);
+  if (!resolved.ok) return deliveryJson({ ...resolved, request_id: requestId }, resolved.status, requestId);
   try {
-    const body = await request.json();
-    const { stakeholders } = body as { stakeholders: Stakeholder[] };
-
-    if (!stakeholders || !Array.isArray(stakeholders)) {
-      return NextResponse.json(
-        { error: '需要提供干系人列表' },
-        { status: 400 }
-      );
-    }
-
-    const stakeholderList = stakeholders
-      .map(s => `${s.name}(${s.role}) - 权力:${s.power}, 利益:${s.interest}, 当前参与度:${s.currentEngagement}, 期望参与度:${s.desiredEngagement}`)
-      .join('\n');
-
-    const userMessage = `干系人列表:\n${stakeholderList}`;
-
-    const response = await llmComplete('stakeholder' as Parameters<typeof llmComplete>[0], STAKEHOLDER_PROMPT, userMessage, {
-      temperature: 0.7,
-    });
-
-    // Parse AI response - in production would parse structured JSON
-    // For now, return a formatted response
-    const suggestions = stakeholders.map(s => ({
-      ...s,
-      managementStrategy: getDefaultStrategy(s),
-    }));
-
-    const aiReasoning = response.content || '基于干系人分析，已生成管理策略建议。';
-
-    return NextResponse.json({
-      suggestions,
-      aiReasoning,
-      model: response.model,
-    });
-  } catch (error: unknown) {
-    console.error('[API/stakeholder] Error:', error);
-    const message = error instanceof Error ? error.message : 'AI策略生成失败';
-    return NextResponse.json({ error: message }, { status: 500 });
+    const data = await loadStakeholders(resolved.projectId, resolved.dataClass);
+    return deliverySuccess(resolved, requestId, data, { updatedAt: data.stakeholders[0]?.updated_at ?? data.project.updated_at });
+  } catch (error) {
+    const detail = deliveryErrorMessage(error);
+    const missing = /project_stakeholder_|relation|does not exist/i.test(detail);
+    return deliveryJson({ error: missing ? "V632_STAKEHOLDER_STORAGE_NOT_READY" : "STAKEHOLDER_DATA_LOAD_FAILED", detail: missing ? "请先应用V6.3.2商财质量迁移。" : detail, request_id: requestId, source: deliverySource(resolved.dataClass) }, 503, requestId);
   }
 }
 
-function getDefaultStrategy(s: Stakeholder): string {
-  const highPower = s.power >= 4;
-  const highInterest = s.interest >= 4;
+export async function POST(request: Request) {
+  const requestId = crypto.randomUUID();
+  let body: Record<string, unknown>;
+  try { body = await request.json() as Record<string, unknown>; }
+  catch { return deliveryJson({ error: "INVALID_JSON", request_id: requestId }, 400, requestId); }
+  const resolved = await resolveDeliveryProject(request, body);
+  if (!resolved.ok) return deliveryJson({ ...resolved, request_id: requestId }, resolved.status, requestId);
+  const operation = String(body.operation ?? "").trim();
+  const supabase = deliverySupabase();
 
-  let baseStrategy = '';
-  if (highPower && highInterest) {
-    baseStrategy = '重点管理：';
-  } else if (highPower && !highInterest) {
-    baseStrategy = '保持满意：';
-  } else if (!highPower && highInterest) {
-    baseStrategy = '随时告知：';
-  } else {
-    baseStrategy = '监督：';
+  if (operation === "assist") {
+    try {
+      const current = await supabase.from("project_stakeholder_records").select("stakeholder_code,name,role_title,organization_name,power,interest,current_engagement,desired_engagement,communication_frequency,communication_method,management_strategy").eq("project_id", resolved.projectId).eq("data_class", resolved.dataClass).eq("status", "active");
+      if (current.error) throw current.error;
+      if (!current.data?.length) throw new Error("STAKEHOLDER_INPUT_REQUIRED");
+      const result = await llmComplete("stakeholder", "你是干系人管理助手。仅根据正式登记册分析权力-利益、参与度差距和沟通建议，不得编造人员或已完成沟通事实。返回JSON建议和依据。AI只生成候选策略，必须由项目人员复核保存。", JSON.stringify(current.data), { temperature: 0.2 });
+      return deliverySuccess(resolved, requestId, { suggestion: result.content, model: result.model }, { sourceType: "llm+supabase", warnings: ["AI只生成候选策略，不会自动修改登记册或关闭参与行动。"] });
+    } catch (error) { return deliveryJson({ error: "STAKEHOLDER_AI_FAILED", detail: deliveryErrorMessage(error), request_id: requestId }, 503, requestId); }
   }
 
-  const engagementGap = getEngagementGapLabel(s.currentEngagement, s.desiredEngagement);
-
-  const commMap: Record<string, string> = {
-    '每周': '每周定期沟通',
-    '每两周': '每两周沟通一次',
-    '每月': '每月沟通一次',
-    '按需': '按需沟通',
-  };
-
-  return `${baseStrategy}${engagementGap}${commMap[s.communicationFrequency] || '定期沟通'}，重点关注${s.role}角色的核心诉求。`;
-}
-
-function getEngagementGapLabel(current: string, desired: string): string {
-  const order = ['不知情', '抵制', '中立', '支持', '领导'];
-  const curIdx = order.indexOf(current);
-  const desIdx = order.indexOf(desired);
-
-  if (desIdx > curIdx) return '建议提升参与度，';
-  if (desIdx < curIdx) return '注意管理期望，';
-  return '';
+  let contract;
+  try { contract = parseCommercialQualityWriteContract(body); }
+  catch (error) { return deliveryJson({ error: "WRITE_CONTRACT_INVALID", detail: deliveryErrorMessage(error), request_id: requestId }, 400, requestId); }
+  if (contract.projectId !== resolved.projectId || contract.businessRole !== resolved.businessRole || contract.dataClass !== resolved.dataClass) return deliveryJson({ error: "WRITE_CONTEXT_MISMATCH", request_id: requestId }, 409, requestId);
+  const common = { p_org_id: resolved.orgId, p_project_id: resolved.projectId, p_data_class: resolved.dataClass, p_business_role: resolved.businessRole, p_actor_user_id: resolved.user.id, p_idempotency_key: contract.idempotencyKey, p_expected_version: contract.expectedVersion, p_record_id: String(body.record_id ?? "").trim() || null };
+  try {
+    const payload = requireObject(body.payload, operation === "save_stakeholder" ? "干系人" : "参与行动");
+    const fn = operation === "save_stakeholder" ? "save_project_stakeholder_record_tx" : operation === "save_action" ? "save_project_stakeholder_action_tx" : "";
+    if (!fn) return deliveryJson({ error: "STAKEHOLDER_OPERATION_INVALID", request_id: requestId }, 400, requestId);
+    const result = await supabase.rpc(fn, { ...common, p_payload: payload });
+    if (result.error) throw result.error;
+    return deliverySuccess(resolved, requestId, result.data, { updatedAt: String(result.data?.updated_at ?? "") });
+  } catch (error) {
+    const detail = deliveryErrorMessage(error);
+    return deliveryJson({ error: "STAKEHOLDER_OPERATION_FAILED", detail, request_id: requestId }, deliveryErrorStatus(detail), requestId);
+  }
 }

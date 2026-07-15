@@ -1,609 +1,151 @@
 "use client";
 
-import { useState } from "react";
 import Link from "next/link";
-import {
-  Contract,
-  PaymentMilestone,
-  TEST_CONTRACTS,
-  calculateCollectionRate,
-  calculatePaidAmount,
-  calculateUnpaidAmount,
-  getOverduePayments,
-  forecastCollection,
-  getStatusColor,
-  getStatusLabel,
-} from "@/lib/contract";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { loadCurrentBusinessContextSearchParams, readStoredBusinessContext, readStoredCurrentProject, readStoredDataClass } from "@/features/operating-model/client-context";
 
-// Collection Forecast Chart Component
-function CollectionForecastChart({ forecasts }: { forecasts: { monthLabel: string; amount: number; contractCount: number }[] }) {
-  const maxAmount = Math.max(...forecasts.map(f => f.amount), 1);
+type ContractRecord = { id: string; contract_code: string; name: string; customer_name?: string | null; supplier_name?: string | null; total_amount: number; currency: string; signed_date?: string | null; payment_terms?: string | null; status: string; version: number; source_type: string; source_record_id?: string | null; updated_at: string };
+type ReceivableRecord = { id: string; contract_record_id: string; receivable_code: string; title: string; amount: number; due_date?: string | null; trigger_type?: string | null; trigger_reference?: string | null; invoice_no?: string | null; invoice_amount: number; invoice_date?: string | null; status: string; version: number; updated_at: string };
+type CollectionRecord = { id: string; receivable_record_id: string; collection_code: string; amount: number; collected_date: string; payment_reference?: string | null; writeoff_amount: number; status: string; version: number; created_at: string };
+type MirrorRecord = { id: string; contract_code?: string | null; payment_code?: string | null; name: string; source_system?: string | null; source_record_id?: string | null; source_updated_at?: string | null };
+type CommercialData = { project?: { name?: string }; contracts: ContractRecord[]; receivables: ReceivableRecord[]; collections: CollectionRecord[]; sourceMirror: { contracts: MirrorRecord[]; payments: MirrorRecord[] } };
 
-  return (
-    <div style={{ display: "flex", alignItems: "flex-end", gap: 16, height: 100, paddingTop: 10 }}>
-      {forecasts.map((f, i) => (
-        <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
-          <div style={{
-            width: "100%",
-            height: `${(f.amount / maxAmount) * 80}px`,
-            minHeight: f.amount > 0 ? 20 : 4,
-            background: i === 0 ? "var(--amber)" : "var(--accent)",
-            borderRadius: "6px 6px 0 0",
-            transition: "height 0.3s ease",
-          }} />
-          <span style={{ fontSize: "0.7rem", fontWeight: 600, color: "var(--text)" }}>{f.amount}万</span>
-          <span style={{ fontSize: "0.65rem", color: "var(--text2)" }}>{f.monthLabel}</span>
-          <span style={{ fontSize: "0.6rem", color: "var(--text2)" }}>{f.contractCount}个</span>
-        </div>
-      ))}
-    </div>
-  );
-}
+const money = (amount: number, currency = "CNY") => new Intl.NumberFormat("zh-CN", { style: "currency", currency, maximumFractionDigits: 2 }).format(Number(amount || 0));
+const statusLabels: Record<string, string> = { draft: "草稿", submitted: "待审核", changes_requested: "退回修改", active: "生效", suspended: "暂停", closed: "关闭", terminated: "终止", planned: "计划中", due: "已到期", invoiced: "已开票", partially_collected: "部分回款", collected: "已回款", overdue: "逾期", waived: "核销" };
 
-// Payment Milestone Timeline Component
-function MilestoneTimeline({ milestones, contractTotal }: { milestones: PaymentMilestone[]; contractTotal: number }) {
-  const today = new Date();
-
-  const getNodeColor = (m: PaymentMilestone) => {
-    switch (m.status) {
-      case "paid": return "var(--green)";
-      case "pending": return "var(--amber)";
-      case "overdue": return "var(--red)";
-      case "unpaid": return "var(--text2)";
-      default: return "var(--text2)";
-    }
-  };
-
-  const getNodeLabel = (m: PaymentMilestone) => {
-    if (m.status === "paid") return "✓";
-    if (m.status === "overdue") return "!";
-    return "";
-  };
-
-  return (
-    <div style={{ marginTop: 12 }}>
-      <div style={{ display: "flex", alignItems: "flex-start", gap: 0, position: "relative" }}>
-        {/* Timeline line */}
-        <div style={{
-          position: "absolute",
-          top: 12,
-          left: 12,
-          right: 12,
-          height: 3,
-          background: "var(--border)",
-          borderRadius: 2,
-        }} />
-
-        {milestones.map((m, i) => {
-          const dueDate = new Date(m.dueDate);
-          const isOverdue = m.status === "overdue";
-          const isPaid = m.status === "paid";
-          const isFuture = dueDate > today && !isPaid && !isOverdue;
-
-          return (
-            <div key={m.id} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", position: "relative" }}>
-              {/* Node */}
-              <div style={{
-                width: 24,
-                height: 24,
-                borderRadius: "50%",
-                background: getNodeColor(m),
-                border: `3px solid var(--surface)`,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontSize: "0.65rem",
-                fontWeight: 800,
-                color: "white",
-                zIndex: 1,
-                boxShadow: isOverdue ? `0 0 0 3px rgba(239,68,68,0.3)` : "none",
-              }}>
-                {getNodeLabel(m)}
-              </div>
-
-              {/* Content */}
-              <div style={{
-                marginTop: 8,
-                padding: "8px 4px",
-                background: isOverdue ? "rgba(239,68,68,0.08)" : "var(--surface2)",
-                border: `1px solid ${isOverdue ? "var(--red)" : "var(--border)"}`,
-                borderRadius: 8,
-                width: "100%",
-                textAlign: "center",
-              }}>
-                <div style={{ fontSize: "0.7rem", fontWeight: 600, color: getNodeColor(m), marginBottom: 4 }}>
-                  {m.amount}万
-                </div>
-                <div style={{ fontSize: "0.65rem", color: "var(--text)", marginBottom: 2, lineHeight: 1.3 }}>
-                  {m.name}
-                </div>
-                <div style={{ fontSize: "0.6rem", color: isOverdue ? "var(--red)" : "var(--text2)" }}>
-                  {m.dueDate}
-                </div>
-                <div style={{
-                  marginTop: 4,
-                  fontSize: "0.6rem",
-                  fontWeight: 600,
-                  color: getNodeColor(m),
-                  padding: "2px 6px",
-                  borderRadius: 4,
-                  background: `${getNodeColor(m)}20`,
-                }}>
-                  {getStatusLabel(m.status)}
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-// Contract Card Component
-function ContractCard({ contract, onViewDetails }: { contract: Contract; onViewDetails: (c: Contract) => void }) {
-  const collectionRate = calculateCollectionRate(contract);
-  const paidAmount = calculatePaidAmount(contract);
-  const unpaidAmount = calculateUnpaidAmount(contract);
-  const hasOverdue = contract.milestones.some(m => m.status === "overdue");
-
-  return (
-    <div style={{
-      background: "var(--surface)",
-      border: `1px solid ${hasOverdue ? "var(--red)" : "var(--border)"}`,
-      borderRadius: "var(--radius)",
-      padding: "20px",
-      marginBottom: 16,
-    }}>
-      {/* Contract Header */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
-        <div>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
-            <span style={{ fontSize: "0.7rem", fontFamily: "monospace", color: "var(--accent)" }}>{contract.id}</span>
-            {hasOverdue && (
-              <span className="tag" style={{ fontSize: "0.65rem", background: "rgba(239,68,68,0.15)", color: "var(--red)" }}>
-                存在逾期
-              </span>
-            )}
-          </div>
-          <h3 style={{ fontSize: "1rem", fontWeight: 700, marginBottom: 4 }}>{contract.name}</h3>
-          <div style={{ fontSize: "0.8rem", color: "var(--text2)" }}>
-            甲方: {contract.partyA} | 乙方: {contract.partyB}
-          </div>
-        </div>
-        <button
-          className="btn-secondary"
-          onClick={() => onViewDetails(contract)}
-          style={{ fontSize: "0.75rem", padding: "6px 12px" }}
-        >
-          查看详情
-        </button>
-      </div>
-
-      {/* Stats Row */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 16 }}>
-        <div style={{ textAlign: "center", padding: "10px", background: "var(--surface2)", borderRadius: 8 }}>
-          <div style={{ fontSize: "0.65rem", color: "var(--text2)", marginBottom: 4 }}>合同总额</div>
-          <div style={{ fontSize: "1rem", fontWeight: 800, color: "var(--text)" }}>{contract.totalAmount}万</div>
-        </div>
-        <div style={{ textAlign: "center", padding: "10px", background: "rgba(16,185,129,0.1)", borderRadius: 8 }}>
-          <div style={{ fontSize: "0.65rem", color: "var(--text2)", marginBottom: 4 }}>已回款</div>
-          <div style={{ fontSize: "1rem", fontWeight: 800, color: "var(--green)" }}>{paidAmount}万</div>
-        </div>
-        <div style={{ textAlign: "center", padding: "10px", background: "rgba(245,158,11,0.1)", borderRadius: 8 }}>
-          <div style={{ fontSize: "0.65rem", color: "var(--text2)", marginBottom: 4 }}>未回款</div>
-          <div style={{ fontSize: "1rem", fontWeight: 800, color: "var(--amber)" }}>{unpaidAmount}万</div>
-        </div>
-        <div style={{ textAlign: "center", padding: "10px", background: collectionRate >= 50 ? "rgba(16,185,129,0.1)" : "rgba(239,68,68,0.1)", borderRadius: 8 }}>
-          <div style={{ fontSize: "0.65rem", color: "var(--text2)", marginBottom: 4 }}>回款率</div>
-          <div style={{ fontSize: "1rem", fontWeight: 800, color: collectionRate >= 50 ? "var(--green)" : "var(--red)" }}>
-            {collectionRate.toFixed(0)}%
-          </div>
-        </div>
-      </div>
-
-      {/* Progress Bar */}
-      <div style={{ marginBottom: 16 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-          <span style={{ fontSize: "0.75rem", color: "var(--text2)" }}>回款进度</span>
-          <span style={{ fontSize: "0.75rem", fontWeight: 600 }}>{collectionRate.toFixed(1)}%</span>
-        </div>
-        <div style={{ height: 8, background: "var(--surface2)", borderRadius: 4, overflow: "hidden" }}>
-          <div style={{
-            width: `${collectionRate}%`,
-            height: "100%",
-            background: collectionRate >= 50 ? "var(--green)" : "var(--amber)",
-            borderRadius: 4,
-            transition: "width 0.3s ease",
-          }} />
-        </div>
-      </div>
-
-      {/* Milestone Timeline */}
-      <MilestoneTimeline milestones={contract.milestones} contractTotal={contract.totalAmount} />
-    </div>
-  );
-}
-
-// Contract Details Modal
-function ContractDetailsModal({ contract, onClose }: { contract: Contract; onClose: () => void }) {
-  const collectionRate = calculateCollectionRate(contract);
-  const paidAmount = calculatePaidAmount(contract);
-  const unpaidAmount = calculateUnpaidAmount(contract);
-
-  return (
-    <div style={{
-      position: "fixed",
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 0,
-      background: "rgba(0,0,0,0.7)",
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      zIndex: 1000,
-      padding: 20,
-    }} onClick={onClose}>
-      <div style={{
-        background: "var(--surface)",
-        border: "1px solid var(--border)",
-        borderRadius: "var(--radius)",
-        maxWidth: 800,
-        width: "100%",
-        maxHeight: "90vh",
-        overflow: "auto",
-        padding: 24,
-      }} onClick={e => e.stopPropagation()}>
-        {/* Header */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
-          <div>
-            <span style={{ fontSize: "0.7rem", fontFamily: "monospace", color: "var(--accent)", marginBottom: 4, display: "block" }}>{contract.id}</span>
-            <h2 style={{ fontSize: "1.3rem", fontWeight: 800 }}>{contract.name}</h2>
-          </div>
-          <button onClick={onClose} style={{ background: "none", border: "none", fontSize: "1.5rem", cursor: "pointer", color: "var(--text2)" }}>×</button>
-        </div>
-
-        {/* Contract Info */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 24 }}>
-          <div style={{ padding: 12, background: "var(--surface2)", borderRadius: 8 }}>
-            <div style={{ fontSize: "0.7rem", color: "var(--text2)", marginBottom: 4 }}>甲方（客户）</div>
-            <div style={{ fontSize: "0.9rem", fontWeight: 600 }}>{contract.partyA}</div>
-          </div>
-          <div style={{ padding: 12, background: "var(--surface2)", borderRadius: 8 }}>
-            <div style={{ fontSize: "0.7rem", color: "var(--text2)", marginBottom: 4 }}>乙方（我方）</div>
-            <div style={{ fontSize: "0.9rem", fontWeight: 600 }}>{contract.partyB}</div>
-          </div>
-          <div style={{ padding: 12, background: "var(--surface2)", borderRadius: 8 }}>
-            <div style={{ fontSize: "0.7rem", color: "var(--text2)", marginBottom: 4 }}>合同总额</div>
-            <div style={{ fontSize: "1.1rem", fontWeight: 800, color: "var(--accent)" }}>{contract.totalAmount}万</div>
-          </div>
-          <div style={{ padding: 12, background: "var(--surface2)", borderRadius: 8 }}>
-            <div style={{ fontSize: "0.7rem", color: "var(--text2)", marginBottom: 4 }}>签订日期</div>
-            <div style={{ fontSize: "0.9rem", fontWeight: 600 }}>{contract.signedDate}</div>
-          </div>
-        </div>
-
-        {/* Financial Summary */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 24 }}>
-          <div style={{ padding: 16, background: "rgba(16,185,129,0.1)", borderRadius: 10, textAlign: "center" }}>
-            <div style={{ fontSize: "0.7rem", color: "var(--text2)", marginBottom: 6 }}>已回款</div>
-            <div style={{ fontSize: "1.5rem", fontWeight: 800, color: "var(--green)" }}>{paidAmount}万</div>
-          </div>
-          <div style={{ padding: 16, background: "rgba(245,158,11,0.1)", borderRadius: 10, textAlign: "center" }}>
-            <div style={{ fontSize: "0.7rem", color: "var(--text2)", marginBottom: 6 }}>未回款</div>
-            <div style={{ fontSize: "1.5rem", fontWeight: 800, color: "var(--amber)" }}>{unpaidAmount}万</div>
-          </div>
-          <div style={{ padding: 16, background: collectionRate >= 50 ? "rgba(16,185,129,0.1)" : "rgba(239,68,68,0.1)", borderRadius: 10, textAlign: "center" }}>
-            <div style={{ fontSize: "0.7rem", color: "var(--text2)", marginBottom: 6 }}>回款率</div>
-            <div style={{ fontSize: "1.5rem", fontWeight: 800, color: collectionRate >= 50 ? "var(--green)" : "var(--red)" }}>{collectionRate.toFixed(1)}%</div>
-          </div>
-        </div>
-
-        {/* Milestones Table */}
-        <div style={{ marginBottom: 20 }}>
-          <h3 style={{ fontSize: "0.9rem", fontWeight: 700, marginBottom: 12, color: "var(--text2)" }}>付款里程碑</h3>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.8rem" }}>
-            <thead>
-              <tr style={{ background: "var(--surface2)" }}>
-                {["里程碑", "金额", "到期日", "实际付款日", "状态"].map(h => (
-                  <th key={h} style={{ padding: "10px 8px", textAlign: "left", fontWeight: 600, color: "var(--text2)", borderBottom: "1px solid var(--border)" }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {contract.milestones.map(m => (
-                <tr key={m.id} style={{ borderBottom: "1px solid var(--border)" }}>
-                  <td style={{ padding: "10px 8px", fontWeight: 500 }}>{m.name}</td>
-                  <td style={{ padding: "10px 8px", color: "var(--green)", fontWeight: 600 }}>{m.amount}万</td>
-                  <td style={{ padding: "10px 8px", color: m.status === "overdue" ? "var(--red)" : "var(--text2)" }}>{m.dueDate}</td>
-                  <td style={{ padding: "10px 8px", color: m.actualPaidDate ? "var(--green)" : "var(--text2)" }}>{m.actualPaidDate || "-"}</td>
-                  <td style={{ padding: "10px 8px" }}>
-                    <span style={{
-                      padding: "3px 8px",
-                      borderRadius: 12,
-                      fontSize: "0.7rem",
-                      fontWeight: 600,
-                      background: `${getStatusColor(m.status)}20`,
-                      color: getStatusColor(m.status),
-                    }}>
-                      {getStatusLabel(m.status)}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// AI Parse Modal
-function AIParseModal({ onClose, onParsed }: { onClose: () => void; onParsed: (milestones: PaymentMilestone[]) => void }) {
-  const [input, setInput] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [result, setResult] = useState<{ milestones: PaymentMilestone[]; reasoning: string } | null>(null);
-
-  const handleParse = async () => {
-    if (!input.trim()) {
-      setError("请输入付款条件文本");
-      return;
-    }
-
-    setLoading(true);
-    setError("");
-
-    try {
-      const response = await fetch("/api/contract", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "parse", text: input }),
-      });
-      const data = await response.json();
-
-      if (!response.ok) throw new Error(data.error || "解析失败");
-
-      setResult({ milestones: data.milestones, reasoning: data.aiReasoning });
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div style={{
-      position: "fixed",
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 0,
-      background: "rgba(0,0,0,0.7)",
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      zIndex: 1000,
-      padding: 20,
-    }} onClick={onClose}>
-      <div style={{
-        background: "var(--surface)",
-        border: "1px solid var(--border)",
-        borderRadius: "var(--radius)",
-        maxWidth: 700,
-        width: "100%",
-        maxHeight: "90vh",
-        overflow: "auto",
-        padding: 24,
-      }} onClick={e => e.stopPropagation()}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-          <h2 style={{ fontSize: "1.1rem", fontWeight: 800 }}>AI 付款条件解析</h2>
-          <button onClick={onClose} style={{ background: "none", border: "none", fontSize: "1.5rem", cursor: "pointer", color: "var(--text2)" }}>×</button>
-        </div>
-
-        <textarea
-          className="input"
-          rows={6}
-          placeholder={"例如：合同签订后5个工作日内支付30%预付款（100万）；系统部署完成初验合格后支付40%（150万）；终验合格后7个工作日内支付20%（80万）；一年质保期满后支付剩余10%（50万）"}
-          value={input}
-          onChange={e => setInput(e.target.value)}
-          style={{ resize: "vertical", fontSize: "0.85rem", marginBottom: 16 }}
-        />
-
-        {error && (
-          <div style={{ background: "rgba(239,68,68,0.1)", border: "1px solid var(--red)", borderRadius: 8, padding: "10px 14px", color: "var(--red)", fontSize: "0.85rem", marginBottom: 12 }}>
-            {error}
-          </div>
-        )}
-
-        <button
-          className="btn-primary"
-          onClick={handleParse}
-          disabled={loading}
-          style={{ width: "100%", opacity: loading ? 0.6 : 1, background: "var(--green)" }}
-        >
-          {loading ? "🤖 AI解析中..." : "🔍 解析付款条件"}
-        </button>
-
-        {result && (
-          <div style={{ marginTop: 20 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-              <span style={{ color: "var(--green)" }}>✓</span>
-              <span style={{ fontWeight: 700, fontSize: "0.9rem" }}>解析完成</span>
-              <span className="tag tag-green">{result.milestones.length} 个里程碑</span>
-            </div>
-
-            {result.reasoning && (
-              <div style={{ fontSize: "0.8rem", color: "var(--text2)", marginBottom: 12, padding: "8px 12px", background: "var(--surface2)", borderRadius: 6 }}>
-                {result.reasoning}
-              </div>
-            )}
-
-            <div style={{ background: "var(--surface2)", border: "1px solid var(--border)", borderRadius: 8, padding: 16, fontFamily: "monospace", fontSize: "0.8rem" }}>
-              <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>
-                {JSON.stringify(result.milestones, null, 2)}
-              </pre>
-            </div>
-
-            <div style={{ marginTop: 16, display: "flex", gap: 12 }}>
-              <button
-                className="btn-secondary"
-                onClick={() => { onParsed(result.milestones); onClose(); }}
-                style={{ flex: 1 }}
-              >
-                应用到合同
-              </button>
-              <button
-                className="btn-secondary"
-                onClick={onClose}
-                style={{ flex: 1 }}
-              >
-                关闭
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// Main Page Component
 export default function ContractPage() {
-  const [contracts] = useState<Contract[]>(TEST_CONTRACTS);
-  const [selectedContract, setSelectedContract] = useState<Contract | null>(null);
-  const [showAIParser, setShowAIParser] = useState(false);
+  const [data, setData] = useState<CommercialData>({ contracts: [], receivables: [], collections: [], sourceMirror: { contracts: [], payments: [] } });
+  const [projectName, setProjectName] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState("");
+  const [message, setMessage] = useState("");
+  const [active, setActive] = useState<"overview" | "contracts" | "receivables" | "sources">("overview");
+  const [reviewComment, setReviewComment] = useState("");
+  const [contractForm, setContractForm] = useState({ id: "", version: 0, contract_code: "", name: "", customer_name: "", supplier_name: "", total_amount: "", currency: "CNY", signed_date: "", payment_terms: "" });
+  const [receivableForm, setReceivableForm] = useState({ id: "", version: 0, contract_record_id: "", receivable_code: "", title: "", amount: "", due_date: "", trigger_type: "验收", trigger_reference: "", invoice_no: "", invoice_amount: "", invoice_date: "", status: "planned" });
+  const [collectionForm, setCollectionForm] = useState({ receivable_record_id: "", collection_code: "", amount: "", collected_date: new Date().toISOString().slice(0, 10), payment_reference: "", writeoff_amount: "0" });
+  const [termsText, setTermsText] = useState("");
+  const [candidate, setCandidate] = useState("");
 
-  // Calculate overall metrics
-  const totalContractAmount = contracts.reduce((sum, c) => sum + c.totalAmount, 0);
-  const totalPaid = contracts.reduce((sum, c) => sum + calculatePaidAmount(c), 0);
-  const totalUnpaid = contracts.reduce((sum, c) => sum + calculateUnpaidAmount(c), 0);
-  const overallCollectionRate = totalContractAmount > 0 ? (totalPaid / totalContractAmount) * 100 : 0;
-  const overduePayments = getOverduePayments(contracts);
-  const forecast = forecastCollection(contracts, 3);
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const params = await loadCurrentBusinessContextSearchParams({ preferredRole: "operations" });
+      if (!params.get("project_id")) throw new Error("请先在顶部选择已授权项目。");
+      const response = await fetch(`/api/contract?${params.toString()}`, { cache: "no-store" });
+      const payload = await response.json() as { data?: CommercialData; detail?: string; error?: string };
+      if (!response.ok) throw new Error(payload.detail || payload.error || "合同回款读取失败");
+      const next = payload.data ?? { contracts: [], receivables: [], collections: [], sourceMirror: { contracts: [], payments: [] } };
+      setData(next);
+      setProjectName(next.project?.name || "当前项目");
+      setMessage("");
+    } catch (error) {
+      setData({ contracts: [], receivables: [], collections: [], sourceMirror: { contracts: [], payments: [] } });
+      setProjectName("");
+      setMessage(error instanceof Error ? error.message : "合同回款数据源不可用");
+    } finally { setLoading(false); }
+  }, []);
 
-  return (
-    <div style={{ minHeight: "100vh", background: "var(--bg)", display: "flex", flexDirection: "column" }}>
-      {/* Header */}
-      <header style={{
-        borderBottom: "1px solid var(--border)",
-        padding: "14px 32px",
-        display: "flex",
-        alignItems: "center",
-        gap: 16,
-        background: "var(--surface)",
-      }}>
-        <Link href="/" style={{ color: "var(--text2)", textDecoration: "none", fontSize: "0.85rem" }}>← 返回首页</Link>
-        <span style={{ color: "var(--border)" }}>|</span>
-        <span style={{ fontWeight: 700 }}>合同与回款管理</span>
-        <span className="tag tag-green" style={{ fontSize: "0.7rem" }}>智能解析</span>
-      </header>
+  useEffect(() => {
+    const first = window.setTimeout(() => void loadData(), 0);
+    const reload = () => void loadData();
+    window.addEventListener("ai-pmo:project-context-changed", reload);
+    window.addEventListener("ai-pmo:business-context-changed", reload);
+    window.addEventListener("ai-pmo:data-class-changed", reload);
+    return () => { window.clearTimeout(first); window.removeEventListener("ai-pmo:project-context-changed", reload); window.removeEventListener("ai-pmo:business-context-changed", reload); window.removeEventListener("ai-pmo:data-class-changed", reload); };
+  }, [loadData]);
 
-      <main style={{ flex: 1, padding: "24px 32px", maxWidth: 1200, margin: "0 auto", width: "100%" }}>
-        {/* KPI Stats Row */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 16, marginBottom: 24 }}>
-          <div className="stat-card">
-            <div className="stat-label">合同总额</div>
-            <div className="stat-num" style={{ color: "var(--text)" }}>{totalContractAmount}万</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-label">已回款</div>
-            <div className="stat-num" style={{ color: "var(--green)" }}>{totalPaid}万</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-label">未回款</div>
-            <div className="stat-num" style={{ color: "var(--amber)" }}>{totalUnpaid}万</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-label">整体回款率</div>
-            <div className="stat-num" style={{ color: overallCollectionRate >= 50 ? "var(--green)" : "var(--red)" }}>{overallCollectionRate.toFixed(1)}%</div>
-          </div>
-          <div className="stat-card" style={{ borderColor: overduePayments.length > 0 ? "var(--red)" : undefined }}>
-            <div className="stat-label">逾期付款</div>
-            <div className="stat-num" style={{ color: "var(--red)" }}>{overduePayments.length}</div>
-          </div>
-        </div>
+  const writeContext = (expectedVersion: number) => {
+    const context = readStoredBusinessContext(); const projectId = readStoredCurrentProject();
+    if (!context?.businessRole || !projectId) return null;
+    return { project_id: projectId, business_role: context.businessRole, data_class: readStoredDataClass(), expected_version: expectedVersion, idempotency_key: `v632:commercial:${projectId}:${crypto.randomUUID()}` };
+  };
+  const post = async (body: Record<string, unknown>) => {
+    const response = await fetch("/api/contract", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const payload = await response.json() as { data?: unknown; detail?: string; error?: string };
+    if (!response.ok) throw new Error(payload.detail || payload.error || "合同回款操作失败");
+    return payload.data;
+  };
 
-        {/* Actions Row */}
-        <div style={{ display: "flex", gap: 12, marginBottom: 24 }}>
-          <button
-            className="btn-primary"
-            onClick={() => setShowAIParser(true)}
-            style={{ background: "var(--green)" }}
-          >
-            🤖 AI解析付款条件
-          </button>
-        </div>
+  const totals = useMemo(() => {
+    const contractTotal = data.contracts.filter((item) => item.status !== "terminated").reduce((sum, item) => sum + Number(item.total_amount || 0), 0);
+    const receivableTotal = data.receivables.filter((item) => item.status !== "waived").reduce((sum, item) => sum + Number(item.amount || 0), 0);
+    const collectedTotal = data.collections.filter((item) => item.status === "confirmed").reduce((sum, item) => sum + Number(item.amount || 0) + Number(item.writeoff_amount || 0), 0);
+    const overdue = data.receivables.filter((item) => item.status === "overdue" || (item.due_date && new Date(item.due_date) < new Date() && !["collected", "waived"].includes(item.status)));
+    return { contractTotal, receivableTotal, collectedTotal, overdue, rate: receivableTotal ? collectedTotal / receivableTotal * 100 : 0 };
+  }, [data]);
 
-        {/* Collection Forecast */}
-        <div className="card" style={{ marginBottom: 24 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-            <div className="section-title" style={{ margin: 0 }}>
-              📈 未来3个月回款预测
-            </div>
-            <span style={{ fontSize: "0.75rem", color: "var(--text2)" }}>单位: 万元</span>
-          </div>
-          <CollectionForecastChart forecasts={forecast} />
-          <div style={{ display: "flex", gap: 20, marginTop: 12, justifyContent: "center" }}>
-            <span style={{ fontSize: "0.7rem", color: "var(--amber)" }}>
-              <span style={{ display: "inline-block", width: 12, height: 12, background: "var(--amber)", borderRadius: 2, marginRight: 4 }} />
-              本月
-            </span>
-            <span style={{ fontSize: "0.7rem", color: "var(--accent)" }}>
-              <span style={{ display: "inline-block", width: 12, height: 12, background: "var(--accent)", borderRadius: 2, marginRight: 4 }} />
-              未来月
-            </span>
-          </div>
-        </div>
+  const monthlyForecast = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const item of data.receivables) if (item.due_date && !["collected", "waived"].includes(item.status)) map.set(item.due_date.slice(0, 7), (map.get(item.due_date.slice(0, 7)) || 0) + Number(item.amount || 0));
+    return [...map.entries()].sort(([a], [b]) => a.localeCompare(b)).slice(0, 6);
+  }, [data.receivables]);
+  const maxForecast = Math.max(...monthlyForecast.map(([, value]) => value), 1);
 
-        {/* Contract List */}
-        <div className="section-title" style={{ marginBottom: 16 }}>
-          📑 合同列表 ({contracts.length})
-        </div>
+  const saveContract = async () => {
+    const context = writeContext(contractForm.version); if (!context) return setMessage("请先选择当前项目和业务身份。");
+    if (!contractForm.contract_code.trim() || !contractForm.name.trim() || Number(contractForm.total_amount) < 0) return setMessage("合同编号、名称和合法合同金额为必填项。");
+    setBusy("contract");
+    try { await post({ operation: "save_contract", ...context, record_id: contractForm.id || null, payload: { ...contractForm, total_amount: Number(contractForm.total_amount), source_type: "human_input" } }); setContractForm({ id: "", version: 0, contract_code: "", name: "", customer_name: "", supplier_name: "", total_amount: "", currency: "CNY", signed_date: "", payment_terms: "" }); setMessage("合同记录已保存到Supabase。"); await loadData(); }
+    catch (error) { setMessage(`合同保存失败：${error instanceof Error ? error.message : "未知错误"}`); } finally { setBusy(""); }
+  };
+  const saveReceivable = async () => {
+    const context = writeContext(receivableForm.version); if (!context) return setMessage("请先选择当前项目和业务身份。");
+    if (!receivableForm.contract_record_id || !receivableForm.receivable_code || !receivableForm.title || Number(receivableForm.amount) < 0) return setMessage("合同、应收编号、节点名称和金额为必填项。");
+    setBusy("receivable");
+    try { await post({ operation: "save_receivable", ...context, record_id: receivableForm.id || null, payload: { ...receivableForm, amount: Number(receivableForm.amount), invoice_amount: Number(receivableForm.invoice_amount || 0), source_type: "human_input" } }); setReceivableForm({ id: "", version: 0, contract_record_id: "", receivable_code: "", title: "", amount: "", due_date: "", trigger_type: "验收", trigger_reference: "", invoice_no: "", invoice_amount: "", invoice_date: "", status: "planned" }); setMessage("应收/开票节点已保存。"); await loadData(); }
+    catch (error) { setMessage(`应收保存失败：${error instanceof Error ? error.message : "未知错误"}`); } finally { setBusy(""); }
+  };
+  const recordCollection = async () => {
+    const context = writeContext(0); if (!context) return setMessage("请先选择当前项目和业务身份。");
+    if (!collectionForm.receivable_record_id || !collectionForm.collection_code || Number(collectionForm.amount) <= 0 || !collectionForm.collected_date) return setMessage("应收节点、回款流水号、金额和到账日期为必填项。");
+    setBusy("collection");
+    try { await post({ operation: "record_collection", ...context, payload: { ...collectionForm, amount: Number(collectionForm.amount), writeoff_amount: Number(collectionForm.writeoff_amount || 0), evidence: [] } }); setMessage("回款流水已确认入账，应收状态已同步更新。"); await loadData(); }
+    catch (error) { setMessage(`回款登记失败：${error instanceof Error ? error.message : "未知错误"}`); } finally { setBusy(""); }
+  };
+  const transition = async (item: ContractRecord, action: string) => {
+    const context = writeContext(item.version); if (!context) return;
+    if (["activate", "request_changes", "close"].includes(action) && !reviewComment.trim()) return setMessage("审核、退回或关闭合同必须填写意见。");
+    setBusy(`transition-${item.id}`);
+    try { await post({ operation: "transition", ...context, record_id: item.id, transition: action, comment: reviewComment }); setReviewComment(""); setMessage("合同状态已更新并写入追加式事件。"); await loadData(); }
+    catch (error) { setMessage(`合同状态流转失败：${error instanceof Error ? error.message : "未知错误"}`); } finally { setBusy(""); }
+  };
+  const parseTerms = async () => {
+    const context = writeContext(0); if (!context) return setMessage("请先选择当前项目和业务身份。"); if (!termsText.trim()) return setMessage("请先粘贴真实合同付款条款。");
+    setBusy("ai");
+    try { const result = await post({ operation: "parse_terms", ...context, text: termsText }); setCandidate(JSON.stringify(result, null, 2)); setMessage("AI候选已生成，尚未写入正式应收记录。"); }
+    catch (error) { setMessage(`AI解析失败：${error instanceof Error ? error.message : "未知错误"}`); } finally { setBusy(""); }
+  };
 
-        {contracts.map(contract => (
-          <ContractCard
-            key={contract.id}
-            contract={contract}
-            onViewDetails={setSelectedContract}
-          />
-        ))}
+  return <div style={{ minHeight: "100vh", background: "var(--bg)" }}>
+    <header style={{ padding: "14px 28px", background: "var(--surface)", borderBottom: "1px solid var(--border)", display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>
+      <Link href="/">← 返回首页</Link><strong>💰 合同到现金：合同 · 应收 · 回款</strong><span className="tag tag-blue">V6.3.2真实数据</span><span style={{ marginLeft: "auto", color: "var(--text2)", fontSize: 13 }}>{projectName || "未选择项目"}</span>
+    </header>
+    <main style={{ maxWidth: 1480, margin: "0 auto", padding: 28 }}>
+      {message && <div className="card" style={{ padding: 14, marginBottom: 16, borderLeft: "4px solid var(--accent)" }}>{message}</div>}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(170px,1fr))", gap: 14, marginBottom: 18 }}>
+        {[['合同总额', money(totals.contractTotal)], ['应收总额', money(totals.receivableTotal)], ['已回款/核销', money(totals.collectedTotal)], ['回款率', `${totals.rate.toFixed(1)}%`], ['逾期节点', `${totals.overdue.length}项`]].map(([label, value]) => <div className="stat-card" key={label}><div className="stat-num" style={{ color: label === "逾期节点" && totals.overdue.length ? "var(--red)" : "var(--accent)" }}>{value}</div><div className="stat-label">{label}</div></div>)}
+      </div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 18, flexWrap: "wrap" }}>{([['overview','经营总览'],['contracts','合同管理'],['receivables','应收与回款'],['sources','来源与对账']] as const).map(([key,label]) => <button key={key} className={active === key ? "btn-primary" : "btn-secondary"} onClick={() => setActive(key)}>{label}</button>)}</div>
 
-        {/* Legend */}
-        <div style={{ marginTop: 24, padding: "16px 20px", background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius)" }}>
-          <div style={{ fontSize: "0.8rem", fontWeight: 700, marginBottom: 12, color: "var(--text2)" }}>图例说明</div>
-          <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
-            {[
-              { color: "var(--green)", label: "已回款" },
-              { color: "var(--amber)", label: "待付款" },
-              { color: "var(--red)", label: "逾期" },
-              { color: "var(--text2)", label: "未付款" },
-            ].map(item => (
-              <div key={item.label} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <div style={{ width: 12, height: 12, borderRadius: "50%", background: item.color }} />
-                <span style={{ fontSize: "0.75rem", color: "var(--text2)" }}>{item.label}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </main>
+      {active === "overview" && <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: 18 }}>
+        <section className="card" style={{ padding: 22 }}><h2 style={{ marginTop: 0 }}>未来回款趋势</h2>{monthlyForecast.length ? <div style={{ display: "flex", alignItems: "flex-end", gap: 16, height: 190, paddingTop: 20 }}>{monthlyForecast.map(([month, amount]) => <div key={month} style={{ flex: 1, textAlign: "center" }}><div style={{ height: Math.max(12, amount / maxForecast * 130), background: "linear-gradient(180deg,var(--accent),#7c3aed)", borderRadius: "8px 8px 2px 2px" }} /><strong style={{ display: "block", fontSize: 12, marginTop: 6 }}>{money(amount)}</strong><span style={{ fontSize: 11, color: "var(--text2)" }}>{month}</span></div>)}</div> : <p style={{ color: "var(--text2)" }}>暂无正式应收到期数据；请在“应收与回款”录入或完成飞书对账。</p>}</section>
+        <section className="card" style={{ padding: 22 }}><h2 style={{ marginTop: 0 }}>逾期与阻塞</h2>{totals.overdue.length ? totals.overdue.map((item) => <div key={item.id} style={{ padding: 12, background: "rgba(239,68,68,.08)", border: "1px solid rgba(239,68,68,.25)", borderRadius: 8, marginBottom: 8 }}><strong>{item.receivable_code} · {item.title}</strong><div style={{ color: "var(--text2)", fontSize: 13 }}>{money(item.amount)} · 到期{item.due_date || "未设置"} · {statusLabels[item.status] || item.status}</div></div>) : <p style={{ color: "var(--text2)" }}>当前项目没有逾期应收。</p>}</section>
+        <section className="card" style={{ padding: 22, gridColumn: "1 / -1" }}><h2 style={{ marginTop: 0 }}>AI解析付款条款（候选，不自动入账）</h2><textarea className="input" rows={4} value={termsText} onChange={(event) => setTermsText(event.target.value)} placeholder="粘贴合同中的付款条件、比例、日期、验收触发点"/><button className="btn-secondary" style={{ marginTop: 10 }} disabled={Boolean(busy)} onClick={parseTerms}>{busy === "ai" ? "解析中…" : "AI提取应收节点候选"}</button>{candidate && <pre style={{ whiteSpace: "pre-wrap", background: "var(--surface2)", padding: 14, borderRadius: 8, maxHeight: 280, overflow: "auto" }}>{candidate}</pre>}</section>
+      </div>}
 
-      {/* Modals */}
-      {selectedContract && (
-        <ContractDetailsModal
-          contract={selectedContract}
-          onClose={() => setSelectedContract(null)}
-        />
-      )}
+      {active === "contracts" && <div style={{ display: "grid", gridTemplateColumns: "minmax(320px,.8fr) 1.5fr", gap: 18 }}>
+        <section className="card" style={{ padding: 20 }}><h2 style={{ marginTop: 0 }}>{contractForm.id ? "编辑合同" : "登记合同"}</h2><div style={{ display: "grid", gap: 10 }}>{[['合同编号','contract_code'],['合同名称','name'],['客户/甲方','customer_name'],['供应商/乙方','supplier_name'],['合同金额','total_amount'],['签订日期','signed_date']] .map(([label,key]) => <label key={key}><span className="label">{label}</span><input className="input" type={key.includes('date') ? 'date' : key === 'total_amount' ? 'number' : 'text'} value={String(contractForm[key as keyof typeof contractForm])} onChange={(event) => setContractForm((value) => ({ ...value, [key]: event.target.value }))}/></label>)}<label><span className="label">付款条款</span><textarea className="input" rows={4} value={contractForm.payment_terms} onChange={(event) => setContractForm((value) => ({ ...value, payment_terms: event.target.value }))}/></label></div><button className="btn-primary" style={{ marginTop: 12 }} disabled={Boolean(busy)} onClick={saveContract}>{busy === "contract" ? "保存中…" : "保存合同"}</button></section>
+        <section className="card" style={{ padding: 20, overflowX: "auto" }}><h2 style={{ marginTop: 0 }}>正式合同台账</h2><label><span className="label">审核意见</span><input className="input" value={reviewComment} onChange={(event) => setReviewComment(event.target.value)} placeholder="激活、退回或关闭时必填"/></label><table style={{ width: "100%", borderCollapse: "collapse", marginTop: 12 }}><thead><tr>{['编号/名称','客户','金额','状态/版本','来源','操作'].map((h) => <th key={h} style={{ textAlign: "left", padding: 10, borderBottom: "1px solid var(--border)" }}>{h}</th>)}</tr></thead><tbody>{data.contracts.map((item) => <tr key={item.id}><td style={{ padding: 10, borderBottom: "1px solid var(--border)" }}><strong>{item.contract_code}</strong><div>{item.name}</div></td><td>{item.customer_name || '—'}</td><td>{money(item.total_amount, item.currency)}</td><td><span className="tag tag-blue">{statusLabels[item.status] || item.status} · v{item.version}</span></td><td>{item.source_type}{item.source_record_id ? <div style={{ fontSize: 11, color: "var(--text2)" }}>{item.source_record_id}</div> : null}</td><td><div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}><button className="btn-secondary" onClick={() => setContractForm({ id: item.id, version: item.version, contract_code: item.contract_code, name: item.name, customer_name: item.customer_name || '', supplier_name: item.supplier_name || '', total_amount: String(item.total_amount), currency: item.currency, signed_date: item.signed_date || '', payment_terms: item.payment_terms || '' })}>编辑</button>{item.status === 'draft' && <button className="btn-primary" onClick={() => transition(item,'submit')}>提交</button>}{item.status === 'submitted' && <><button className="btn-primary" onClick={() => transition(item,'activate')}>激活</button><button className="btn-secondary" onClick={() => transition(item,'request_changes')}>退回</button></>}{item.status === 'changes_requested' && <button className="btn-primary" onClick={() => transition(item,'revise')}>修订</button>}{item.status === 'active' && <button className="btn-secondary" onClick={() => transition(item,'close')}>关闭</button>}</div></td></tr>)}{!data.contracts.length && <tr><td colSpan={6} style={{ padding: 20, textAlign: "center", color: "var(--text2)" }}>{loading ? "读取中…" : "当前项目尚无正式合同记录"}</td></tr>}</tbody></table></section>
+      </div>}
 
-      {showAIParser && (
-        <AIParseModal
-          onClose={() => setShowAIParser(false)}
-          onParsed={(milestones) => console.log("Parsed milestones:", milestones)}
-        />
-      )}
-    </div>
-  );
+      {active === "receivables" && <div style={{ display: "grid", gridTemplateColumns: "repeat(2,minmax(320px,1fr))", gap: 18 }}>
+        <section className="card" style={{ padding: 20 }}><h2 style={{ marginTop: 0 }}>登记应收/开票节点</h2><select className="input" value={receivableForm.contract_record_id} onChange={(event) => setReceivableForm((v) => ({ ...v, contract_record_id: event.target.value }))}><option value="">选择正式合同</option>{data.contracts.map((item) => <option value={item.id} key={item.id}>{item.contract_code} · {item.name}</option>)}</select><div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 10 }}>{[['应收编号','receivable_code'],['节点名称','title'],['应收金额','amount'],['计划到期','due_date'],['触发类型','trigger_type'],['触发依据','trigger_reference'],['发票号','invoice_no'],['开票金额','invoice_amount'],['开票日期','invoice_date']].map(([label,key]) => <label key={key}><span className="label">{label}</span><input className="input" type={key.includes('date') ? 'date' : ['amount','invoice_amount'].includes(key) ? 'number' : 'text'} value={String(receivableForm[key as keyof typeof receivableForm])} onChange={(event) => setReceivableForm((value) => ({ ...value, [key]: event.target.value }))}/></label>)}</div><button className="btn-primary" style={{ marginTop: 12 }} disabled={Boolean(busy)} onClick={saveReceivable}>{busy === "receivable" ? "保存中…" : "保存应收节点"}</button></section>
+        <section className="card" style={{ padding: 20 }}><h2 style={{ marginTop: 0 }}>确认到账/核销</h2><select className="input" value={collectionForm.receivable_record_id} onChange={(event) => setCollectionForm((v) => ({ ...v, receivable_record_id: event.target.value }))}><option value="">选择应收节点</option>{data.receivables.filter((item) => !['collected','waived'].includes(item.status)).map((item) => <option value={item.id} key={item.id}>{item.receivable_code} · {item.title} · {money(item.amount)}</option>)}</select><div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 10 }}>{[['回款流水号','collection_code'],['到账金额','amount'],['到账日期','collected_date'],['银行/支付参考','payment_reference'],['核销金额','writeoff_amount']].map(([label,key]) => <label key={key}><span className="label">{label}</span><input className="input" type={key.includes('date') ? 'date' : ['amount','writeoff_amount'].includes(key) ? 'number' : 'text'} value={String(collectionForm[key as keyof typeof collectionForm])} onChange={(event) => setCollectionForm((value) => ({ ...value, [key]: event.target.value }))}/></label>)}</div><p style={{ color: "var(--text2)", fontSize: 13 }}>到账确认属于人工事实动作；系统会形成回款流水、更新应收状态并保留审计事件。</p><button className="btn-primary" disabled={Boolean(busy)} onClick={recordCollection}>{busy === "collection" ? "登记中…" : "确认回款入账"}</button></section>
+        <section className="card" style={{ padding: 20, gridColumn: "1 / -1", overflowX: "auto" }}><h2 style={{ marginTop: 0 }}>应收与回款明细</h2><table style={{ width: "100%", borderCollapse: "collapse" }}><thead><tr>{['应收节点','合同','金额/已收','到期','开票','状态','操作'].map((h) => <th key={h} style={{ textAlign: "left", padding: 10, borderBottom: "1px solid var(--border)" }}>{h}</th>)}</tr></thead><tbody>{data.receivables.map((item) => { const collected = data.collections.filter((c) => c.receivable_record_id === item.id && c.status === 'confirmed').reduce((sum,c) => sum + Number(c.amount) + Number(c.writeoff_amount),0); const contract = data.contracts.find((c) => c.id === item.contract_record_id); return <tr key={item.id}><td style={{ padding: 10, borderBottom: "1px solid var(--border)" }}><strong>{item.receivable_code}</strong><div>{item.title}</div></td><td>{contract?.contract_code || '—'}</td><td>{money(item.amount)}<div style={{ fontSize: 12, color: "var(--green)" }}>已收{money(collected)}</div></td><td>{item.due_date || '—'}</td><td>{item.invoice_no || '未开票'}<div style={{ fontSize: 12 }}>{item.invoice_amount ? money(item.invoice_amount) : ''}</div></td><td><span className="tag tag-blue">{statusLabels[item.status] || item.status} · v{item.version}</span></td><td><button className="btn-secondary" onClick={() => { setReceivableForm({ id: item.id, version: item.version, contract_record_id: item.contract_record_id, receivable_code: item.receivable_code, title: item.title, amount: String(item.amount), due_date: item.due_date || '', trigger_type: item.trigger_type || '', trigger_reference: item.trigger_reference || '', invoice_no: item.invoice_no || '', invoice_amount: String(item.invoice_amount || ''), invoice_date: item.invoice_date || '', status: item.status }); setCollectionForm((v) => ({ ...v, receivable_record_id: item.id })); }}>编辑/回款</button></td></tr>})}{!data.receivables.length && <tr><td colSpan={7} style={{ padding: 20, textAlign: "center", color: "var(--text2)" }}>当前项目尚无正式应收记录</td></tr>}</tbody></table></section>
+      </div>}
+
+      {active === "sources" && <section className="card" style={{ padding: 22 }}><h2 style={{ marginTop: 0 }}>飞书事实源与Supabase管理记录</h2><p style={{ color: "var(--text2)" }}>飞书镜像记录只作为业务事实来源；项目人员确认后形成可审批、可审计的正式合同/应收/回款记录。按稳定记录ID关联，不按项目名称猜测。</p><div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18 }}><div><h3>飞书合同镜像（{data.sourceMirror.contracts.length}）</h3>{data.sourceMirror.contracts.map((item) => <div key={item.id} className="card" style={{ padding: 12, marginBottom: 8 }}><strong>{item.contract_code || item.id} · {item.name}</strong><div style={{ fontSize: 12, color: "var(--text2)" }}>{item.source_system || 'feishu'} · {item.source_record_id || '无来源ID'} · {item.source_updated_at || '无更新时间'}</div></div>)}</div><div><h3>飞书回款镜像（{data.sourceMirror.payments.length}）</h3>{data.sourceMirror.payments.map((item) => <div key={item.id} className="card" style={{ padding: 12, marginBottom: 8 }}><strong>{item.payment_code || item.id} · {item.name}</strong><div style={{ fontSize: 12, color: "var(--text2)" }}>{item.source_system || 'feishu'} · {item.source_record_id || '无来源ID'} · {item.source_updated_at || '无更新时间'}</div></div>)}</div></div></section>}
+    </main>
+  </div>;
 }
