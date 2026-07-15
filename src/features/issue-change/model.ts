@@ -15,6 +15,7 @@ export type IssueActionDataClass = "production" | "sample" | "test" | "diagnosti
 
 export interface IssueRecord {
   id: string;
+  version?: number;
   orgId?: string | null;
   projectId?: string | null;
   dataClass?: IssueActionDataClass;
@@ -39,6 +40,7 @@ export interface IssueRecord {
 
 export interface ChangeRecord {
   id: string;
+  version?: number;
   orgId?: string | null;
   projectId?: string | null;
   dataClass?: IssueActionDataClass;
@@ -67,6 +69,7 @@ export interface ChangeRecord {
 
 export interface UnifiedActionRecord {
   id: string;
+  version?: number;
   orgId?: string | null;
   projectId?: string | null;
   dataClass?: IssueActionDataClass;

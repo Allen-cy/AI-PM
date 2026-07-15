@@ -6,6 +6,7 @@ import { buildBusinessCaseEvidence, type AiEvidence, type AiSuggestedAction } fr
 import { feishuTableUrl } from "@/features/feishu/links";
 import {
   readStoredBusinessContext,
+  buildProjectControlWriteContract,
   readStoredCurrentProject,
   readStoredDataClass,
   loadCurrentBusinessContextSearchParams,
@@ -575,6 +576,7 @@ export default function InitiationPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          ...buildProjectControlWriteContract("create_action", 0),
           operation: "create_action",
           title: action.title,
           owner: action.owner || projectInfo.sponsor || "项目发起人",

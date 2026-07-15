@@ -16,7 +16,7 @@ import {
   type ReportRequest,
   type ReportType,
 } from "@/lib/reports";
-import { loadCurrentBusinessContextSearchParams } from "@/features/operating-model/client-context";
+import { buildProjectControlWriteContract, loadCurrentBusinessContextSearchParams } from "@/features/operating-model/client-context";
 
 const PROJECTS = [
   "PMO项目组合",
@@ -154,6 +154,7 @@ export default function ReportsPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          ...buildProjectControlWriteContract("create_action", 0),
           operation: "create_action",
           title: action.title,
           owner: action.owner,

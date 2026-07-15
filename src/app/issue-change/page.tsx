@@ -17,7 +17,7 @@ import {
   type IssueSeverity,
   type UnifiedActionRecord,
 } from "@/features/issue-change/model";
-import { loadCurrentBusinessContextSearchParams } from "@/features/operating-model/client-context";
+import { buildProjectControlWriteContract, loadCurrentBusinessContextSearchParams } from "@/features/operating-model/client-context";
 
 interface ChainBundle {
   status: "succeeded" | "not_configured" | "failed";
@@ -218,7 +218,7 @@ export default function IssueChangePage() {
       const response = await fetch(`/api/issue-change?${query}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ ...buildProjectControlWriteContract(String(payload.operation || "issue_change"), Number(payload.expected_version || 0)), ...payload }),
       });
       const data = await response.json();
       if (!response.ok || data.status !== "succeeded") {
@@ -292,6 +292,7 @@ export default function IssueChangePage() {
       action,
       comment,
       evidence: issue.evidence || undefined,
+      expected_version: issue.version || 1,
     }, "问题状态已更新。");
   }
 
@@ -302,6 +303,7 @@ export default function IssueChangePage() {
       action,
       comment,
       decisionSummary: comment,
+      expected_version: change.version || 1,
     }, "变更状态已更新。");
   }
 
@@ -316,6 +318,7 @@ export default function IssueChangePage() {
       id: action.id,
       closeEvidence: evidence,
       status: "done",
+      expected_version: action.version || 1,
     }, "行动项已关闭。");
     if (data) {
       setActionEvidence(prev => ({ ...prev, [action.id]: "" }));

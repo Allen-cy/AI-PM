@@ -1,109 +1,80 @@
-import { NextRequest, NextResponse } from "next/server";
-import { llmComplete } from "@/lib/llm";
+import { NextResponse } from "next/server";
 import { requireAuthenticatedApiUser } from "@/features/auth/server";
+import { parseProjectControlWriteContract } from "@/features/project-control/contracts";
+import { loadProjectControlSnapshot } from "@/features/project-control/repository";
+import { resolveProjectControlAccess } from "@/features/project-control/server";
+import type { ProjectControlSnapshot } from "@/features/project-control/snapshot";
+import { llmComplete } from "@/lib/llm";
 
-export async function POST(request: NextRequest) {
+function json(body: unknown, status: number, requestId: string) {
+  return NextResponse.json(body, { status, headers: { "Cache-Control": "no-store", "X-Request-Id": requestId } });
+}
+
+function fallback(snapshot: ProjectControlSnapshot) {
+  const exceptions = snapshot.exceptions.slice(0, 5);
+  return {
+    insights: [
+      `当前项目健康度为${snapshot.health.overall}，共${snapshot.exceptions.length}项需要关注的例外。`,
+      `任务${snapshot.execution.total_tasks}项，阻塞${snapshot.execution.blocked_tasks}项，逾期${snapshot.execution.overdue_tasks}项。`,
+      `高风险${snapshot.governance.open_high_risks}项，未关闭问题${snapshot.governance.open_issues}项，未完成行动${snapshot.governance.open_actions}项。`,
+    ],
+    rootCauses: exceptions.length ? exceptions.map(item => `${item.domain}：${item.title}（来源${item.source.table}）`) : ["当前没有可分析的例外，需确认业务数据是否已完成飞书对账。"],
+    recommendations: exceptions.length ? exceptions.map(item => `${item.owner || "项目经理"}在${item.deadline || "尽快"}前处理${item.title}，并补齐关闭证据。`) : ["执行一次飞书对账并确认任务、里程碑、风险和质量事实的更新时间。"],
+  };
+}
+
+async function load(request: Request, body?: Record<string, unknown>) {
+  const access = await resolveProjectControlAccess(request, body);
+  if (!access.ok) return { access, snapshot: null };
+  const snapshot = await loadProjectControlSnapshot({ orgId: access.orgId, projectId: access.projectId, dataClass: access.dataClass });
+  return { access, snapshot };
+}
+
+export async function GET(request: Request) {
+  const requestId = crypto.randomUUID();
+  if (!await requireAuthenticatedApiUser()) return json({ status: "failed", request_id: requestId, error: "UNAUTHORIZED" }, 401, requestId);
   try {
-    const user = await requireAuthenticatedApiUser();
-    if (!user) return NextResponse.json({ error: "UNAUTHORIZED" }, { status: 401 });
-    const body = await request.json();
-    const { projects, timeframe } = body as {
-      projects: Array<{
-        id: string;
-        name: string;
-        scheduleVariance: number;
-        costVariance: number;
-        scopeChangeCount: number;
-        riskCount: number;
-        status: string;
-        trend: string;
-      }>;
-      timeframe: string;
-    };
-
-    if (!projects || !Array.isArray(projects)) {
-      return NextResponse.json({ error: "Missing or invalid projects array" }, { status: 400 });
-    }
-
-    const projectSummary = projects.map(p =>
-      `${p.name}(${p.id}): 进度偏差${p.scheduleVariance}天, 成本偏差${p.costVariance}万元, 范围变更${p.scopeChangeCount}次, 风险${p.riskCount}个, 状态${p.status}, 趋势${p.trend}`
-    ).join("\n");
-
-    const prompt = `你是AI PM系统的监控中心分析师。请分析以下项目组合的运行状况：
-
-项目详情：
-${projectSummary}
-
-分析周期：${timeframe || '最近30天'}
-
-请从以下三个维度进行深度分析：
-
-1. **核心洞察 (insights)**：识别3-5个关键观察，如模式识别、异常点、关联性
-2. **根因分析 (rootCauses)**：分析导致当前问题的深层原因，聚焦可改善的因素
-3. **行动建议 (recommendations)**：给出3-5条具体的干预建议，包括优先级和预期效果
-
-要求：
-- 洞察要有数据支撑，简洁明确
-- 根因分析要避免流于表面，挖掘真正的驱动因素
-- 建议要具体可执行，指定责任方和预期周期
-- 使用中文输出
-- 返回JSON格式：{ insights: string[], rootCauses: string[], recommendations: string[] }`;
-
-    const result = await llmComplete(
-      "general",
-      `你是AI PM系统的监控中心分析师，精通项目管理方法论和数据可视化。
-分析维度：进度、成本、质量、风险、干系人满意度
-输出格式：严格的JSON对象 { insights: string[], rootCauses: string[], recommendations: string[] }`,
-      prompt
-    );
-
-    let parsed: { insights?: string[]; rootCauses?: string[]; recommendations?: string[] };
-    try {
-      // Try to extract JSON from the response
-      const content = result.content.trim();
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        parsed = JSON.parse(jsonMatch[0]);
-      } else {
-        parsed = JSON.parse(content);
-      }
-    } catch {
-      // Fallback if JSON parsing fails
-      parsed = {
-        insights: [
-          `当前有 ${projects.filter(p => p.status === 'critical').length} 个项目处于危急状态，需立即干预`,
-          `平均进度偏差为 ${(projects.reduce((s, p) => s + p.scheduleVariance, 0) / projects.length).toFixed(1)} 天`,
-          `成本偏差整体可控，但个别项目超支严重`,
-          `${projects.filter(p => p.trend === 'declining').length} 个项目趋势恶化`,
-          '范围变更频繁是主要风险来源'
-        ],
-        rootCauses: [
-          '资源分配不均，关键路径上的任务存在瓶颈',
-          '需求变更流程缺失有效的控制机制',
-          '早期风险识别不足，后期补救成本高',
-          '跨部门协调效率低下，导致等待时间过长',
-          '项目组合优先级动态调整机制缺失'
-        ],
-        recommendations: [
-          '优先级：高优先级项目启动专项资源保障机制，确保关键资源不被占用',
-          '优先级：高优先级建立变更预警机制，当范围变更超过3次时自动触发评审',
-          '优先级：中优先级引入风险预识别流程，在每个阶段启动会设置风险checkpoint',
-          '优先级：中优先级建立跨部门协调周会机制，减少协调等待时间',
-          '优先级：低优先级建立项目组合健康度仪表盘，实现动态优先级调整'
-        ]
-      };
-    }
-
-    return NextResponse.json({
-      insights: parsed.insights || [],
-      rootCauses: parsed.rootCauses || [],
-      recommendations: parsed.recommendations || [],
-    });
+    const { access, snapshot } = await load(request);
+    if (!access.ok || !snapshot) return json({ status: "failed", request_id: requestId, error: access.error, detail: access.detail }, access.status ?? 500, requestId);
+    return json({
+      status: "succeeded",
+      request_id: requestId,
+      context: { org_id: access.orgId, project_id: access.projectId, business_role: access.businessRole },
+      data_class: access.dataClass,
+      source: { ...snapshot.source, detail: "飞书业务事实经Supabase稳定镜像，与人工风险、问题、变更、行动、质量和收尾状态合并。" },
+      data: snapshot,
+      generated_at: snapshot.source.generated_at,
+      warnings: snapshot.source.warnings,
+    }, 200, requestId);
   } catch (error) {
-    console.error("[monitoring/insight] Error:", error);
-    return NextResponse.json(
-      { error: "Failed to generate monitoring insights", details: error instanceof Error ? error.message : String(error) },
-      { status: 500 }
-    );
+    return json({ status: "failed", request_id: requestId, error: "MONITORING_SOURCE_UNAVAILABLE", detail: error instanceof Error ? error.message : "监控事实读取失败。" }, 503, requestId);
+  }
+}
+
+export async function POST(request: Request) {
+  const requestId = crypto.randomUUID();
+  if (!await requireAuthenticatedApiUser()) return json({ status: "failed", request_id: requestId, error: "UNAUTHORIZED" }, 401, requestId);
+  let body: Record<string, unknown>;
+  try { body = await request.json() as Record<string, unknown>; }
+  catch { return json({ status: "failed", request_id: requestId, error: "INVALID_JSON" }, 400, requestId); }
+  try { parseProjectControlWriteContract(body); }
+  catch (error) { return json({ status: "failed", request_id: requestId, error: "PROJECT_CONTROL_CONTRACT_INVALID", detail: error instanceof Error ? error.message : "监控分析契约无效。" }, 400, requestId); }
+
+  try {
+    const { access, snapshot } = await load(request, body);
+    if (!access.ok || !snapshot) return json({ status: "failed", request_id: requestId, error: access.error, detail: access.detail }, access.status ?? 500, requestId);
+    let output = fallback(snapshot);
+    let model = "deterministic-project-snapshot";
+    let warning: string | null = null;
+    try {
+      const result = await llmComplete("general", "你是PMO监控分析师。只能依据传入的真实项目快照，返回JSON：{insights:string[],rootCauses:string[],recommendations:string[]}。不得补造事实。", JSON.stringify({ project: snapshot.project, health: snapshot.health, execution: snapshot.execution, schedule: snapshot.schedule, performance: snapshot.performance, governance: snapshot.governance, quality: snapshot.quality, closure: snapshot.closure, exceptions: snapshot.exceptions }));
+      const match = result.content.match(/\{[\s\S]*\}/);
+      const parsed = JSON.parse(match?.[0] ?? result.content) as typeof output;
+      if (Array.isArray(parsed.insights) && Array.isArray(parsed.rootCauses) && Array.isArray(parsed.recommendations)) { output = parsed; model = result.model; }
+      else warning = "模型返回结构不完整，已使用确定性监控摘要。";
+    } catch (error) { warning = `AI分析不可用，已保留确定性事实：${error instanceof Error ? error.message : "未知错误"}`; }
+    return json({ status: "succeeded", request_id: requestId, ...output, model, source: snapshot.source, warnings: [...snapshot.source.warnings, ...(warning ? [warning] : [])] }, 200, requestId);
+  } catch (error) {
+    return json({ status: "failed", request_id: requestId, error: "MONITORING_INSIGHT_FAILED", detail: error instanceof Error ? error.message : "监控分析失败。" }, 500, requestId);
   }
 }

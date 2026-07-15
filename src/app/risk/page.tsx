@@ -21,6 +21,7 @@ import type { RiskRetrospectiveQualityDashboard } from "@/features/risk/retrospe
 import type { RiskRetrospectiveDashboard } from "@/features/risk/retrospective";
 import {
   businessContextSearchParams,
+  buildProjectControlWriteContract,
   readStoredBusinessContext,
   readStoredCurrentProject,
   readStoredDataClass,
@@ -1505,6 +1506,7 @@ export default function RiskPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          ...buildProjectControlWriteContract("create_action", 0),
           operation: "create_action",
           title: action.title,
           owner: action.owner || "项目经理",

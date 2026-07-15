@@ -6,6 +6,7 @@ import { FeishuConfirmationInlinePanelClient } from "@/components/FeishuConfirma
 import { IntegrationStatusPanelClient } from "@/components/IntegrationStatusPanelClient";
 import {
   businessContextSearchParams,
+  buildProjectControlWriteContract,
   loadCurrentBusinessContextSearchParams,
   readStoredBusinessContext,
   readStoredDataClass,
@@ -264,6 +265,7 @@ export default function WorkbenchPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          ...buildProjectControlWriteContract("create_action", 0),
           operation: "create_action",
           title: item.actionTitle || item.title,
           owner: item.owner || "项目经理/PMO",
@@ -296,6 +298,7 @@ export default function WorkbenchPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          ...buildProjectControlWriteContract("create_action", 0),
           operation: "create_action",
           ...item.actionDraft,
         }),

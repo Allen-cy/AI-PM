@@ -2,13 +2,13 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { loadCurrentBusinessContextSearchParams, readStoredCurrentProject } from "@/features/operating-model/client-context";
 import {
   buildSensitivityReport,
   calculateSensitivity,
   sensitivityTemplates,
   type SensitivityFactor,
 } from "@/lib/risk-analytics";
-import { loadCurrentBusinessContextSearchParams } from "@/features/operating-model/client-context";
 
 function downloadText(filename: string, content: string) {
   const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
@@ -26,7 +26,7 @@ function normalizeNumber(value: string, fallback: number) {
 }
 
 export default function RiskSensitivityPage() {
-  const [projectName, setProjectName] = useState("示例项目");
+  const [projectName, setProjectName] = useState("");
   const [factors, setFactors] = useState<SensitivityFactor[]>(sensitivityTemplates);
   const [message, setMessage] = useState("");
   const [impactApiHref, setImpactApiHref] = useState("/risk");
@@ -34,8 +34,15 @@ export default function RiskSensitivityPage() {
   useEffect(() => {
     let cancelled = false;
     void loadCurrentBusinessContextSearchParams()
-      .then(params => {
+      .then(async params => {
+        const projectId = readStoredCurrentProject();
+        if (projectId) params.set("project_id", projectId);
         if (!cancelled) setImpactApiHref(`/api/risk/sensitivity-impact?${params.toString()}`);
+        if (!projectId) return;
+        const context = params.get("role");
+        const response = await fetch(`/api/monitoring?project_id=${encodeURIComponent(projectId)}&business_role=${encodeURIComponent(context || "pm")}&data_class=${encodeURIComponent(params.get("data_class") || "production")}`, { cache: "no-store" });
+        const body = await response.json() as { data?: { project?: { name?: string } } };
+        if (!cancelled && response.ok && body.data?.project?.name) setProjectName(body.data.project.name);
       })
       .catch(() => undefined);
     return () => { cancelled = true; };

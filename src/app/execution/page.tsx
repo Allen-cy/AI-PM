@@ -8,6 +8,7 @@ import {
   readStoredCurrentProject,
   readStoredDataClass,
   loadCurrentBusinessContextSearchParams,
+  buildProjectControlWriteContract,
 } from "@/features/operating-model/client-context";
 import {
   Task,
@@ -53,7 +54,7 @@ export default function ExecutionPage() {
       setSource({ status: "unavailable", detail: "请先在顶部业务上下文中选择已授权的项目和项目经理/运营/PMO角色。", warnings: [] });
       return;
     }
-    setSource({ status: "loading", detail: "正在读取飞书任务、飞书里程碑与Supabase变更记录。", warnings: [] });
+    setSource({ status: "loading", detail: "正在读取飞书事实、Supabase镜像与人工治理记录。", warnings: [] });
     const params = new URLSearchParams({ project_id: currentProject, business_role: context.businessRole, data_class: dataClass });
     try {
       const response = await fetch(`/api/execution?${params.toString()}`, { cache: "no-store" });
@@ -139,10 +140,8 @@ export default function ExecutionPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          ...buildProjectControlWriteContract("generate_summary", 0),
           operation: "generate_summary",
-          tasks,
-          deliverables,
-          projectId,
         }),
       });
       if (!res.ok) throw new Error("AI summary request failed");
@@ -181,6 +180,7 @@ export default function ExecutionPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          ...buildProjectControlWriteContract("create_action", 0),
           operation: "create_action",
           title: action.title,
           owner: action.owner || "项目经理",
@@ -217,6 +217,7 @@ export default function ExecutionPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          ...buildProjectControlWriteContract(operation, 0),
           operation,
           project_id: projectId,
           business_role: context.businessRole,

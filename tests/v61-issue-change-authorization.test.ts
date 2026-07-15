@@ -20,19 +20,10 @@ test("issue change API authorizes every read and mutation with one governed busi
   assert.match(route, /authorizeRiskRequest\(request,\s*"read"\)/);
   assert.match(route, /listIssueChangeChain\(access\.scope/);
   assert.match(route, /operationAccessOperation\(body\.operation\)/);
-  assert.match(route, /authorizeRiskRequest\(request,\s*operation\)/);
-
-  for (const operation of [
-    "createIssue",
-    "createIssueFromRisk",
-    "transitionIssue",
-    "createChange",
-    "transitionChange",
-    "closeUnifiedAction",
-    "createUnifiedAction",
-  ]) {
-    assert.match(route, new RegExp(`${operation}\\([\\s\\S]*?access\\.scope\\)`), `${operation} must receive the authorized scope`);
-  }
+  assert.match(route, /authorizeRiskRequest\(request,\s*accessOperation\)/);
+  assert.match(route, /parseProjectControlWriteContract\(body\)/);
+  assert.match(route, /apply_project_issue_change_action_tx/);
+  assert.match(route, /access\.scope\.orgId[\s\S]+contract\.projectId[\s\S]+contract\.dataClass/);
 
   assert.match(report, /authorizeRiskRequest\(request,\s*"read"\)/);
   assert.match(report, /issueChangeReportMarkdown\(access\.scope\)/);

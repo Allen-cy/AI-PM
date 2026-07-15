@@ -2,7 +2,7 @@
 
 日期：2026-07-11
 
-当前代码目标版本：6.3.2
+当前代码目标版本：6.3.3
 
 > V6.1.0 增量 migration 为 `20260711140000_v61_security_gate.sql`、`20260711150000_v61_risk_scope_quarantine.sql`和`20260711160000_v61_issue_action_scope.sql`。旧 P17–P25 migration 已通过对象、字段和约束对账，只标记迁移历史，不重复执行。
 
@@ -13,6 +13,8 @@
 > V6.3.1 增量 migration 为 `20260714200000_v631_delivery_control_realization.sql`。WBS版本、交付实绩、CPM/EVM快照、8–12周资源容量和冲突动作接口见 `docs/v631-delivery-control-realization.md`。不得重跑历史46份SQL，只应用尚未登记的正式migration。
 
 > V6.3.2 增量 migration 为 `20260714235000_v632_commercial_quality_acceptance_realization.sql` 与 `20260715080700_v632_event_search_path_security_fix.sql`。合同、应收、回款、干系人、质量、缺陷、验收和签发接口见 `docs/v632-commercial-quality-acceptance-realization.md`。两份迁移已登记到生产库，禁止修改或重跑；后续修复必须新增 migration。
+
+> V6.3.3 增量 migration 为 `20260715181000_v633_project_control_unification.sql` 与 `20260715190000_v633_security_posture_repair.sql`。执行、监控、风险、问题、变更、行动项和收尾的统一事实、原子状态机及安全修复见 `docs/v633-project-control-unification.md`。两份迁移均已登记到生产库，禁止修改或重跑；后续变更继续新增 migration。
 
 状态：本地质量门已通过；Vercel Production 环境变量补齐、部署、Git Tag 和 GitHub Release 已完成。生产完成仍依赖 Supabase Production 执行/确认 SQL，以及使用真实管理员账号完成线上飞书/真实业务数据冒烟。
 

@@ -48,6 +48,19 @@ export function writeStoredCurrentProject(projectId: string) {
   else window.localStorage.removeItem(CURRENT_PROJECT_STORAGE_KEY);
 }
 
+export function buildProjectControlWriteContract(operation: string, expectedVersion = 0) {
+  const context = readStoredBusinessContext();
+  const projectId = readStoredCurrentProject();
+  if (!context?.businessRole || !projectId) throw new Error("请先选择已授权项目和业务角色。");
+  return {
+    project_id: projectId,
+    business_role: context.businessRole,
+    data_class: readStoredDataClass(),
+    idempotency_key: `project-control:${operation}:${projectId}:${crypto.randomUUID()}`,
+    expected_version: expectedVersion,
+  };
+}
+
 export function currentReportingPeriod(now = new Date()): string {
   return new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit" }).format(now).slice(0, 7);
 }

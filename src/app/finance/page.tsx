@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import type { FinanceAlert, FinanceCockpit, FinanceHealth, FinancePriority } from "@/features/finance/cockpit";
-import { loadCurrentBusinessContextSearchParams } from "@/features/operating-model/client-context";
+import { buildProjectControlWriteContract, loadCurrentBusinessContextSearchParams } from "@/features/operating-model/client-context";
 
 interface FinanceResponse {
   status: "succeeded" | "not_configured" | "error" | "unauthorized";
@@ -143,6 +143,7 @@ export default function FinancePage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          ...buildProjectControlWriteContract("create_action", 0),
           operation: "create_action",
           title: alert.title,
           owner: alert.owner,

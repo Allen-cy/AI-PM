@@ -1,312 +1,195 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { getAuthSupabase, requireAuthenticatedApiUser } from '@/features/auth/server';
-import { buildExecutionSummaryEvidence, withAuditResult } from '@/features/ai/evidence';
-import { persistAiEvidence } from '@/features/ai/evidence-repository';
-import { FeishuApiError, FeishuBaseClient } from '@/features/feishu/client';
-import { getEffectiveFeishuConfig } from '@/features/feishu/user-config';
-import { listIssueChangeChain } from '@/features/issue-change/repository';
-import { projectAccessHttpStatus, resolveProjectLifecycleAccess } from '@/features/lifecycle-loop/access';
-import {
-  normalizeExecutionChanges,
-  normalizeExecutionDeliverables,
-  normalizeExecutionTasks,
-  type ExecutionProjectIdentity,
-} from '@/features/execution/real-data';
-import type { BusinessRole } from '@/features/operating-model/context';
-import { llmComplete } from '@/lib/llm';
+import { createHash } from "node:crypto";
+import { NextResponse } from "next/server";
+import { buildExecutionSummaryEvidence, withAuditResult } from "@/features/ai/evidence";
+import { persistAiEvidence } from "@/features/ai/evidence-repository";
+import { getAuthSupabase } from "@/features/auth/server";
+import { FeishuBaseClient } from "@/features/feishu/client";
+import { getEffectiveFeishuConfig } from "@/features/feishu/user-config";
+import { parseProjectControlWriteContract } from "@/features/project-control/contracts";
+import { loadProjectControlSnapshot } from "@/features/project-control/repository";
+import { resolveProjectControlAccess } from "@/features/project-control/server";
+import type { ProjectControlSnapshot } from "@/features/project-control/snapshot";
+import { llmComplete } from "@/lib/llm";
 
-const SYSTEM_PROMPT = `你是AI PM系统执行与交付模块的智能助手。
-分析项目执行数据，识别风险并提供建议。
-输出JSON格式：{ summary: string, risks: string[], recommendations: string[] }`;
+export const runtime = "nodejs";
 
-interface ExecutionTask {
-  name: string;
-  status: string;
-  assignee: string;
-  blockedReason?: string;
-}
-
-interface ExecutionDeliverable {
-  name: string;
-  status: string;
-}
-
-const DATA_CLASSES = new Set<ExecutionProjectIdentity['dataClass']>(['production', 'sample', 'test', 'diagnostic', 'unclassified']);
-const EXECUTION_ROLES = new Set<BusinessRole>(['pm', 'operations', 'pmo']);
+type Raw = Record<string, unknown>;
 
 function json(body: unknown, status: number, requestId: string) {
-  return NextResponse.json(body, {
-    status,
-    headers: { 'Cache-Control': 'no-store', 'X-Request-Id': requestId },
-  });
+  return NextResponse.json(body, { status, headers: { "Cache-Control": "no-store", "X-Request-Id": requestId } });
 }
 
-function requiredText(value: unknown, field: string, maximum = 200): string {
-  const output = String(value ?? '').trim();
-  if (!output || output.length > maximum) throw new Error(`${field}为必填项，且不得超过${maximum}字符。`);
-  return output;
+function text(value: unknown): string { return String(value ?? "").trim(); }
+function number(value: unknown): number { return Number.isFinite(Number(value)) ? Number(value) : 0; }
+function hash(value: unknown): string { return createHash("sha256").update(JSON.stringify(value)).digest("hex"); }
+function taskStatus(value: unknown): "pending" | "in-progress" | "completed" | "blocked" {
+  const status = text(value).toLowerCase();
+  if (["completed", "done", "closed", "已完成"].includes(status)) return "completed";
+  if (["blocked", "阻塞"].includes(status)) return "blocked";
+  if (["in_progress", "in-progress", "doing", "进行中"].includes(status)) return "in-progress";
+  return "pending";
 }
 
-function optionalText(value: unknown, maximum = 200): string {
-  const output = String(value ?? '').trim();
-  if (output.length > maximum) throw new Error(`字段不得超过${maximum}字符。`);
-  return output;
+function normalized(snapshot: ProjectControlSnapshot) {
+  const tasks = snapshot.execution.tasks.map(row => ({
+    id: text(row.id),
+    name: text(row.name || row.title) || "未命名任务",
+    assignee: text(row.assignee || row.owner) || "待分配",
+    status: taskStatus(row.status),
+    priority: (["high", "medium", "low"].includes(text(row.priority).toLowerCase()) ? text(row.priority).toLowerCase() : "medium") as "high" | "medium" | "low",
+    dueDate: text(row.plan_end || row.end_date || row.due_date).slice(0, 10),
+    progress: Math.max(0, Math.min(100, number(row.percent_complete || row.progress))),
+    blockedReason: text(row.blocked_reason || row.blockedReason) || undefined,
+    sourceRecordId: text(row.source_record_id) || null,
+    version: number(row.version),
+  }));
+  const deliverables = snapshot.execution.milestones.map(row => ({
+    id: text(row.id),
+    name: text(row.milestone_name || row.name) || "未命名里程碑",
+    status: (["approved", "accepted", "completed", "已完成"].includes(text(row.status).toLowerCase()) ? "accepted" : ["rejected", "驳回"].includes(text(row.status).toLowerCase()) ? "rejected" : number(row.progress) >= 100 ? "ready" : number(row.progress) > 0 ? "in-progress" : "pending") as "pending" | "in-progress" | "ready" | "accepted" | "rejected",
+    sourceRecordId: text(row.source_record_id) || null,
+    version: number(row.version),
+  }));
+  const changeRequests = snapshot.governance.changes.map(row => ({
+    id: text(row.id),
+    description: text(row.title || row.reason),
+    impact: text(row.impact_scope) || "影响待评估",
+    requestor: text(row.created_by_name || row.owner) || "待确认",
+    status: (["approved", "rejected"].includes(text(row.status)) ? text(row.status) : "pending") as "pending" | "approved" | "rejected",
+    approvedBy: text(row.approver) || undefined,
+    createdAt: text(row.created_at),
+    version: number(row.version),
+  }));
+  return { tasks, deliverables, changeRequests };
 }
 
-function toFeishuDate(value: string): number | undefined {
-  if (!value) return undefined;
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new Error('日期必须为YYYY-MM-DD。');
-  return new Date(`${value}T00:00:00+08:00`).getTime();
-}
-
-async function loadExecutionProject(input: {
-  projectId: string;
-  businessRole: BusinessRole;
-  dataClass: ExecutionProjectIdentity['dataClass'];
-  user: NonNullable<Awaited<ReturnType<typeof requireAuthenticatedApiUser>>>;
-}) {
-  if (!EXECUTION_ROLES.has(input.businessRole)) return { error: 'EXECUTION_ROLE_FORBIDDEN', status: 403 } as const;
-  const access = await resolveProjectLifecycleAccess({ user: input.user, projectId: input.projectId, businessRole: input.businessRole });
-  if (access.status !== 'succeeded' || !access.scope) {
-    return { error: access.status.toUpperCase(), detail: access.warning, status: projectAccessHttpStatus(access.status) } as const;
-  }
-  if (access.scope.dataClass !== input.dataClass) return { error: 'DATA_CLASS_MISMATCH', status: 409 } as const;
-  const project = await getAuthSupabase()
-    .from('projects')
-    .select('id,name,oa_no,source_record_id,data_class')
-    .eq('id', input.projectId)
-    .maybeSingle();
-  if (project.error) return { error: 'EXECUTION_PROJECT_LOAD_FAILED', detail: project.error.message, status: 500 } as const;
-  if (!project.data) return { error: 'EXECUTION_PROJECT_NOT_FOUND', status: 404 } as const;
+function deterministicSummary(snapshot: ProjectControlSnapshot) {
+  const facts = normalized(snapshot);
+  const blocked = facts.tasks.filter(item => item.status === "blocked");
+  const pendingDeliverables = facts.deliverables.filter(item => !["accepted"].includes(item.status));
   return {
-    project: {
-      id: String(project.data.id),
-      name: String(project.data.name),
-      code: project.data.oa_no ? String(project.data.oa_no) : null,
-      sourceRecordId: project.data.source_record_id ? String(project.data.source_record_id) : null,
-      dataClass: String(project.data.data_class) as ExecutionProjectIdentity['dataClass'],
-    } satisfies ExecutionProjectIdentity,
-    access,
-  } as const;
-}
-
-export async function GET(request: NextRequest) {
-  const requestId = crypto.randomUUID();
-  const user = await requireAuthenticatedApiUser();
-  if (!user) return json({ error: 'UNAUTHORIZED', request_id: requestId }, 401, requestId);
-  const url = new URL(request.url);
-  const projectId = String(url.searchParams.get('project_id') || '').trim();
-  const businessRole = String(url.searchParams.get('business_role') || '') as BusinessRole;
-  const dataClass = String(url.searchParams.get('data_class') || '') as ExecutionProjectIdentity['dataClass'];
-  if (!projectId || !businessRole || !DATA_CLASSES.has(dataClass)) {
-    return json({ error: 'EXECUTION_CONTEXT_REQUIRED', detail: '请先选择已授权的项目、业务角色和数据空间。', request_id: requestId }, 400, requestId);
-  }
-  const resolved = await loadExecutionProject({ projectId, businessRole, dataClass, user });
-  if (!('project' in resolved) || !resolved.project) return json({ ...resolved, request_id: requestId }, resolved.status, requestId);
-  const project = resolved.project;
-
-  const effective = await getEffectiveFeishuConfig();
-  if (!effective.config?.tables.task) {
-    return json({
-      error: 'FEISHU_TASK_TABLE_NOT_CONFIGURED',
-      detail: effective.setupHint || '请在用户中心配置个人飞书和任务表ID。',
-      lark_cli_hint: effective.larkCliHint,
-      request_id: requestId,
-      source: { type: 'feishu', fallback_used: false },
-    }, 503, requestId);
-  }
-
-  try {
-    const client = new FeishuBaseClient(effective.config);
-    const [taskResult, deliverableResult, chain] = await Promise.all([
-      client.listRecords('task', 500),
-      effective.config.tables.milestone
-        ? client.listRecords('milestone', 500).then(data => ({ data, error: null as string | null })).catch(error => ({ data: [], error: error instanceof Error ? error.message : String(error) }))
-        : Promise.resolve({ data: [], error: '未配置飞书里程碑表，交付物数据不可用。' }),
-      listIssueChangeChain({
-        actorUserId: user.id,
-        orgId: resolved.access.scope!.orgId,
-        projectIds: [project.id],
-        requestedProjectId: project.id,
-        dataClass,
-      }),
-    ]);
-    const tasks = normalizeExecutionTasks(taskResult, project);
-    const deliverables = normalizeExecutionDeliverables(deliverableResult.data, project);
-    const changeRequests = chain.status === 'succeeded' ? normalizeExecutionChanges(chain.changes, project.name) : [];
-    return json({
-      status: 'succeeded',
-      project,
-      tasks,
-      deliverables,
-      change_requests: changeRequests,
-      source: {
-        type: 'feishu+supabase',
-        fallback_used: false,
-        detail: `飞书任务${tasks.length}条，飞书交付物${deliverables.length}条，Supabase变更${changeRequests.length}条。`,
-        warnings: [deliverableResult.error, chain.status === 'succeeded' ? null : chain.warning].filter(Boolean),
-      },
-      request_id: requestId,
-    }, 200, requestId);
-  } catch (error) {
-    return json({
-      error: error instanceof FeishuApiError ? error.code : 'EXECUTION_SOURCE_UNAVAILABLE',
-      detail: error instanceof Error ? error.message : '执行数据源不可用。',
-      source: { type: 'feishu+supabase', fallback_used: false },
-      request_id: requestId,
-    }, 503, requestId);
-  }
-}
-
-function buildFallbackSummary(tasks: ExecutionTask[], deliverables: ExecutionDeliverable[]) {
-  const blocked = tasks.filter(task => task.status === 'blocked');
-  const inProgress = tasks.filter(task => task.status === 'in-progress');
-  const pendingDeliverables = deliverables.filter(deliverable =>
-    ['pending', 'in-progress', 'rejected'].includes(deliverable.status)
-  );
-
-  return {
-    summary: `当前共有${tasks.length}项任务，${inProgress.length}项进行中，${blocked.length}项阻塞；交付物共${deliverables.length}项，其中${pendingDeliverables.length}项仍需推进或验收。`,
-    risks: blocked.length > 0
-      ? blocked.map(task => `${task.name}阻塞${task.blockedReason ? `：${task.blockedReason}` : ''}`)
-      : ['未发现明确阻塞任务，需继续跟踪交付物验收状态。'],
-    recommendations: [
-      '优先解除高优先级阻塞任务，明确责任人和预计恢复时间。',
-      '对待验收或被拒交付物补齐质量检查与客户确认记录。',
-      '每周复核任务进度、交付物状态和变更请求，避免执行数据滞后。',
-    ],
+    summary: `当前项目共有${facts.tasks.length}项任务、${facts.deliverables.length}个里程碑；${blocked.length}项任务阻塞，${pendingDeliverables.length}个里程碑尚未完成验收。`,
+    risks: snapshot.exceptions.slice(0, 5).map(item => `${item.title}（${item.status || "待处理"}）`),
+    recommendations: snapshot.exceptions.slice(0, 5).map(item => `${item.owner || "项目经理"}在${item.deadline || "尽快"}前处理：${item.title}`),
   };
 }
 
-export async function POST(req: NextRequest) {
+export async function GET(request: Request) {
   const requestId = crypto.randomUUID();
-  const user = await requireAuthenticatedApiUser();
-  if (!user) return json({ error: 'UNAUTHORIZED', request_id: requestId }, 401, requestId);
+  const access = await resolveProjectControlAccess(request);
+  if (!access.ok) return json({ status: "failed", request_id: requestId, error: access.error, detail: access.detail }, access.status, requestId);
   try {
-    const body = await req.json() as Record<string, unknown>;
-    const operation = String(body.operation || 'generate_summary');
-
-    if (operation === 'create_task' || operation === 'create_deliverable') {
-      const projectId = requiredText(body.project_id, 'project_id');
-      const businessRole = requiredText(body.business_role, 'business_role', 40) as BusinessRole;
-      const dataClass = requiredText(body.data_class, 'data_class', 40) as ExecutionProjectIdentity['dataClass'];
-      if (!DATA_CLASSES.has(dataClass)) return json({ error: 'DATA_CLASS_INVALID', request_id: requestId }, 400, requestId);
-      const resolved = await loadExecutionProject({ projectId, businessRole, dataClass, user });
-      if (!('project' in resolved) || !resolved.project) return json({ ...resolved, request_id: requestId }, resolved.status, requestId);
-      const project = resolved.project;
-      const effective = await getEffectiveFeishuConfig();
-      const tableKey = operation === 'create_task' ? 'task' : 'milestone';
-      if (!effective.config?.tables[tableKey]) {
-        return json({
-          error: tableKey === 'task' ? 'FEISHU_TASK_TABLE_NOT_CONFIGURED' : 'FEISHU_MILESTONE_TABLE_NOT_CONFIGURED',
-          detail: `请在用户中心配置个人飞书${tableKey === 'task' ? '任务' : '里程碑'}表ID。`,
-          request_id: requestId,
-          source: { type: 'feishu', fallback_used: false },
-        }, 503, requestId);
-      }
-      const name = requiredText(body.name, operation === 'create_task' ? '任务名称' : '交付物名称');
-      const owner = optionalText(body.owner);
-      const dueDate = optionalText(body.due_date, 20);
-      const commonFields: Record<string, unknown> = {
-        '关联项目UUID': project.id,
-        '关联项目编号': project.code || undefined,
-        '项目名称': project.name,
-        '数据分类': project.dataClass,
-        '负责人': owner || undefined,
-        '截止日期': toFeishuDate(dueDate),
-      };
-      const fields = operation === 'create_task'
-        ? { ...commonFields, '任务名称': name, '任务状态': '待处理', '优先级': '中', '完成进度': 0 }
-        : { ...commonFields, '交付物名称': name, '验收状态': '待提交' };
-      const created = await new FeishuBaseClient(effective.config).createRecord(tableKey, fields);
-      return json({
-        status: 'succeeded',
-        operation,
-        record_id: created.recordId,
-        source: { type: 'feishu', fallback_used: false },
-        request_id: requestId,
-      }, 201, requestId);
-    }
-
-    const tasks = Array.isArray(body.tasks) ? body.tasks : [];
-    const deliverables = Array.isArray(body.deliverables) ? body.deliverables : [];
-    const projectId = requiredText(body.projectId, 'projectId');
-    const typedTasks = tasks as ExecutionTask[];
-    const typedDeliverables = deliverables as ExecutionDeliverable[];
-    if (typedTasks.length === 0 && typedDeliverables.length === 0) {
-      return json({ error: 'EXECUTION_SOURCE_EMPTY', detail: '当前项目没有可供分析的真实任务或交付物。', request_id: requestId }, 422, requestId);
-    }
-    const blockedTaskCount = typedTasks.filter(task => task.status === 'blocked').length;
-    const pendingDeliverableCount = typedDeliverables.filter(deliverable => ['pending', 'in-progress', 'rejected'].includes(deliverable.status)).length;
-
-    const taskSummary = typedTasks
-      .map((t: ExecutionTask) =>
-        `- ${t.name} [${t.status}] @${t.assignee}`)
-      .join('\n');
-
-    const deliverableSummary = typedDeliverables
-      .map((d: ExecutionDeliverable) =>
-        `- ${d.name} [${d.status}]`)
-      .join('\n');
-
-    const userMessage = `项目ID: ${projectId}
-
-## 任务列表
-${taskSummary}
-
-## 交付物列表
-${deliverableSummary}
-
-请按以下JSON格式返回（纯JSON，无其他内容）：
-{
-  "summary": "整体执行状态概述（2-3句话）",
-  "risks": ["风险1", "风险2", "风险3"],
-  "recommendations": ["建议1", "建议2", "建议3"]
-}`;
-
-    let resultModel = "configured-llm";
-    let parsedStatus: "generated" | "fallback" = "generated";
-    const result = await llmComplete("execution", SYSTEM_PROMPT, userMessage);
-    resultModel = result.model;
-
-    let parsed;
-    try {
-      const jsonMatch = result.content.match(/\{[\s\S]*\}/);
-      parsed = JSON.parse(jsonMatch?.[0] ?? result.content);
-    } catch {
-      parsedStatus = "fallback";
-      parsed = {
-        summary: result.content.slice(0, 200),
-        risks: ['数据解析异常，请人工确认'],
-        recommendations: ['建议人工复核任务状态'],
-      };
-    }
-
-    const evidence = buildExecutionSummaryEvidence({
-      projectId,
-      taskCount: typedTasks.length,
-      blockedTaskCount,
-      deliverableCount: typedDeliverables.length,
-      pendingDeliverableCount,
-      model: parsedStatus === "generated" ? resultModel : `${resultModel}/parse-fallback`,
-      status: parsedStatus,
-    });
-    const audit = await persistAiEvidence({ evidence, user, requestId, metadata: { route: "/api/execution" } });
-
+    const snapshot = await loadProjectControlSnapshot({ orgId: access.orgId, projectId: access.projectId, dataClass: access.dataClass });
+    const facts = normalized(snapshot);
     return json({
+      status: "succeeded",
       request_id: requestId,
-      summary: typeof parsed.summary === 'string' ? parsed.summary : buildFallbackSummary(typedTasks, typedDeliverables).summary,
-      risks: Array.isArray(parsed.risks) ? parsed.risks : buildFallbackSummary(typedTasks, typedDeliverables).risks,
-      recommendations: Array.isArray(parsed.recommendations) ? parsed.recommendations : buildFallbackSummary(typedTasks, typedDeliverables).recommendations,
-      evidence: withAuditResult(evidence, audit.status === "succeeded" ? { status: "succeeded", id: audit.id } : { status: audit.status, warning: audit.warning }),
+      context: { org_id: access.orgId, project_id: access.projectId, business_role: access.businessRole },
+      data_class: access.dataClass,
+      project: snapshot.project,
+      tasks: facts.tasks,
+      deliverables: facts.deliverables,
+      change_requests: facts.changeRequests,
+      exceptions: snapshot.exceptions,
+      source: { ...snapshot.source, detail: `飞书事实经Supabase镜像：任务${facts.tasks.length}条、里程碑${facts.deliverables.length}条；人工治理变更${facts.changeRequests.length}条。` },
+      data: snapshot,
     }, 200, requestId);
   } catch (error) {
-    console.error('[execution] request failed:', error);
-    return json({
-      error: error instanceof FeishuApiError ? error.code : 'EXECUTION_REQUEST_FAILED',
-      detail: error instanceof Error ? error.message : '执行与交付请求失败。',
-      source: { fallback_used: false },
-      request_id: requestId,
-    }, error instanceof FeishuApiError ? 503 : 500, requestId);
+    return json({ status: "failed", request_id: requestId, error: "EXECUTION_SOURCE_UNAVAILABLE", detail: error instanceof Error ? error.message : "真实项目数据读取失败。", source: { type: "supabase_mirror", fallback_used: false } }, 503, requestId);
+  }
+}
+
+export async function POST(request: Request) {
+  const requestId = crypto.randomUUID();
+  let body: Raw;
+  try { body = await request.json() as Raw; }
+  catch { return json({ status: "failed", request_id: requestId, error: "INVALID_JSON" }, 400, requestId); }
+
+  let contract;
+  try { contract = parseProjectControlWriteContract(body); }
+  catch (error) { return json({ status: "failed", request_id: requestId, error: "PROJECT_CONTROL_CONTRACT_INVALID", detail: error instanceof Error ? error.message : "写入契约错误。" }, 400, requestId); }
+  const access = await resolveProjectControlAccess(request, body);
+  if (!access.ok) return json({ status: "failed", request_id: requestId, error: access.error, detail: access.detail }, access.status, requestId);
+  if (contract.projectId !== access.projectId || contract.businessRole !== access.businessRole || contract.dataClass !== access.dataClass) {
+    return json({ status: "failed", request_id: requestId, error: "PROJECT_CONTROL_SCOPE_MISMATCH" }, 409, requestId);
+  }
+
+  try {
+    const snapshot = await loadProjectControlSnapshot({ orgId: access.orgId, projectId: access.projectId, dataClass: access.dataClass });
+    const project = { ...snapshot.project, dataClass: snapshot.project.data_class };
+    const dataClass = contract.dataClass;
+    if (dataClass !== project.dataClass || !(dataClass === project.dataClass)) {
+      return json({ status: "failed", request_id: requestId, error: "DATA_CLASS_MISMATCH" }, 409, requestId);
+    }
+    const operation = text(body.operation || "generate_summary");
+
+    if (operation === "generate_summary") {
+      const fallback = deterministicSummary(snapshot);
+      let output = fallback;
+      let model = "deterministic-project-snapshot";
+      let evidenceStatus: "generated" | "fallback" = "fallback";
+      try {
+        const result = await llmComplete("execution", "你是项目执行分析助手。只能依据给定项目快照，返回JSON：{summary:string,risks:string[],recommendations:string[]}。", JSON.stringify({ project: snapshot.project, health: snapshot.health, execution: snapshot.execution, governance: snapshot.governance, quality: snapshot.quality, exceptions: snapshot.exceptions }));
+        const match = result.content.match(/\{[\s\S]*\}/);
+        const parsed = JSON.parse(match?.[0] ?? result.content) as typeof fallback;
+        if (typeof parsed.summary === "string" && Array.isArray(parsed.risks) && Array.isArray(parsed.recommendations)) {
+          output = parsed; model = result.model; evidenceStatus = "generated";
+        }
+      } catch { /* deterministic facts remain available */ }
+      const facts = normalized(snapshot);
+      const evidence = buildExecutionSummaryEvidence({
+        projectId: project.id,
+        taskCount: facts.tasks.length,
+        blockedTaskCount: facts.tasks.filter(item => item.status === "blocked").length,
+        deliverableCount: facts.deliverables.length,
+        pendingDeliverableCount: facts.deliverables.filter(item => item.status !== "accepted").length,
+        model,
+        status: evidenceStatus,
+      });
+      const audit = await persistAiEvidence({ evidence, user: access.user, requestId, metadata: { route: "/api/execution", source: "governed_project_snapshot", project_id: project.id } });
+      return json({ status: "succeeded", request_id: requestId, ...output, evidence: withAuditResult(evidence, audit.status === "succeeded" ? { status: "succeeded", id: audit.id } : { status: audit.status, warning: audit.warning }), source: snapshot.source }, 200, requestId);
+    }
+
+    if (!new Set(["create_task", "create_deliverable"]).has(operation)) return json({ status: "failed", request_id: requestId, error: "EXECUTION_OPERATION_INVALID" }, 400, requestId);
+    if (contract.expectedVersion !== 0) return json({ status: "failed", request_id: requestId, error: "VERSION_CONFLICT" }, 409, requestId);
+    const payloadHash = hash(body);
+    const { data: begin, error: beginError } = await getAuthSupabase().rpc("begin_v633_project_control_operation", {
+      p_org_id: access.orgId, p_project_id: project.id, p_data_class: dataClass, p_operation: operation,
+      p_idempotency_key: contract.idempotencyKey, p_request_hash: payloadHash, p_actor_user_id: access.user.id, p_request_id: requestId,
+    });
+    if (beginError) throw new Error(beginError.message);
+    const receipt = begin as { receipt_id?: string; status?: string; result?: Raw; replayed?: boolean };
+    if (receipt.replayed && receipt.result) return json({ ...receipt.result, replayed: true, request_id: requestId }, 200, requestId);
+    if (receipt.status !== "running" || !receipt.receipt_id) return json({ status: "failed", request_id: requestId, error: "OPERATION_ALREADY_RUNNING" }, 409, requestId);
+
+    try {
+      const effective = await getEffectiveFeishuConfig();
+      const tableKey = operation === "create_task" ? "task" : "milestone";
+      if (!effective.config?.tables[tableKey]) throw new Error(tableKey === "task" ? "FEISHU_TASK_TABLE_NOT_CONFIGURED" : "FEISHU_MILESTONE_TABLE_NOT_CONFIGURED");
+      const name = text(body.name);
+      if (!name) throw new Error("NAME_REQUIRED");
+      const fields: Raw = {
+        "关联项目UUID": project.id,
+        "关联项目编号": project.code || undefined,
+        "项目名称": project.name,
+        "数据分类": project.dataClass,
+        [operation === "create_task" ? "任务名称" : "里程碑名称"]: name,
+        [operation === "create_task" ? "任务状态" : "里程碑状态"]: "未开始",
+        "负责人": text(body.owner) || undefined,
+      };
+      const due = text(body.due_date);
+      if (due) fields[operation === "create_task" ? "计划结束日期" : "预测日期"] = new Date(`${due}T00:00:00+08:00`).getTime();
+      const record = await new FeishuBaseClient(effective.config).createRecord(tableKey, fields);
+      const result = { status: "succeeded", record_id: record.recordId, source: { type: "feishu", mirrored_by: "next_reconcile" } };
+      const { error: finishError } = await getAuthSupabase().rpc("finish_v633_project_control_operation", { p_receipt_id: receipt.receipt_id, p_status: "succeeded", p_result: result, p_error: null });
+      if (finishError) throw new Error(finishError.message);
+      return json({ ...result, request_id: requestId }, 201, requestId);
+    } catch (error) {
+      await getAuthSupabase().rpc("finish_v633_project_control_operation", { p_receipt_id: receipt.receipt_id, p_status: "failed", p_result: null, p_error: error instanceof Error ? error.message : "EXECUTION_WRITE_FAILED" });
+      throw error;
+    }
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "执行与交付请求失败。";
+    return json({ status: "failed", request_id: requestId, error: detail.includes("VERSION_CONFLICT") ? "VERSION_CONFLICT" : detail.includes("IDEMPOTENCY") ? "IDEMPOTENCY_CONFLICT" : "EXECUTION_REQUEST_FAILED", detail, source: { fallback_used: false } }, detail.includes("CONFLICT") ? 409 : 500, requestId);
   }
 }

@@ -131,6 +131,7 @@ function safeNumber(value: unknown): number | null {
 function mapIssue(row: Record<string, unknown>): IssueRecord {
   return {
     id: String(row.id),
+    version: Number(row.version || 1),
     orgId: row.org_id ? String(row.org_id) : null,
     projectId: row.project_id ? String(row.project_id) : null,
     dataClass: String(row.data_class || "unclassified") as IssueRecord["dataClass"],
@@ -157,6 +158,7 @@ function mapIssue(row: Record<string, unknown>): IssueRecord {
 function mapChange(row: Record<string, unknown>): ChangeRecord {
   return {
     id: String(row.id),
+    version: Number(row.version || 1),
     orgId: row.org_id ? String(row.org_id) : null,
     projectId: row.project_id ? String(row.project_id) : null,
     dataClass: String(row.data_class || "unclassified") as ChangeRecord["dataClass"],
@@ -187,6 +189,7 @@ function mapChange(row: Record<string, unknown>): ChangeRecord {
 function mapAction(row: Record<string, unknown>): UnifiedActionRecord {
   return {
     id: String(row.id),
+    version: Number(row.version || 1),
     orgId: row.org_id ? String(row.org_id) : null,
     projectId: row.project_id ? String(row.project_id) : null,
     dataClass: String(row.data_class || "unclassified") as UnifiedActionRecord["dataClass"],
