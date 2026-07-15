@@ -35,6 +35,12 @@ The easiest way to deploy your Next.js app is to use the [Vercel Platform](https
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
 
+## AI-PMO System V6.4.0
+
+V6.4.0 将 PM、运营、PMO 和 CEO 的首屏工作体验按真实职责重新编排。PM 聚焦今日行动、关键路径、里程碑和正式周报；运营聚焦验收、开票、应收、回款和现金；PMO 运营例外池、数据质量、治理 SLA 和会议事项；CEO 只看战略项目、现金、收益、重大风险和待决策收件箱。四个角色继续使用共同项目事实，不拆成四套系统。
+
+统一收件箱聚合九类治理事项并保存个人处理回执。项目、人员、证据、正式成果和业务对象统一通过业务名称选择器录入，复杂内容改为结构化编辑，正式页面不再要求业务用户手填 UUID 或 JSON。生产数据库已应用 V6.4.0 增量迁移，四张新表均启用 RLS 且客户端直接权限为 0；四个不同测试账号、五个隔离测试项目和 PM/运营→PMO→CEO 汇报关系已建立。自动化账号不冒充真实人员试点，详细边界与接口见 `docs/v640-role-workbench-and-inbox.md`。
+
 ## AI-PMO System V6.3.4
 
 V6.3.4 将报告、治理会议纪要、迁移评审/对比/Go-No-Go 决策包和已审批知识资产统一为可追溯的“正式业务成果”。完整正文、来源时点、结构化数据、稳定项目、数据空间、幂等键、内容哈希、版本和状态事件均持久化到 Supabase。报告正文与 `reporting_snapshots` 在同一事务创建，浏览器 `localStorage` 不再是报告历史的权威存储。

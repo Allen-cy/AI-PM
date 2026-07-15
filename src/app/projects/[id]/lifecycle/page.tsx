@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { BusinessEntityMultiSelect, BusinessEntitySelect } from "@/components/BusinessEntitySelect";
+import { StructuredFieldsEditor } from "@/components/StructuredFieldsEditor";
 
 type LifecycleState = {
   id: string; objectType: string; objectId: string; status: string; version: number;
@@ -74,7 +76,7 @@ export default function ProjectLifecyclePage() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
-  const [transitionEvidenceIds, setTransitionEvidenceIds] = useState("");
+  const [transitionEvidenceIds, setTransitionEvidenceIds] = useState<string[]>([]);
   const [transitionComment, setTransitionComment] = useState("");
   const [objectForm, setObjectForm] = useState({ objectType: "deliverable", objectId: "", title: "", sourceType: "feishu_record", sourceId: "", ownerUserId: "", dueAt: "" });
 
@@ -84,11 +86,11 @@ export default function ProjectLifecyclePage() {
   });
   const [correctionForm, setCorrectionForm] = useState({
     targetType: "management_signal", targetId: "", correctionType: "false_positive",
-    reasonCode: "SOURCE_FACT_INCORRECT", reasonDetail: "", proposedCorrection: "{}",
+    reasonCode: "SOURCE_FACT_INCORRECT", reasonDetail: "", proposedCorrection: { corrected_value: "", correction_basis: "" } as Record<string, unknown>,
     ownerUserId: "", dueAt: "",
   });
   const [correctionActionComment, setCorrectionActionComment] = useState("");
-  const [appliedCorrection, setAppliedCorrection] = useState("{}");
+  const [appliedCorrection, setAppliedCorrection] = useState<Record<string, unknown>>({ actual_change: "", result: "" });
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -135,7 +137,7 @@ export default function ProjectLifecyclePage() {
       business_role: businessRole, data_class: dataClass,
       idempotency_key: `${state.id}:${state.version}:${action}`,
       comment: transitionComment,
-      evidence_ids: transitionEvidenceIds.split(",").map(item => item.trim()).filter(Boolean),
+      evidence_ids: transitionEvidenceIds,
     }, `已执行：${ACTION_LABELS[action] || action}。`);
   }
 
@@ -154,7 +156,7 @@ export default function ProjectLifecyclePage() {
     await mutate(`/api/projects/${projectId}/lifecycle/evidence`, {
       object_type: evidenceForm.objectType, object_id: evidenceForm.objectId,
       evidence_type: evidenceForm.evidenceType, source_type: evidenceForm.sourceType,
-      source_id: evidenceForm.sourceId, source_url: evidenceForm.sourceUrl,
+      source_id: evidenceForm.sourceId || evidenceForm.sourceUrl, source_url: evidenceForm.sourceUrl,
       title: evidenceForm.title, version: evidenceForm.version,
       valid_until: evidenceForm.validUntil ? new Date(evidenceForm.validUntil).toISOString() : null, business_role: businessRole, data_class: dataClass,
     }, "证据已登记，等待授权角色核验。");
@@ -167,15 +169,12 @@ export default function ProjectLifecyclePage() {
   }
 
   async function submitCorrection() {
-    let proposed: Record<string, unknown>;
-    try { proposed = JSON.parse(correctionForm.proposedCorrection) as Record<string, unknown>; }
-    catch { setNotice("拟议纠偏必须是有效JSON对象。"); return; }
     const targetId = correctionForm.targetId || String(data?.exceptions?.[0]?.id || "");
     const ownerUserId = correctionForm.ownerUserId || data?.context?.actorUserId || "";
     await mutate("/api/feedback-corrections", {
       project_id: projectId, target_type: correctionForm.targetType, target_id: targetId,
       correction_type: correctionForm.correctionType, reason_code: correctionForm.reasonCode,
-      reason_detail: correctionForm.reasonDetail, proposed_correction: proposed,
+      reason_detail: correctionForm.reasonDetail, proposed_correction: correctionForm.proposedCorrection,
       correction_owner_user_id: ownerUserId, due_at: correctionForm.dueAt ? new Date(correctionForm.dueAt).toISOString() : "",
       resubmission_path: `/projects/${projectId}/lifecycle`, business_role: businessRole, data_class: dataClass,
       idempotency_key: `${correctionForm.targetType}:${targetId}:correction:${correctionForm.reasonCode}:v1`,
@@ -183,11 +182,7 @@ export default function ProjectLifecyclePage() {
   }
 
   async function actOnCorrection(correction: Correction, action: string) {
-    let applied: Record<string, unknown> | undefined;
-    if (action === "submit_correction") {
-      try { applied = JSON.parse(appliedCorrection) as Record<string, unknown>; }
-      catch { setNotice("已实施纠偏必须是有效JSON对象。"); return; }
-    }
+    const applied = action === "submit_correction" ? appliedCorrection : undefined;
     await mutate(`/api/feedback-corrections/${correction.id}/transition`, {
       action, business_role: businessRole, data_class: dataClass,
       comment: correctionActionComment, applied_correction: applied,
@@ -200,6 +195,8 @@ export default function ProjectLifecyclePage() {
   const selectedCorrectionTargetId = correctionForm.targetId || String(openExceptions[0]?.id || "");
   const correctionOwnerUserId = correctionForm.ownerUserId || data?.context?.actorUserId || "";
   const unverifiedEvidence = useMemo(() => (data?.evidence ?? []).filter(item => !item.verified_at), [data?.evidence]);
+  const objectDirectoryType: Record<string, string> = { plan_baseline: "plan", deliverable: "task", change: "change", reporting: "reporting" };
+  const correctionDirectoryType: Record<string, string> = { management_signal: "management_signal", lifecycle_state: "lifecycle_state", action: "action" };
 
   return (
     <main style={{ minHeight: "100vh", background: "var(--bg)" }}>
@@ -235,7 +232,7 @@ export default function ProjectLifecyclePage() {
 
             <section className="card">
               <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}><div><h2 style={{ fontSize: "1.05rem" }}>状态推进与授权门禁</h2><p style={{ color: "var(--text2)", fontSize: ".78rem", marginTop: 5 }}>系统先验证状态、角色和证据，再用数据库事务记录不可变事件。</p></div></div>
-              {projectState && <div style={{ display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))", gap: 8, padding: 12, marginTop: 12, border: "1px solid var(--border)", borderRadius: 10, background: "var(--surface2)" }}><select className="input" value={objectForm.objectType} onChange={event => setObjectForm({ ...objectForm, objectType: event.target.value })}>{["plan_baseline", "deliverable", "change", "reporting", "closure"].map(item => <option key={item}>{item}</option>)}</select><input className="input" placeholder="业务对象稳定ID" value={objectForm.objectId} onChange={event => setObjectForm({ ...objectForm, objectId: event.target.value })}/><input className="input" placeholder="对象名称" value={objectForm.title} onChange={event => setObjectForm({ ...objectForm, title: event.target.value })}/><input className="input" placeholder="责任人用户ID" value={objectForm.ownerUserId} onChange={event => setObjectForm({ ...objectForm, ownerUserId: event.target.value })}/><input className="input" placeholder="主数据来源类型" value={objectForm.sourceType} onChange={event => setObjectForm({ ...objectForm, sourceType: event.target.value })}/><input className="input" placeholder="主数据来源记录ID" value={objectForm.sourceId} onChange={event => setObjectForm({ ...objectForm, sourceId: event.target.value })}/><input className="input" type="datetime-local" value={objectForm.dueAt} onChange={event => setObjectForm({ ...objectForm, dueAt: event.target.value })}/><button className="btn btn-primary" disabled={busy || !objectForm.objectId || (objectForm.objectType !== "closure" && (!objectForm.sourceType || !objectForm.sourceId))} onClick={() => void initializeObject()}>纳入生命周期</button></div>}
+              {projectState && <div style={{ display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))", gap: 8, padding: 12, marginTop: 12, border: "1px solid var(--border)", borderRadius: 10, background: "var(--surface2)" }}><select className="input" value={objectForm.objectType} onChange={event => setObjectForm({ ...objectForm, objectType: event.target.value, objectId: event.target.value === "closure" ? projectId : "", sourceId: event.target.value === "closure" ? projectId : "", sourceType: event.target.value === "closure" ? "project" : "business_directory" })}>{["plan_baseline", "deliverable", "change", "reporting", "closure"].map(item => <option key={item}>{item}</option>)}</select>{objectForm.objectType === "closure" ? <div className="input" style={{ color: "var(--text2)" }}>当前项目收尾对象</div> : <BusinessEntitySelect kind="businessObject" projectId={projectId} entityType={objectDirectoryType[objectForm.objectType]} value={objectForm.objectId} onChange={objectId => setObjectForm({ ...objectForm, objectId, sourceId: objectId, sourceType: "business_directory" })} onSelectedOption={option => option && setObjectForm(current => ({ ...current, title: option.label }))} placeholder="选择要纳入的业务对象"/>}<input className="input" placeholder="对象名称" value={objectForm.title} onChange={event => setObjectForm({ ...objectForm, title: event.target.value })}/><BusinessEntitySelect kind="person" value={objectForm.ownerUserId} onChange={ownerUserId => setObjectForm({ ...objectForm, ownerUserId })} placeholder="选择责任人"/><input className="input" type="datetime-local" value={objectForm.dueAt} onChange={event => setObjectForm({ ...objectForm, dueAt: event.target.value })}/><button className="btn btn-primary" disabled={busy || !objectForm.objectId || !objectForm.ownerUserId} onClick={() => void initializeObject()}>纳入生命周期</button></div>}
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(280px,1fr))", gap: 12, marginTop: 14 }}>
                 {(data.states ?? []).map(state => <article key={state.id} style={{ padding: 13, border: "1px solid var(--border)", borderRadius: 12, background: "var(--surface2)" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}><strong>{state.objectType}</strong><span className={statusTone(state.status)}>{state.status}</span></div>
@@ -243,7 +240,7 @@ export default function ProjectLifecyclePage() {
                   <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginTop: 11 }}>{(STATE_ACTIONS[state.objectType]?.[state.status] ?? []).map(action => <button key={action} className="btn btn-secondary" disabled={busy} onClick={() => void transition(state, action)}>{ACTION_LABELS[action] || action}</button>)}</div>
                 </article>)}
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "2fr 3fr", gap: 10, marginTop: 14 }}><input className="input" placeholder="证据ID，多个用逗号分隔" value={transitionEvidenceIds} onChange={event => setTransitionEvidenceIds(event.target.value)} /><input className="input" placeholder="本次人工操作说明" value={transitionComment} onChange={event => setTransitionComment(event.target.value)} /></div>
+              <div style={{ display: "grid", gridTemplateColumns: "2fr 3fr", gap: 10, marginTop: 14 }}><BusinessEntityMultiSelect kind="evidence" value={transitionEvidenceIds} onChange={setTransitionEvidenceIds} placeholder="选择本次状态变更证据"/><input className="input" placeholder="本次人工操作说明" value={transitionComment} onChange={event => setTransitionComment(event.target.value)} /></div>
             </section>
 
             <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1.05fr) minmax(0,.95fr)", gap: 18 }}>
@@ -256,10 +253,9 @@ export default function ProjectLifecyclePage() {
                 <h2 style={{ fontSize: "1.05rem" }}>登记可验证证据</h2>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 9, marginTop: 12 }}>
                   <select className="input" value={evidenceForm.objectType} onChange={event => setEvidenceForm({ ...evidenceForm, objectType: event.target.value })}>{["project", "plan_baseline", "deliverable", "change", "reporting", "closure"].map(item => <option key={item}>{item}</option>)}</select>
-                  <input className="input" placeholder="业务对象ID" value={evidenceForm.objectId} onChange={event => setEvidenceForm({ ...evidenceForm, objectId: event.target.value })} />
+                  {evidenceForm.objectType === "project" ? <div className="input" style={{ color: "var(--text2)" }}>当前项目</div> : <BusinessEntitySelect kind="businessObject" projectId={projectId} entityType={objectDirectoryType[evidenceForm.objectType]} value={evidenceForm.objectId} onChange={objectId => setEvidenceForm({ ...evidenceForm, objectId })} placeholder="选择证据所属对象"/>}
                   <input className="input" placeholder="证据类型，如 project_charter" value={evidenceForm.evidenceType} onChange={event => setEvidenceForm({ ...evidenceForm, evidenceType: event.target.value })} />
                   <input className="input" placeholder="来源类型，如 feishu_drive" value={evidenceForm.sourceType} onChange={event => setEvidenceForm({ ...evidenceForm, sourceType: event.target.value })} />
-                  <input className="input" placeholder="来源文件/记录ID" value={evidenceForm.sourceId} onChange={event => setEvidenceForm({ ...evidenceForm, sourceId: event.target.value })} />
                   <input className="input" placeholder="证据标题" value={evidenceForm.title} onChange={event => setEvidenceForm({ ...evidenceForm, title: event.target.value })} />
                   <input className="input" style={{ gridColumn: "1 / -1" }} placeholder="https:// 证据链接" value={evidenceForm.sourceUrl} onChange={event => setEvidenceForm({ ...evidenceForm, sourceUrl: event.target.value })} />
                   <input className="input" placeholder="版本" value={evidenceForm.version} onChange={event => setEvidenceForm({ ...evidenceForm, version: event.target.value })} />
@@ -275,18 +271,18 @@ export default function ProjectLifecyclePage() {
               <section className="card"><h2 style={{ fontSize: "1.05rem" }}>人工反馈与纠偏</h2><p style={{ color: "var(--text2)", fontSize: ".78rem", marginTop: 5 }}>AI判断和系统事实不能自己修改自己：使用者提交 → PMO/质量分诊 → 责任人补正 → 人工复核关闭。</p>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 9, marginTop: 12 }}>
                   <select className="input" value={correctionForm.targetType} onChange={event => setCorrectionForm({ ...correctionForm, targetType: event.target.value })}><option value="management_signal">管理信号</option><option value="lifecycle_state">生命周期状态</option><option value="action">行动项</option><option value="rule">管理规则</option></select>
-                  <input className="input" placeholder="纠偏目标ID" value={selectedCorrectionTargetId} onChange={event => setCorrectionForm({ ...correctionForm, targetId: event.target.value })} />
+                  <BusinessEntitySelect kind="businessObject" projectId={projectId} entityType={correctionDirectoryType[correctionForm.targetType]} value={selectedCorrectionTargetId} onChange={targetId => setCorrectionForm({ ...correctionForm, targetId })} placeholder="选择纠偏目标"/>
                   <select className="input" value={correctionForm.correctionType} onChange={event => setCorrectionForm({ ...correctionForm, correctionType: event.target.value })}><option value="false_positive">误报</option><option value="business_fact_denial">业务事实否认</option><option value="evidence_requested">要求补证</option><option value="action_rejected">行动拒收</option><option value="state_correction">状态修正</option></select>
                   <input className="input" placeholder="结构化原因码" value={correctionForm.reasonCode} onChange={event => setCorrectionForm({ ...correctionForm, reasonCode: event.target.value.toUpperCase() })} />
                   <input className="input" style={{ gridColumn: "1 / -1" }} placeholder="原因说明" value={correctionForm.reasonDetail} onChange={event => setCorrectionForm({ ...correctionForm, reasonDetail: event.target.value })} />
-                  <textarea className="input" style={{ gridColumn: "1 / -1", minHeight: 72 }} placeholder='拟议纠偏 JSON，如 {"forecast_due_date":"2026-07-21"}' value={correctionForm.proposedCorrection} onChange={event => setCorrectionForm({ ...correctionForm, proposedCorrection: event.target.value })} />
-                  <input className="input" placeholder="纠偏责任人用户ID" value={correctionOwnerUserId} onChange={event => setCorrectionForm({ ...correctionForm, ownerUserId: event.target.value })} />
+                  <div style={{ gridColumn: "1 / -1" }}><StructuredFieldsEditor value={correctionForm.proposedCorrection} onChange={proposedCorrection => setCorrectionForm({ ...correctionForm, proposedCorrection })} labels={{ corrected_value: "拟调整结果", correction_basis: "纠偏依据" }}/></div>
+                  <BusinessEntitySelect kind="person" value={correctionOwnerUserId} onChange={ownerUserId => setCorrectionForm({ ...correctionForm, ownerUserId })} placeholder="选择纠偏责任人"/>
                   <input className="input" type="datetime-local" value={correctionForm.dueAt} onChange={event => setCorrectionForm({ ...correctionForm, dueAt: event.target.value })} />
                 </div><button className="btn btn-primary" style={{ marginTop: 10 }} disabled={busy} onClick={() => void submitCorrection()}>提交人工纠偏</button>
               </section>
             </div>
 
-            <section className="card"><h2 style={{ fontSize: "1.05rem" }}>纠偏执行与复核</h2><div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 9, marginTop: 10 }}><input className="input" placeholder="分诊/退回/复核说明" value={correctionActionComment} onChange={event => setCorrectionActionComment(event.target.value)} /><input className="input" placeholder='已实施纠偏 JSON，如 {"baseline_version":"v2"}' value={appliedCorrection} onChange={event => setAppliedCorrection(event.target.value)} /></div><div style={{ display: "grid", gap: 9, marginTop: 12 }}>{(data.corrections ?? []).map(item => <article key={item.id} style={{ padding: 12, borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface2)" }}><div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}><div><strong>{item.correctionType} · {item.reasonCode}</strong><div style={{ color: "var(--text2)", fontSize: ".73rem", marginTop: 4 }}>{item.reasonDetail} · 责任人 {item.correctionOwnerUserId} · 期限 {new Date(item.dueAt).toLocaleString("zh-CN")}</div></div><span className={statusTone(item.status)}>{item.status}</span></div><div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginTop: 9 }}>{item.status === "submitted" && <><button className="btn btn-secondary" disabled={busy} onClick={() => void actOnCorrection(item, "accept")}>接受并指派</button><button className="btn btn-secondary" disabled={busy} onClick={() => void actOnCorrection(item, "reject")}>驳回</button></>}{item.status === "correction_in_progress" && <button className="btn btn-secondary" disabled={busy} onClick={() => void actOnCorrection(item, "submit_correction")}>提交补正结果</button>}{item.status === "pending_verification" && <><button className="btn btn-secondary" disabled={busy} onClick={() => void actOnCorrection(item, "verify")}>复核关闭</button><button className="btn btn-secondary" disabled={busy} onClick={() => void actOnCorrection(item, "request_rework")}>退回再补正</button></>}</div></article>)}</div></section>
+            <section className="card"><h2 style={{ fontSize: "1.05rem" }}>纠偏执行与复核</h2><div style={{ display: "grid", gap: 9, marginTop: 10 }}><input className="input" placeholder="分诊/退回/复核说明" value={correctionActionComment} onChange={event => setCorrectionActionComment(event.target.value)} /><StructuredFieldsEditor value={appliedCorrection} onChange={setAppliedCorrection} labels={{ actual_change: "已实施变化", result: "执行结果" }} fixedKeys/></div><div style={{ display: "grid", gap: 9, marginTop: 12 }}>{(data.corrections ?? []).map(item => <article key={item.id} style={{ padding: 12, borderRadius: 10, border: "1px solid var(--border)", background: "var(--surface2)" }}><div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}><div><strong>{item.correctionType} · {item.reasonCode}</strong><div style={{ color: "var(--text2)", fontSize: ".73rem", marginTop: 4 }}>{item.reasonDetail} · 已指定纠偏责任人 · 期限 {new Date(item.dueAt).toLocaleString("zh-CN")}</div></div><span className={statusTone(item.status)}>{item.status}</span></div><div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginTop: 9 }}>{item.status === "submitted" && <><button className="btn btn-secondary" disabled={busy} onClick={() => void actOnCorrection(item, "accept")}>接受并指派</button><button className="btn btn-secondary" disabled={busy} onClick={() => void actOnCorrection(item, "reject")}>驳回</button></>}{item.status === "correction_in_progress" && <button className="btn btn-secondary" disabled={busy} onClick={() => void actOnCorrection(item, "submit_correction")}>提交补正结果</button>}{item.status === "pending_verification" && <><button className="btn btn-secondary" disabled={busy} onClick={() => void actOnCorrection(item, "verify")}>复核关闭</button><button className="btn btn-secondary" disabled={busy} onClick={() => void actOnCorrection(item, "request_rework")}>退回再补正</button></>}</div></article>)}</div></section>
 
             <section className="card"><h2 style={{ fontSize: "1.05rem" }}>不可变生命周期事件</h2><div style={{ display: "grid", gap: 8, marginTop: 11 }}>{(data.events ?? []).map(item => <article key={item.id} style={{ padding: 10, borderLeft: "3px solid var(--accent)", background: "var(--surface2)", borderRadius: "0 9px 9px 0" }}><strong>{item.objectType} · {item.fromStatus || "无"} → {item.toStatus}</strong><div style={{ color: "var(--text2)", fontSize: ".73rem", marginTop: 4 }}>{item.eventType} · {item.actorBusinessRole} · {new Date(item.createdAt).toLocaleString("zh-CN")} {item.comment ? `· ${item.comment}` : ""}</div></article>)}</div></section>
           </>

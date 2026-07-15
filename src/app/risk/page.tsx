@@ -604,6 +604,8 @@ export default function RiskPage() {
           reminder_logs?: RiskRetrospectiveGovernanceReminderLog[];
           warning?: string;
         };
+        const feishuConnectionResponse = await fetch("/api/user/feishu-connection", { cache: "no-store" });
+        const feishuConnectionData = await feishuConnectionResponse.json().catch(() => ({})) as { connection?: { notificationReceiveIdType?: string; notificationReceiveId?: string } };
         if (cancelled) return;
         setRisks(Array.isArray(data.risks) ? data.risks : []);
         setWorkflowEvents(Array.isArray(data.events) ? data.events : []);
@@ -627,6 +629,10 @@ export default function RiskPage() {
         setRetrospectiveGovernanceWarning(retrospectiveGovernanceData.warning || "");
         setRetrospectiveFollowupWarning(retrospectiveFollowupsData.warning || "");
         setRetrospectiveOperationHistoryWarning(retrospectiveOperationHistoryData.warning || "");
+        if (["chat_id", "open_id"].includes(feishuConnectionData.connection?.notificationReceiveIdType || "") && feishuConnectionData.connection?.notificationReceiveId) {
+          setGovernanceWeeklyReminderReceiveIdType(feishuConnectionData.connection.notificationReceiveIdType as "chat_id" | "open_id");
+          setGovernanceWeeklyReminderReceiveId(feishuConnectionData.connection.notificationReceiveId);
+        }
         setMessage(data.warning || "");
       } catch (e: unknown) {
         if (cancelled) return;
@@ -1141,7 +1147,7 @@ export default function RiskPage() {
       return;
     }
     if (!governanceWeeklyReminderReceiveId.trim()) {
-      setError("请先填写飞书接收对象ID：群聊使用 chat_id，个人使用 open_id。");
+      setError("当前用户尚未在用户中心配置个人飞书提醒接收对象。");
       return;
     }
     if (!window.confirm("确认发送知识治理周运营提醒到飞书？该动作会真实外发消息。")) return;
@@ -2764,23 +2770,14 @@ export default function RiskPage() {
                                   </div>
                                 ))}
                               </div>
-                              <div style={{ display: "grid", gridTemplateColumns: "130px minmax(180px, 1fr) auto", gap: 8, alignItems: "center" }}>
-                                <select value={governanceWeeklyReminderReceiveIdType} onChange={event => setGovernanceWeeklyReminderReceiveIdType(event.target.value as "chat_id" | "open_id")} style={{ background: "var(--surface2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: 10, padding: "9px 10px" }}>
-                                  <option value="chat_id">群聊 chat_id</option>
-                                  <option value="open_id">个人 open_id</option>
-                                </select>
-                                <input
-                                  value={governanceWeeklyReminderReceiveId}
-                                  onChange={event => setGovernanceWeeklyReminderReceiveId(event.target.value)}
-                                  placeholder="填写飞书接收对象ID"
-                                  style={{ background: "var(--surface2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: 10, padding: "9px 10px" }}
-                                />
-                                <button className="btn-primary" disabled={sendingGovernanceWeeklyReminder || !riskRetrospectiveGovernanceFollowupOperationReport?.feishuReminderDraft} onClick={() => void sendGovernanceFollowupWeeklyReminder()}>
+                              <div style={{ display: "grid", gridTemplateColumns: "minmax(230px, 1fr) auto", gap: 8, alignItems: "center" }}>
+                                <div style={{ background: "var(--surface2)", color: "var(--text2)", border: "1px solid var(--border)", borderRadius: 10, padding: "9px 10px" }}>{governanceWeeklyReminderReceiveId ? `使用当前账号已配置的${governanceWeeklyReminderReceiveIdType === "chat_id" ? "飞书群聊" : "飞书个人"}接收对象` : "尚未配置个人飞书提醒接收对象"}</div>
+                                <button className="btn-primary" disabled={sendingGovernanceWeeklyReminder || !governanceWeeklyReminderReceiveId || !riskRetrospectiveGovernanceFollowupOperationReport?.feishuReminderDraft} onClick={() => void sendGovernanceFollowupWeeklyReminder()}>
                                   {sendingGovernanceWeeklyReminder ? "发送中..." : "确认发送飞书提醒"}
                                 </button>
                               </div>
                               <div style={{ color: "var(--text2)", fontSize: "0.66rem", lineHeight: 1.6, marginTop: 8 }}>
-                                如不确定接收对象ID，先在飞书开放平台或 lark-cli 中查询群 chat_id/open_id；系统不会自动选择收件人。
+                                飞书提醒始终使用当前登录用户的个人配置，不会静默回退到管理员身份。{!governanceWeeklyReminderReceiveId && <><Link href="/account" style={{ color: "var(--accent2)", marginLeft: 4 }}>前往用户中心配置</Link>。</>}
                               </div>
                             </div>
                           )}

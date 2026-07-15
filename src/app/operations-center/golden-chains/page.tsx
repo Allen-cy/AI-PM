@@ -9,6 +9,7 @@ import {
   readStoredDataClass,
   type StoredBusinessContext,
 } from "@/features/operating-model/client-context";
+import { BusinessEntitySelect } from "@/components/BusinessEntitySelect";
 
 type ChainKey = "A" | "B" | "C" | "D" | "E";
 type Definition = {
@@ -120,6 +121,7 @@ export default function GoldenChainAcceptancePage() {
   const currentDefinition = current ? data.definitions?.[current.run.chain_key] : null;
   const currentRole = context?.businessRole || "";
   const participantByRole = useMemo(() => new Map((current?.participants ?? []).map(item => [item.business_role, item])), [current?.participants]);
+  const participantNames = useMemo(() => new Map((data.participant_candidates ?? []).map(item => [item.user_id, item.user_name])), [data.participant_candidates]);
 
   async function createRun() {
     if (!definition) return;
@@ -209,7 +211,7 @@ export default function GoldenChainAcceptancePage() {
           </select>
         </div>
         {current ? <>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}><span className="tag tag-blue">{current.run.chain_key} · {currentDefinition?.label}</span><span className="tag tag-purple">{current.run.status}</span>{current.participants.map(item => <span className="tag" key={item.id}>{ROLE_LABEL[item.business_role]} · {item.user_id.slice(0, 8)}</span>)}</div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}><span className="tag tag-blue">{current.run.chain_key} · {currentDefinition?.label}</span><span className="tag tag-purple">{current.run.status}</span>{current.participants.map(item => <span className="tag" key={item.id}>{ROLE_LABEL[item.business_role]} · {participantNames.get(item.user_id) || "已分配参与者"}</span>)}</div>
           <textarea className="input" style={{ marginTop: 10, minHeight: 64 }} placeholder="阻塞、驳回或验收失败原因（对应动作必填）" value={comment} onChange={event => setComment(event.target.value)} />
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
             {(RUN_ACTIONS[current.run.status] ?? []).map(action => <button key={action} className={action === "pass" ? "btn-primary" : "btn-secondary"} disabled={busy || (["fail", "block"].includes(action) && !comment.trim())} onClick={() => void transitionRun(action)}>{RUN_ACTION_LABEL[action]}</button>)}
@@ -226,7 +228,7 @@ export default function GoldenChainAcceptancePage() {
             {step.status === "in_progress" && <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
               {step.required_artifact_types.map(objectType => {
                 const key = `${step.id}:${objectType}`; const value = artifactInputs[key] || { objectId: "", sourceType: "supabase", evidenceId: "" };
-                return <div key={key} style={{ display: "grid", gridTemplateColumns: "minmax(170px,.7fr) minmax(220px,1fr) 140px minmax(180px,.8fr)", gap: 8, alignItems: "center" }}><strong style={{ fontSize: ".75rem" }}>{objectType}</strong><input className="input" placeholder="成果对象 ID *" value={value.objectId} onChange={event => setArtifactInputs(previous => ({ ...previous, [key]: { ...value, objectId: event.target.value } }))}/><select className="input" value={value.sourceType} onChange={event => setArtifactInputs(previous => ({ ...previous, [key]: { ...value, sourceType: event.target.value } }))}>{["supabase", "feishu", "obsidian", "external"].map(source => <option key={source}>{source}</option>)}</select><input className="input" placeholder="证据 ID（可选）" value={value.evidenceId} onChange={event => setArtifactInputs(previous => ({ ...previous, [key]: { ...value, evidenceId: event.target.value } }))}/></div>;
+                return <div key={key} style={{ display: "grid", gridTemplateColumns: "minmax(170px,.7fr) minmax(240px,1.2fr) minmax(220px,1fr)", gap: 8, alignItems: "center" }}><strong style={{ fontSize: ".75rem" }}>{objectType}</strong><BusinessEntitySelect kind="formalOutput" value={value.objectId} onChange={objectId => setArtifactInputs(previous => ({ ...previous, [key]: { ...value, objectId, sourceType: "supabase" } }))} placeholder="选择已持久化的正式成果 *"/><BusinessEntitySelect kind="evidence" value={value.evidenceId} onChange={evidenceId => setArtifactInputs(previous => ({ ...previous, [key]: { ...value, evidenceId } }))} placeholder="选择验证证据（可选）"/></div>;
               })}
             </div>}
             {step.artifact_references.length > 0 && <p style={{ color: "var(--text2)", marginTop: 8 }}>已提交 {step.artifact_references.length} 个结构化成果引用。</p>}
@@ -247,7 +249,7 @@ export default function GoldenChainAcceptancePage() {
           {current.failure_paths.map(path => {
             const value = failureInputs[path.id] || { type: "", id: "", source: "" };
             return <article key={path.id} style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 14 }}><div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}><strong>{path.label}</strong><span className="tag tag-blue">{path.status}</span></div>
-              {path.status === "pending" && <div style={{ display: "grid", gap: 7, marginTop: 10 }}><input className="input" placeholder="证据类型 *" value={value.type} onChange={event => setFailureInputs(previous => ({ ...previous, [path.id]: { ...value, type: event.target.value } }))}/><input className="input" placeholder="证据记录 ID *" value={value.id} onChange={event => setFailureInputs(previous => ({ ...previous, [path.id]: { ...value, id: event.target.value } }))}/><input className="input" placeholder="证据来源 *" value={value.source} onChange={event => setFailureInputs(previous => ({ ...previous, [path.id]: { ...value, source: event.target.value } }))}/></div>}
+              {path.status === "pending" && <div style={{ display: "grid", gap: 7, marginTop: 10 }}><BusinessEntitySelect kind="evidence" value={value.id} onChange={id => setFailureInputs(previous => ({ ...previous, [path.id]: { type: "governed_evidence", id, source: "supabase" } }))} placeholder="选择失败路径的实际演练证据 *"/></div>}
               {path.evidence.length > 0 && <p style={{ color: "var(--text2)", marginTop: 8 }}>已留存 {path.evidence.length} 条结构化演练证据。</p>}
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>{path.status === "pending" && <button className="btn-primary" disabled={busy || !value.type || !value.id || !value.source} onClick={() => void transitionFailure(path, "submit")}>提交失败路径证据</button>}{path.status === "submitted" && <><button className="btn-primary" disabled={busy || path.submitted_by === participantByRole.get(currentRole)?.user_id} onClick={() => void transitionFailure(path, "verify_pass")}>独立验证通过</button><button className="btn-secondary" disabled={busy || !comment.trim()} onClick={() => void transitionFailure(path, "verify_fail")}>验证不通过</button></>}{path.status === "failed" && <button className="btn-secondary" disabled={busy} onClick={() => void transitionFailure(path, "retry")}>重新演练</button>}</div>
             </article>;

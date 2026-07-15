@@ -154,6 +154,24 @@ type GovernanceWorkbenchResponse = {
   warning?: string;
 };
 
+type RoleItem = { id: string; projectId?: string | null; title?: string; name?: string; status: string; dueAt?: string | null; severity?: string; priority?: string; amount?: number; type?: string; outputType?: string; generatedAt?: string; progress?: number; health?: string; projectLevel?: string | null };
+type RoleWorkbenchResponse = {
+  status: string;
+  warnings?: string[];
+  workbench?: {
+    role: "pm" | "operations" | "pmo" | "ceo";
+    title: string;
+    promise: string;
+    focus: string[];
+    generatedAt: string;
+    sections: {
+      projects: RoleItem[]; todayActions: RoleItem[]; criticalPath: RoleItem[]; milestones: RoleItem[]; risks: RoleItem[];
+      formalOutputs: RoleItem[]; commercialFlow: RoleItem[]; qualityAndAcceptance: RoleItem[]; exceptionPool: RoleItem[]; decisionInbox: RoleItem[];
+    };
+    executiveSummary: { strategicProjects: number; redProjects: number; cashForecast: number; benefitForecast: number; majorRisks: number; pendingDecisions: number };
+  };
+};
+
 const priorityColor: Record<string, string> = {
   P0: "var(--red)",
   P1: "var(--amber)",
@@ -199,8 +217,52 @@ function slaColor(severity?: string): string {
   return "var(--accent2)";
 }
 
+function itemLabel(item: RoleItem): string {
+  return item.title || item.name || "未命名事项";
+}
+
+function RoleWorkbenchPanel({ response }: { response: RoleWorkbenchResponse }) {
+  const role = response.workbench;
+  if (!role) return <section className="card" style={{ marginBottom: 18, color: "var(--amber)" }}>角色工作台暂不可用，系统没有用样例数据补位。</section>;
+  const projectName = new Map(role.sections.projects.map(project => [project.id, project.name || project.title || "未命名项目"]));
+  const list = (title: string, items: RoleItem[], empty: string) => <section className="card"><div className="section-title">{title}</div>{items.length === 0 ? <p style={{ color: "var(--text2)", marginTop: 10 }}>{empty}</p> : <div style={{ display: "grid", gap: 9, marginTop: 10 }}>{items.slice(0, 12).map(item => <article key={`${title}:${item.id}`} style={{ padding: 11, borderRadius: 10, background: "var(--surface2)", border: "1px solid var(--border)" }}><strong>{itemLabel(item)}</strong><p style={{ color: "var(--text2)", fontSize: ".78rem", marginTop: 5 }}>{item.projectId ? `${projectName.get(item.projectId) || "授权项目"} · ` : ""}{item.status}{item.dueAt ? ` · 截止 ${item.dueAt}` : ""}{item.amount ? ` · ¥${item.amount.toLocaleString("zh-CN")}` : ""}</p></article>)}</div>}</section>;
+  const roleSections = role.role === "pm" ? [
+    list("✅ 我的今日行动", role.sections.todayActions, "当前没有分派给我的未关闭行动。"),
+    list("🧭 关键路径任务", role.sections.criticalPath, "当前项目没有可识别的关键路径任务。"),
+    list("🏁 近期里程碑", role.sections.milestones, "当前没有未完成里程碑。"),
+    list("⚠️ 重大风险", role.sections.risks.filter(item => ["high", "critical", "高", "重大"].includes(item.severity || "")), "当前没有重大未关闭风险。"),
+    list("📄 正式汇报", role.sections.formalOutputs, "尚未形成正式汇报成果。"),
+  ] : role.role === "operations" ? [
+    list("💰 验收—开票—应收—回款", role.sections.commercialFlow, "当前没有待处理业财事项。"),
+    list("🧾 质量与验收阻塞", role.sections.qualityAndAcceptance, "当前没有待处理质量或验收阻塞。"),
+    list("✅ 我的今日行动", role.sections.todayActions, "当前没有分派给我的未关闭行动。"),
+    list("📄 经营汇报成果", role.sections.formalOutputs, "尚未形成正式经营汇报。"),
+  ] : role.role === "pmo" ? [
+    list("🚨 组合例外池", role.sections.exceptionPool, "当前没有组合例外。"),
+    list("🗳️ 决策包与回执", role.sections.decisionInbox, "当前没有待推进决策。"),
+    list("📄 已提交正式成果", role.sections.formalOutputs, "当前没有待治理正式成果。"),
+  ] : [
+    list("🗳️ 决策收件箱", role.sections.decisionInbox, "当前没有待决策事项。"),
+    list("🎯 战略/重点项目", role.sections.projects.filter(item => ["S", "A", "重点", "战略"].includes(item.projectLevel || "")), "当前没有已分类的战略项目。"),
+    list("⚠️ 重大风险", role.sections.risks.filter(item => ["high", "critical", "高", "重大"].includes(item.severity || "")), "当前没有重大风险。"),
+    list("📄 经营简报", role.sections.formalOutputs, "当前没有正式经营简报。"),
+  ];
+  return <>
+    <section className="card" style={{ marginBottom: 18, background: "linear-gradient(135deg,rgba(59,130,246,.16),rgba(139,92,246,.1))" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 14, flexWrap: "wrap" }}><div><span className="tag tag-purple">V6.4 角色工作台</span><h2 style={{ marginTop: 10 }}>{role.title}</h2><p style={{ color: "var(--text2)", lineHeight: 1.7, marginTop: 7 }}>{role.promise}</p></div><Link href="/collaboration-inbox" className="btn-primary" style={{ textDecoration: "none", alignSelf: "start" }}>打开统一收件箱</Link></div>
+      <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginTop: 12 }}>{role.focus.map(item => <span key={item} className="tag tag-blue">{item}</span>)}</div>
+      {(response.warnings?.length ?? 0) > 0 && <p style={{ color: "var(--amber)", fontSize: ".78rem", marginTop: 10 }}>部分真实数据源不可用：{response.warnings?.join("、")}。未使用样例数据补位。</p>}
+    </section>
+    {role.role === "ceo" && <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 10, marginBottom: 18 }}>{[
+      ["战略项目", role.executiveSummary.strategicProjects], ["红灯项目", role.executiveSummary.redProjects], ["现金/回款预测", `¥${role.executiveSummary.cashForecast.toLocaleString("zh-CN")}`], ["收益预测", `¥${role.executiveSummary.benefitForecast.toLocaleString("zh-CN")}`], ["重大风险", role.executiveSummary.majorRisks], ["待决策", role.executiveSummary.pendingDecisions],
+    ].map(([label, value]) => <div className="stat-card" key={label}><div className="stat-num">{value}</div><div className="stat-label">{label}</div></div>)}</section>}
+    <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(300px,1fr))", gap: 14, marginBottom: 18 }}>{roleSections.map((section, index) => <div key={`${role.role}:${index}`}>{section}</div>)}</section>
+  </>;
+}
+
 export default function WorkbenchPage() {
   const [data, setData] = useState<WorkbenchResponse | null>(null);
+  const [roleData, setRoleData] = useState<RoleWorkbenchResponse | null>(null);
   const [governanceData, setGovernanceData] = useState<GovernanceWorkbenchResponse | null>(null);
   const [error, setError] = useState("");
   const [actionMessage, setActionMessage] = useState("");
@@ -236,14 +298,17 @@ export default function WorkbenchPage() {
         const context = { assignmentId: assignment.id, businessRole: assignment.businessRole, orgId: assignment.orgId, subjectScope: assignment.subjectScope, subjectId: assignment.subjectId };
         writeStoredBusinessContext(context);
         const query = businessContextSearchParams(context, readStoredDataClass());
-        const [response, governanceResponse] = await Promise.all([
+        const [response, governanceResponse, roleResponse] = await Promise.all([
           fetch(`/api/operating-system/workbench?${query.toString()}`, { cache: "no-store" }),
           fetch("/api/governance/workflows", { cache: "no-store" }),
+          fetch(`/api/role-workbench?${query.toString()}`, { cache: "no-store" }),
         ]);
         const body = await response.json();
         const governanceBody = await governanceResponse.json();
+        const roleBody = await roleResponse.json() as RoleWorkbenchResponse;
         if (!cancelled) setData(body);
         if (!cancelled) setGovernanceData(governanceBody);
+        if (!cancelled) setRoleData(roleBody);
       } catch {
         if (!cancelled) setError("无法生成工作台摘要，请稍后重试。");
       }
@@ -255,6 +320,10 @@ export default function WorkbenchPage() {
   }, [contextRevision]);
 
   const workbench = data?.workbench;
+
+  if (roleData?.workbench && ["operations", "ceo"].includes(roleData.workbench.role)) {
+    return <main style={{ minHeight: "100vh", background: "var(--bg)", padding: "28px 32px" }}><div style={{ maxWidth: 1180, margin: "0 auto" }}><div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginBottom: 20 }}><Link href="/" style={{ color: "var(--accent2)", textDecoration: "none" }}>← 返回首页</Link><div style={{ display: "flex", gap: 8 }}><Link href="/reports" className="btn-secondary" style={{ textDecoration: "none" }}>正式报告</Link><Link href="/decision-center" className="btn-secondary" style={{ textDecoration: "none" }}>决策中心</Link></div></div><RoleWorkbenchPanel response={roleData}/><IntegrationStatusPanelClient moduleName={roleData.workbench.title}/><FeishuConfirmationInlinePanelClient moduleName={roleData.workbench.title}/></div></main>;
+  }
 
   async function convertSuggestionToAction(item: Workbench["aiSuggestions"][number], index: number) {
     setSavingSuggestion(item.title);
@@ -347,7 +416,7 @@ export default function WorkbenchPage() {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, marginBottom: 24 }}>
           <div>
             <Link href="/" style={{ color: "var(--accent2)", textDecoration: "none", fontSize: "0.86rem" }}>← 返回首页</Link>
-            <h1 style={{ fontSize: "1.9rem", fontWeight: 800, marginTop: 12 }}>PM/PMO 每日工作台</h1>
+            <h1 style={{ fontSize: "1.9rem", fontWeight: 800, marginTop: 12 }}>{roleData?.workbench?.title || "角色工作台"}</h1>
             <p style={{ color: "var(--text2)", marginTop: 8, lineHeight: 1.7 }}>
               把项目台账、风险、重点项目和经营提醒汇总成今日行动清单。AI 建议只作为辅助排序，最终由项目经理或 PMO 确认。
             </p>
@@ -361,6 +430,8 @@ export default function WorkbenchPage() {
 
         <IntegrationStatusPanelClient moduleName="PM/PMO每日工作台" />
         <FeishuConfirmationInlinePanelClient moduleName="PM/PMO每日工作台" />
+
+        {roleData && <RoleWorkbenchPanel response={roleData} />}
 
         {error && <div className="card" style={{ borderColor: "var(--red)", color: "var(--red)", marginBottom: 18 }}>{error}</div>}
 

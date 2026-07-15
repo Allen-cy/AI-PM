@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { BusinessEntitySelect } from "@/components/BusinessEntitySelect";
 
 type OutputType = "ai_answer" | "report" | "governance" | "risk" | "template" | "other";
 type NotificationChannel = "in_app" | "feishu" | "email";
@@ -135,7 +136,7 @@ export function KnowledgeReferenceAuditClient() {
   const [message, setMessage] = useState("");
   const [referenceForm, setReferenceForm] = useState({
     outputType: "report" as OutputType,
-    outputId: "report-manual-reference",
+    outputId: "",
     outputTitle: "报告工厂输出口径引用",
     moduleName: "报告工厂",
     pageId: "",
@@ -208,6 +209,10 @@ export function KnowledgeReferenceAuditClient() {
   }
 
   async function saveReference() {
+    if (!referenceForm.outputId.trim()) {
+      setMessage("请先选择要绑定的正式业务成果，或从候选引用中选择一条。");
+      return;
+    }
     if (!referenceForm.pageId.trim()) {
       setMessage("请先填写知识 pageId，或从候选引用中选择一条。");
       return;
@@ -290,7 +295,7 @@ export function KnowledgeReferenceAuditClient() {
                   {Object.entries(outputTypeLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                 </select>
                 <input className="input" value={referenceForm.outputTitle} onChange={event => setReferenceForm(prev => ({ ...prev, outputTitle: event.target.value }))} placeholder="输出标题" />
-                <input className="input" value={referenceForm.outputId} onChange={event => setReferenceForm(prev => ({ ...prev, outputId: event.target.value }))} placeholder="输出ID" />
+                <BusinessEntitySelect kind="formalOutput" value={referenceForm.outputId} onChange={outputId => setReferenceForm(prev => ({ ...prev, outputId }))} onSelectedOption={option => option && setReferenceForm(prev => ({ ...prev, outputTitle: option.label }))} placeholder="选择要绑定的正式业务成果"/>
                 <input className="input" value={referenceForm.moduleName} onChange={event => setReferenceForm(prev => ({ ...prev, moduleName: event.target.value }))} placeholder="模块名称" />
                 <input className="input" value={referenceForm.pageId} onChange={event => setReferenceForm(prev => ({ ...prev, pageId: event.target.value }))} placeholder="知识 pageId，例如 KB-001" />
                 <input className="input" value={referenceForm.citationText} onChange={event => setReferenceForm(prev => ({ ...prev, citationText: event.target.value }))} placeholder="引用说明，可为空" />

@@ -2,7 +2,7 @@
 
 日期：2026-07-11
 
-当前代码目标版本：6.3.4
+当前代码目标版本：6.4.0
 
 > V6.1.0 增量 migration 为 `20260711140000_v61_security_gate.sql`、`20260711150000_v61_risk_scope_quarantine.sql`和`20260711160000_v61_issue_action_scope.sql`。旧 P17–P25 migration 已通过对象、字段和约束对账，只标记迁移历史，不重复执行。
 
@@ -17,6 +17,8 @@
 > V6.3.3 增量 migration 为 `20260715181000_v633_project_control_unification.sql` 与 `20260715190000_v633_security_posture_repair.sql`。执行、监控、风险、问题、变更、行动项和收尾的统一事实、原子状态机及安全修复见 `docs/v633-project-control-unification.md`。两份迁移均已登记到生产库，禁止修改或重跑；后续变更继续新增 migration。
 
 > V6.3.4 增量 migration 为 `20260715201000_v634_formal_business_outputs.sql`、`20260715203000_v634_security_posture_repair.sql` 与 `20260715204000_v634_knowledge_data_class_guard.sql`。正式报告、汇报快照、会议纪要、迁移结果和知识资产的版本、状态与追加式事件契约见 `docs/v634-formal-business-output-persistence.md`。三份迁移均已登记生产库，禁止修改或重跑。
+
+> V6.4.0 增量 migration 为 `20260715220000_v640_role_workbench_inbox.sql`。四角色工作台偏好、统一收件箱回执、四账号验收运行和参与人证据契约见 `docs/v640-role-workbench-and-inbox.md`。该迁移已登记生产库，禁止修改或重跑；自动化账号不等同于真实人员试点签字。
 
 状态：本地质量门已通过；Vercel Production 环境变量补齐、部署、Git Tag 和 GitHub Release 已完成。生产完成仍依赖 Supabase Production 执行/确认 SQL，以及使用真实管理员账号完成线上飞书/真实业务数据冒烟。
 
@@ -75,6 +77,9 @@
 | `/api/management/signals/scan` | POST | 规则化主动扫描 |
 | `/api/management/signals/[id]/actions/[actionId]` | POST | 信号行动处理 |
 | `/api/pmo/control-center` | GET/POST | PMO例外、容量、治理节奏和质量动作 |
+| `/api/role-workbench` | GET | PM、运营、PMO、CEO 分层工作台 |
+| `/api/business-directory` | GET | 项目、人员、证据、正式成果和业务对象选择目录 |
+| `/api/collaboration-inbox` | GET/POST | 九类统一事项与当前用户处理回执 |
 
 ### P21 汇报、会议与决策
 

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { businessContextSearchParams, readStoredBusinessContext, readStoredDataClass, writeStoredBusinessContext, type StoredBusinessContext } from "@/features/operating-model/client-context";
+import { BusinessEntityMultiSelect } from "@/components/BusinessEntitySelect";
 
 type Owner = { id: string; name: string; roles: string[] };
 type Project = { id: string; name: string; projectLevel: string | null; progress: number; status: string; health: string; openSignals: number };
@@ -22,7 +23,7 @@ type Center = {
   eligibleOwners: Owner[];
 };
 
-type WorkDraft = { comment: string; evidence: string; summary: string; actionPlan: string };
+type WorkDraft = { comment: string; evidence: string[]; summary: string; actionPlan: string };
 type CapacityWeek = { period_start: string; period_end: string; capacity_hours: string; allocations: Record<string, string> };
 type MeetingAction = { title: string; description: string; owner_user_id: string; project_id: string; due_at: string };
 type SignalRuleEditor = { signalType: string; metricRef: string; comparison: string; yellowThreshold: string; redThreshold: string; unit: string; impactDimensions: string; dataFreshnessHours: string; handlingRole: string; slaStartEvent: string; slaEndEvent: string; escalationLevel: string; decisionAuthority: string; closureEvidence: string };
@@ -51,8 +52,8 @@ function buildWeeks(projects: Project[], count = 8): CapacityWeek[] {
   });
 }
 
-function evidenceFrom(value: string) {
-  return value.split("\n").map(item => item.trim()).filter(Boolean).map((sourceId, index) => ({ sourceType: /^https?:\/\//.test(sourceId) ? "external_url" : "supabase_record", sourceId, title: `闭环证据 ${index + 1}` }));
+function evidenceFrom(value: string[]) {
+  return value.map((sourceId, index) => ({ sourceType: "supabase_record", sourceId, title: `闭环证据 ${index + 1}` }));
 }
 
 function nextStatus(status: string, kind: "quality" | "governance" | "capacity" | "dependency") {
@@ -91,7 +92,7 @@ export default function PmoControlCenterPage() {
   const [rules, setRules] = useState<Record<typeof LEVELS[number], LevelRuleEditor>>(() => Object.fromEntries(LEVELS.map(level => [level, { maxOpenCriticalSignals: "", cadence: "", escalationHours: "", evidenceRequired: true, signalRules: [{ ...EMPTY_SIGNAL_RULE }] }])) as Record<typeof LEVELS[number], LevelRuleEditor>);
   const [ruleLoaded, setRuleLoaded] = useState(false);
 
-  const draftFor = (id: string): WorkDraft => workDrafts[id] ?? { comment: "", evidence: "", summary: "", actionPlan: "" };
+  const draftFor = (id: string): WorkDraft => workDrafts[id] ?? { comment: "", evidence: [], summary: "", actionPlan: "" };
   const updateDraft = (id: string, patch: Partial<WorkDraft>) => setWorkDrafts(previous => ({ ...previous, [id]: { ...draftFor(id), ...patch } }));
 
   const load = useCallback(async () => {
@@ -175,7 +176,7 @@ export default function PmoControlCenterPage() {
     return <div style={{ display: "grid", gap: 7, marginTop: 9 }}>
       {summary && <textarea className="input" rows={2} placeholder="填写纠偏或完成摘要" value={draft.summary} onChange={event => updateDraft(id, { summary: event.target.value })} />}
       {actionPlan && <textarea className="input" rows={2} placeholder="填写具体处置方案" value={draft.actionPlan} onChange={event => updateDraft(id, { actionPlan: event.target.value })} />}
-      <textarea className="input" rows={2} placeholder="证据链接或真实记录ID，每行一项" value={draft.evidence} onChange={event => updateDraft(id, { evidence: event.target.value })} />
+      <BusinessEntityMultiSelect kind="evidence" value={draft.evidence} onChange={evidence => updateDraft(id, { evidence })} placeholder="选择本次处置证据"/>
       <input className="input" placeholder="复核意见、退回原因或效果结论" value={draft.comment} onChange={event => updateDraft(id, { comment: event.target.value })} />
     </div>;
   }

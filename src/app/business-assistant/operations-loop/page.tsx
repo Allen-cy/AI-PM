@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
+import { BusinessEntityMultiSelect, BusinessEntitySelect } from "@/components/BusinessEntitySelect";
 import {
   businessContextSearchParams,
   readStoredBusinessContext,
@@ -108,13 +109,13 @@ export default function BusinessOperationsLoopPage() {
       <section className="card" style={{ marginBottom: 18 }}>
         <h2 style={{ fontSize: "1rem" }}>分派、输出与关闭输入</h2>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(190px,1fr))", gap: 10, marginTop: 10 }}>
-          <input className="input" placeholder="执行责任人 UUID" value={assignment.owner} onChange={event => setAssignment({ ...assignment, owner: event.target.value })}/>
-          <input className="input" placeholder="复核人 UUID" value={assignment.reviewer} onChange={event => setAssignment({ ...assignment, reviewer: event.target.value })}/>
+          <BusinessEntitySelect kind="person" placeholder="选择执行责任人" value={assignment.owner} onChange={owner => setAssignment({ ...assignment, owner })}/>
+          <BusinessEntitySelect kind="person" placeholder="选择复核人" value={assignment.reviewer} onChange={reviewer => setAssignment({ ...assignment, reviewer })}/>
           <input className="input" type="datetime-local" value={assignment.dueAt} onChange={event => setAssignment({ ...assignment, dueAt: event.target.value })}/>
           <input className="input" placeholder="确认、驳回或关闭说明" value={assignment.comment} onChange={event => setAssignment({ ...assignment, comment: event.target.value })}/>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 10 }}>
-          <textarea className="input" placeholder="证据ID或链接，一行一个" value={assignment.evidence} onChange={event => setAssignment({ ...assignment, evidence: event.target.value })}/>
+          <BusinessEntityMultiSelect kind="evidence" placeholder="从已授权项目选择证据" value={lines(assignment.evidence)} onChange={evidence => setAssignment({ ...assignment, evidence: evidence.join("\n") })}/>
           <textarea className="input" placeholder="周期工作输出总结" value={assignment.output} onChange={event => setAssignment({ ...assignment, output: event.target.value })}/>
         </div>
       </section>
@@ -139,7 +140,7 @@ export default function BusinessOperationsLoopPage() {
           {cadence.type === "weekly" && <input className="input" type="number" min="0" max="6" value={cadence.dayOfWeek} onChange={event => setCadence({ ...cadence, dayOfWeek: event.target.value })}/>} 
           {cadence.type === "monthly" && <input className="input" type="number" min="1" max="31" value={cadence.dayOfMonth} onChange={event => setCadence({ ...cadence, dayOfMonth: event.target.value })}/>} 
           {cadence.type === "event" && <input className="input" placeholder="事件键" value={cadence.eventKey} onChange={event => setCadence({ ...cadence, eventKey: event.target.value })}/>} 
-          <input className="input" placeholder="Owner UUID" value={cadence.owner} onChange={event => setCadence({ ...cadence, owner: event.target.value })}/>
+          <BusinessEntitySelect kind="person" placeholder="选择运行节奏负责人" value={cadence.owner} onChange={owner => setCadence({ ...cadence, owner })}/>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 10 }}><textarea className="input" value={cadence.inputs} onChange={event => setCadence({ ...cadence, inputs: event.target.value })}/><textarea className="input" value={cadence.outputs} onChange={event => setCadence({ ...cadence, outputs: event.target.value })}/></div>
         <div style={{ display: "flex", gap: 8, marginTop: 10 }}><button className="btn-primary" disabled={busy} onClick={() => void createCadence()}>保存运行节奏</button><button className="btn-secondary" disabled={busy} onClick={() => void mutate({ operation: "materialize_calendar", business_date: new Date().toISOString().slice(0, 10) }, "今日周期工作已生成，重复执行不会重复创建。")}>生成今日工作</button></div>
