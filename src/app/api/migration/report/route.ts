@@ -32,6 +32,10 @@ export async function POST(request: Request): Promise<Response> {
 
   const markdown = buildMigrationReviewReport(body);
   const filename = `${safeFilename(body.batchName || `${body.analysis.objectName}-试迁移评审`)}.md`;
+  const formal = process.env.AUTH_REQUIRED === "true"
+    ? await (async () => { const { persistFormalMigrationOutput } = await import("../../../../features/formal-output/migration-output.ts"); return persistFormalMigrationOutput({ request, requestId, outputType: "migration_review", title: body.batchName || `${body.analysis.objectName}-试迁移评审`, objectName: body.analysis.objectName, markdown, structuredPayload: { analysis: body.analysis, file_name: body.fileName || null } }); })()
+    : { status: "succeeded" as const, output: { id: "development-ephemeral", version: 0 } };
+  if (formal.status !== "succeeded") return Response.json({ status: "failed", warning: formal.warning, detail: formal.detail, request_id: requestId }, { status: formal.httpStatus, headers: { "Cache-Control": "no-store", "X-Request-Id": requestId } });
   return new Response(markdown, {
     status: 200,
     headers: {
@@ -39,6 +43,8 @@ export async function POST(request: Request): Promise<Response> {
       "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`,
       "Cache-Control": "no-store",
       "X-Request-Id": requestId,
+      "X-Formal-Output-Id": formal.output.id,
+      "X-Output-Version": String(formal.output.version),
     },
   });
 }

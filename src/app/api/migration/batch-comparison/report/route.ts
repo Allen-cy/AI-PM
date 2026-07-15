@@ -30,8 +30,13 @@ export async function POST(request: Request): Promise<Response> {
     }, { status: 400, headers: { "Cache-Control": "no-store", "X-Request-Id": requestId } });
   }
 
-  const markdown = buildMigrationBatchComparisonReport(body.comparison);
-  const filename = `${safeFilename(`${body.comparison.objectName}-试迁移批次对比报告`)}.md`;
+  const comparison = body.comparison;
+  const markdown = buildMigrationBatchComparisonReport(comparison);
+  const filename = `${safeFilename(`${comparison.objectName}-试迁移批次对比报告`)}.md`;
+  const formal = process.env.AUTH_REQUIRED === "true"
+    ? await (async () => { const { persistFormalMigrationOutput } = await import("../../../../../features/formal-output/migration-output.ts"); return persistFormalMigrationOutput({ request, requestId, outputType: "migration_comparison", title: `${comparison.objectName}-试迁移批次对比报告`, objectName: comparison.objectName, markdown, structuredPayload: { comparison } }); })()
+    : { status: "succeeded" as const, output: { id: "development-ephemeral", version: 0 } };
+  if (formal.status !== "succeeded") return Response.json({ status: "failed", warning: formal.warning, detail: formal.detail, request_id: requestId }, { status: formal.httpStatus, headers: { "Cache-Control": "no-store", "X-Request-Id": requestId } });
   return new Response(markdown, {
     status: 200,
     headers: {
@@ -39,6 +44,8 @@ export async function POST(request: Request): Promise<Response> {
       "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`,
       "Cache-Control": "no-store",
       "X-Request-Id": requestId,
+      "X-Formal-Output-Id": formal.output.id,
+      "X-Output-Version": String(formal.output.version),
     },
   });
 }

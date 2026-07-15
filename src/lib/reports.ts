@@ -38,6 +38,10 @@ export interface GeneratedReport {
   actionItems?: ReportActionItem[];
   evidence?: import('@/features/ai/evidence').AiEvidence;
   requestId?: string;
+  formalOutputId?: string;
+  reportingSnapshotId?: string;
+  formalStatus?: 'draft' | 'submitted' | 'approved' | 'published' | 'superseded' | 'archived';
+  version?: number;
 }
 
 export const REPORT_TYPE_LABELS: Record<ReportType, string> = {
@@ -193,21 +197,4 @@ export function estimateReadingTime(content: string): string {
 // 生成唯一ID
 export function generateReportId(): string {
   return `report_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-}
-
-// 从localStorage获取报告历史
-export function getReportHistory(): GeneratedReport[] {
-  if (typeof window === 'undefined') return [];
-  const stored = localStorage.getItem('report_history');
-  return stored ? JSON.parse(stored) : [];
-}
-
-// 保存报告到历史记录
-export function saveReportToHistory(report: GeneratedReport): void {
-  if (typeof window === 'undefined') return;
-  const history = getReportHistory();
-  history.unshift(report);
-  // 只保留最近5条
-  const trimmed = history.slice(0, 5);
-  localStorage.setItem('report_history', JSON.stringify(trimmed));
 }

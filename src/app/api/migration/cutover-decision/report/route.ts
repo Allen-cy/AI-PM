@@ -30,8 +30,13 @@ export async function POST(request: Request): Promise<Response> {
     }, { status: 400, headers: { "Cache-Control": "no-store", "X-Request-Id": requestId } });
   }
 
-  const markdown = buildMigrationCutoverDecisionReport(body.decisionPackage);
-  const filename = `${safeFilename(`${body.decisionPackage.objectName}-正式迁移Go-NoGo决策包`)}.md`;
+  const decisionPackage = body.decisionPackage;
+  const markdown = buildMigrationCutoverDecisionReport(decisionPackage);
+  const filename = `${safeFilename(`${decisionPackage.objectName}-正式迁移Go-NoGo决策包`)}.md`;
+  const formal = process.env.AUTH_REQUIRED === "true"
+    ? await (async () => { const { persistFormalMigrationOutput } = await import("../../../../../features/formal-output/migration-output.ts"); return persistFormalMigrationOutput({ request, requestId, outputType: "migration_cutover", title: `${decisionPackage.objectName}-正式迁移Go-NoGo决策包`, objectName: decisionPackage.objectName, markdown, structuredPayload: { decision_package: decisionPackage } }); })()
+    : { status: "succeeded" as const, output: { id: "development-ephemeral", version: 0 } };
+  if (formal.status !== "succeeded") return Response.json({ status: "failed", warning: formal.warning, detail: formal.detail, request_id: requestId }, { status: formal.httpStatus, headers: { "Cache-Control": "no-store", "X-Request-Id": requestId } });
   return new Response(markdown, {
     status: 200,
     headers: {
@@ -39,6 +44,8 @@ export async function POST(request: Request): Promise<Response> {
       "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`,
       "Cache-Control": "no-store",
       "X-Request-Id": requestId,
+      "X-Formal-Output-Id": formal.output.id,
+      "X-Output-Version": String(formal.output.version),
     },
   });
 }

@@ -1,31 +1,20 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { FeishuConfirmationInlinePanelClient } from "@/components/FeishuConfirmationInlinePanelClient";
 import { IntegrationStatusPanelClient } from "@/components/IntegrationStatusPanelClient";
 import {
   REPORT_TYPE_LABELS,
   TONE_LABELS,
   estimateReadingTime,
-  getReportHistory,
-  saveReportToHistory,
   type GeneratedReport,
   type ReportActionItem,
   type ReportDataSource,
   type ReportRequest,
   type ReportType,
 } from "@/lib/reports";
-import { buildProjectControlWriteContract, loadCurrentBusinessContextSearchParams } from "@/features/operating-model/client-context";
-
-const PROJECTS = [
-  "PMO项目组合",
-  "智慧校园一期",
-  "质量监测平台",
-  "智慧作业区域平台",
-  "智慧城市一期项目",
-  "企业数字化转型",
-];
+import { buildProjectControlWriteContract, loadCurrentBusinessContextSearchParams, writeStoredCurrentProject } from "@/features/operating-model/client-context";
 
 function defaultDateRange() {
   const end = new Date();
@@ -70,7 +59,9 @@ function SourceBadge({ source }: { source: ReportDataSource }) {
 
 export default function ReportsPage() {
   const [reportType, setReportType] = useState<ReportType>("weekly");
-  const [projectName, setProjectName] = useState("PMO项目组合");
+  const [projectName, setProjectName] = useState("");
+  const [selectedProjectId, setSelectedProjectId] = useState("");
+  const [projectOptions, setProjectOptions] = useState<Array<{ id: string; name: string; code: string | null }>>([]);
   const [dateRange, setDateRange] = useState(defaultDateRange);
   const [completedWork, setCompletedWork] = useState("");
   const [nextPlans, setNextPlans] = useState("");
@@ -79,28 +70,53 @@ export default function ReportsPage() {
   const [tone, setTone] = useState<ReportRequest["tone"]>("formal");
   const [loading, setLoading] = useState(false);
   const [generatedReport, setGeneratedReport] = useState<GeneratedReport | null>(null);
-  const [reportHistory, setReportHistory] = useState<GeneratedReport[]>(() => getReportHistory());
+  const [reportHistory, setReportHistory] = useState<GeneratedReport[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(true);
   const [savingAction, setSavingAction] = useState<string | null>(null);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
-  function loadTestData() {
-    setProjectName(reportType === "monthly" ? "PMO项目组合" : "智慧校园一期");
-    if (reportType === "meeting") {
-      setCompletedWork("确认本周必须完成验收材料复核\n补齐客户付款条件清单|商务负责人|2026-07-05|P1\n协调交付负责人关闭剩余缺陷|交付负责人|2026-07-04|P0");
-      setNextPlans("下次会议复核验收材料、回款承诺和遗留缺陷关闭情况。");
-      setIssues("客户验收签字依赖缺陷修复和付款材料确认。");
-    } else {
-      setCompletedWork("完成阶段交付复核、风险清单更新和关键里程碑检查。");
-      setNextPlans("推进验收材料归档、回款节点确认和下阶段资源排期。");
-      setIssues("部分项目存在验收阻塞回款、成本口径不完整和客户反馈滞后。");
+  useEffect(() => {
+    let active = true;
+    async function load() {
+      setHistoryLoading(true);
+      try {
+        const businessContext = await loadCurrentBusinessContextSearchParams();
+        const contextResponse = await fetch(`/api/context/current?${businessContext.toString()}`, { cache: "no-store" });
+        const contextBody = await contextResponse.json() as { available_projects?: Array<{ id: string; name: string; code: string | null }> };
+        if (!contextResponse.ok) throw new Error("无法读取项目清单。");
+        const projects = contextBody.available_projects ?? [];
+        const projectId = businessContext.get("project_id") || projects[0]?.id || "";
+        const project = projects.find(item => item.id === projectId) ?? projects[0];
+        if (!active) return;
+        setProjectOptions(projects);
+        setSelectedProjectId(project?.id || "");
+        setProjectName(project?.name || "");
+        if (project?.id) businessContext.set("project_id", project.id);
+        const historyResponse = await fetch(`/api/reports?${businessContext.toString()}`, { cache: "no-store" });
+        const historyBody = await historyResponse.json() as { reports?: GeneratedReport[]; detail?: string; error?: string };
+        if (!historyResponse.ok) throw new Error(historyBody.detail || historyBody.error || "无法读取正式历史。");
+        if (active) setReportHistory(historyBody.reports ?? []);
+      } catch (cause) {
+        if (active) setError(cause instanceof Error ? cause.message : "无法读取报告中心。");
+      } finally {
+        if (active) setHistoryLoading(false);
+      }
     }
-    setResourceNeeds("需要PMO协调商务、交付和财务BP共同确认应收与验收口径。");
+    void load();
+    return () => { active = false; };
+  }, []);
+
+  async function refreshHistory(params: URLSearchParams) {
+    const response = await fetch(`/api/reports?${params.toString()}`, { cache: "no-store" });
+    const payload = await response.json() as { reports?: GeneratedReport[]; error?: string; detail?: string };
+    if (!response.ok) throw new Error(payload.detail || payload.error || "正式历史刷新失败。");
+    setReportHistory(payload.reports ?? []);
   }
 
   async function handleGenerate() {
-    if (!projectName.trim()) {
-      setError("请填写项目或组合名称。");
+    if (reportType !== "monthly" && (!selectedProjectId || !projectName.trim())) {
+      setError("请先选择已授权项目。");
       return;
     }
     setLoading(true);
@@ -109,7 +125,7 @@ export default function ReportsPage() {
     setGeneratedReport(null);
     const request: ReportRequest = {
       type: reportType,
-      projectName,
+      projectName: reportType === "monthly" ? "当前业务身份项目组合" : projectName,
       dateRange: dateRange.start && dateRange.end ? dateRange : undefined,
       completedWork,
       nextPlans,
@@ -119,17 +135,18 @@ export default function ReportsPage() {
     };
     try {
       const businessContext = await loadCurrentBusinessContextSearchParams();
+      if (reportType === "monthly") businessContext.delete("project_id");
+      else businessContext.set("project_id", selectedProjectId);
       const response = await fetch(`/api/reports?${businessContext.toString()}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(request),
       });
-      const data = await response.json() as { success?: boolean; report?: GeneratedReport; error?: string };
-      if (!response.ok || !data.success || !data.report) throw new Error(data.error || "报告生成失败。");
+      const data = await response.json() as { success?: boolean; report?: GeneratedReport; error?: string; detail?: string; formal_output_id?: string; reporting_snapshot_id?: string };
+      if (!response.ok || !data.success || !data.report) throw new Error(data.detail || data.error || "报告生成失败。");
       setGeneratedReport(data.report);
-      saveReportToHistory(data.report);
-      setReportHistory(getReportHistory());
-      setMessage("报告已生成，并附带数据来源、AI依据和候选行动项。");
+      await refreshHistory(businessContext);
+      setMessage(`报告已生成并留存为正式草稿 V${data.report.version || 1}，同时建立汇报快照。`);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "报告生成失败。");
     } finally {
@@ -150,6 +167,7 @@ export default function ReportsPage() {
     setMessage("");
     try {
       const businessContext = await loadCurrentBusinessContextSearchParams();
+      businessContext.set("project_id", selectedProjectId);
       const response = await fetch(`/api/issue-change?${businessContext.toString()}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -249,12 +267,25 @@ export default function ReportsPage() {
                 </div>
               </Field>
 
-              <Field label={reportType === "monthly" ? "组合/组织名称" : "项目名称"}>
-                <input className="input" list="report-projects" value={projectName} onChange={event => setProjectName(event.target.value)} />
-                <datalist id="report-projects">
-                  {PROJECTS.map(project => <option key={project} value={project} />)}
-                </datalist>
-              </Field>
+              {reportType === "monthly" ? (
+                <Field label="汇报范围" hint="月报按当前组合/组织业务身份汇总，不会被某一个项目筛选。">
+                  <div className="input" style={{ display: "flex", alignItems: "center", color: "var(--text2)" }}>当前业务身份项目组合</div>
+                </Field>
+              ) : <Field label="正式成果所属项目" hint="只能选择当前业务身份已授权的稳定项目，报告不再按名称关联。">
+                <select
+                  className="input"
+                  value={selectedProjectId}
+                  onChange={event => {
+                    const project = projectOptions.find(item => item.id === event.target.value);
+                    setSelectedProjectId(event.target.value);
+                    setProjectName(project?.name || "");
+                    writeStoredCurrentProject(event.target.value);
+                  }}
+                >
+                  <option value="">请选择项目</option>
+                  {projectOptions.map(project => <option key={project.id} value={project.id}>{project.code ? `${project.code} · ` : ""}{project.name}</option>)}
+                </select>
+              </Field>}
 
               {(reportType === "weekly" || reportType === "monthly") && (
                 <Field label="报告周期">
@@ -296,16 +327,16 @@ export default function ReportsPage() {
                 <textarea className="input" rows={2} value={resourceNeeds} onChange={event => setResourceNeeds(event.target.value)} />
               </Field>
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                <button className="btn-secondary" onClick={loadTestData}>填充示例</button>
-                <button className="btn-primary" onClick={() => void handleGenerate()} disabled={loading}>
+              <div>
+                <button className="btn-primary" onClick={() => void handleGenerate()} disabled={loading || (reportType !== "monthly" && !selectedProjectId)} style={{ width: "100%" }}>
                   {loading ? "生成中..." : "生成报告"}
                 </button>
               </div>
             </SectionCard>
 
-            <SectionCard title="历史记录" hint="保留本机最近5条，便于对比草稿。">
-              {reportHistory.length === 0 && <div style={{ color: "var(--text2)", fontSize: "0.84rem" }}>暂无历史记录。</div>}
+            <SectionCard title="正式成果台账" hint="历史由 Supabase 持久化，可追溯状态、版本、来源和汇报快照，不依赖当前浏览器。">
+              {historyLoading && <div style={{ color: "var(--text2)", fontSize: "0.84rem" }}>正在读取正式历史...</div>}
+              {!historyLoading && reportHistory.length === 0 && <div style={{ color: "var(--text2)", fontSize: "0.84rem" }}>暂无正式历史。</div>}
               <div style={{ display: "grid", gap: 8 }}>
                 {reportHistory.map(report => (
                   <button
@@ -323,6 +354,7 @@ export default function ReportsPage() {
                   >
                     <div style={{ fontWeight: 800, fontSize: "0.82rem" }}>{report.title}</div>
                     <div style={{ color: "var(--text2)", fontSize: "0.72rem", marginTop: 4 }}>{new Date(report.generatedAt).toLocaleString("zh-CN")}</div>
+                    <div style={{ color: "var(--cyan)", fontSize: "0.7rem", marginTop: 4 }}>{report.formalStatus || "draft"} · V{report.version || 1}</div>
                   </button>
                 ))}
               </div>
@@ -417,8 +449,8 @@ export default function ReportsPage() {
                             <div style={{ color: "var(--text2)", fontSize: "0.75rem", marginTop: 5 }}>{action.owner} · {action.dueDate} · {action.priority}</div>
                             <div style={{ color: "var(--text2)", fontSize: "0.74rem", marginTop: 5 }}>{action.sourceReason}</div>
                           </div>
-                          <button className="btn-secondary" onClick={() => void convertAction(action, index)} disabled={savingAction === key} style={{ whiteSpace: "nowrap", alignSelf: "start" }}>
-                            {savingAction === key ? "写入中..." : "转行动项"}
+                          <button className="btn-secondary" onClick={() => void convertAction(action, index)} disabled={savingAction === key || generatedReport.type === "monthly"} style={{ whiteSpace: "nowrap", alignSelf: "start" }} title={generatedReport.type === "monthly" ? "组合行动项需先在统一收件箱选择责任项目" : undefined}>
+                            {generatedReport.type === "monthly" ? "待分派项目" : savingAction === key ? "写入中..." : "转行动项"}
                           </button>
                         </div>
                       </div>

@@ -30,6 +30,7 @@ import { listRisks } from "@/lib/risk-repository";
 import { authorizeRiskRequest } from "@/features/risk/access";
 import { filterRiskScopedProjectRecords } from "@/features/risk/scope";
 import { buildDashboardData } from "@/features/dashboard/normalizer";
+import { getLatestFormalOutputVersion, listFormalBusinessOutputs, saveFormalReportWithSnapshot } from "@/features/formal-output/repository";
 
 export const runtime = "nodejs";
 
@@ -113,15 +114,51 @@ function actionItemsFor(request: ReportRequest, context: ReportFactoryContext): 
   return [...financeActions, ...riskActions].slice(0, 8);
 }
 
+function snapshotTypeFor(type: ReportRequest["type"], subjectScope: string) {
+  if (type === "weekly" && ["project", "portfolio"].includes(subjectScope)) return "weekly" as const;
+  if (type === "monthly" && ["portfolio", "organization"].includes(subjectScope)) return "monthly" as const;
+  return "ad_hoc" as const;
+}
+
+function outputKeyFor(type: ReportRequest["type"], periodStart: string) {
+  return `report:${type}:${periodStart}`;
+}
+
+export async function GET(request: Request): Promise<Response> {
+  const requestId = crypto.randomUUID();
+  const riskAccess = await authorizeRiskRequest(request, "read");
+  if (!riskAccess.ok) return jsonResponse({ success: false, error: riskAccess.error, detail: riskAccess.detail, request_id: requestId }, riskAccess.status, requestId);
+  const result = await listFormalBusinessOutputs({
+    orgId: riskAccess.scope.orgId, subjectScope: riskAccess.scope.subjectScope, subjectId: riskAccess.scope.subjectId,
+    projectId: riskAccess.scope.requestedProjectId ?? null, dataClass: riskAccess.scope.dataClass,
+    outputTypes: ["generated_report"], limit: 100,
+  });
+  if (result.status !== "succeeded") return jsonResponse({ success: false, status: result.status, error: "REPORT_HISTORY_UNAVAILABLE", detail: result.warning, request_id: requestId }, result.status === "not_configured" ? 503 : 500, requestId);
+  const reports = (result.data ?? []).map(output => {
+    const stored = output.structuredPayload.report;
+    const report = stored && typeof stored === "object" && !Array.isArray(stored) ? stored as Record<string, unknown> : {};
+    return {
+      ...report,
+      id: String(report.id || output.id), title: String(report.title || output.title), content: output.content,
+      generatedAt: String(report.generatedAt || output.createdAt), formalOutputId: output.id,
+      reportingSnapshotId: output.reportingSnapshotId || undefined, formalStatus: output.status, version: output.version,
+    };
+  });
+  return jsonResponse({ success: true, status: "succeeded", reports, source: { type: "supabase", fallback_used: false }, request_id: requestId }, 200, requestId);
+}
+
 export async function POST(request: Request): Promise<Response> {
   const requestId = crypto.randomUUID();
   const user = await getCurrentUser();
-  if (process.env.AUTH_REQUIRED === "true" && !user) {
+  if (!user) {
     return jsonResponse({ success: false, status: "unauthorized", error: "请先登录后再生成报告。", request_id: requestId }, 401, requestId);
   }
   const riskAccess = await authorizeRiskRequest(request, "read");
   if (!riskAccess.ok) {
     return jsonResponse({ success: false, error: riskAccess.error, detail: riskAccess.detail, request_id: requestId }, riskAccess.status, requestId);
+  }
+  if (!["pm", "operations", "pmo"].includes(riskAccess.scope.businessRole)) {
+    return jsonResponse({ success: false, error: "REPORT_CREATE_ROLE_FORBIDDEN", detail: "仅项目经理、运营和PMO可创建正式汇报成果。", request_id: requestId }, 403, requestId);
   }
 
   let body: ReportRequest;
@@ -169,6 +206,15 @@ export async function POST(request: Request): Promise<Response> {
   const grantedDashboard = filterDashboardByProjectAccess(rawDashboard, effective.user, grants);
   const scopedRecords = filterRiskScopedProjectRecords(grantedDashboard.records, riskAccess.scope);
   const dashboard = buildDashboardData(scopedRecords, { type: grantedDashboard.source.type, name: grantedDashboard.source.name, note: grantedDashboard.source.note }, { useTemplateFallback: false });
+  if (dashboard.records.length === 0) {
+    return jsonResponse({
+      success: false,
+      status: "scope_empty",
+      error: "REPORT_SCOPE_EMPTY",
+      detail: "当前业务身份没有已归类、已映射且可访问的项目台账，本次不会用0项目生成正式报告。",
+      request_id: requestId,
+    }, 422, requestId);
+  }
   const access = {
     mode: projectAccessMode(effective.user, dashboard.records.length, rawDashboard.records.length),
     visible_projects: dashboard.records.length,
@@ -235,17 +281,6 @@ export async function POST(request: Request): Promise<Response> {
   let evidence = buildReportEvidence({ request: body, context, dataPackage, actionItems, status });
   const audit = await persistAiEvidence({ evidence, user, requestId, metadata: { route: "/api/reports", report_type: body.type } });
   evidence = withAuditResult(evidence, audit.status === "succeeded" ? { status: "succeeded", id: audit.id } : { status: audit.status, warning: audit.warning });
-  const operationAudit = await writeOperationAudit({
-    user,
-    action: "report_generate",
-    resourceType: "report",
-    resourceId: requestId,
-    status: "succeeded",
-    severity: body.type === "monthly" ? "medium" : "low",
-    summary: `生成${REPORT_TYPE_LABELS[body.type]}：${body.projectName}`,
-    detail: { report_type: body.type, access },
-    requestId,
-  });
   const report = createGeneratedReport({
     request: body,
     content,
@@ -254,12 +289,61 @@ export async function POST(request: Request): Promise<Response> {
     actionItems,
     requestId,
   });
+  const generatedAt = new Date().toISOString();
+  const periodStart = body.dateRange?.start || generatedAt.slice(0, 10);
+  const periodEnd = body.dateRange?.end || generatedAt.slice(0, 10);
+  const outputKey = outputKeyFor(body.type, periodStart);
+  const currentVersion = await getLatestFormalOutputVersion({
+    orgId: riskAccess.scope.orgId, subjectScope: riskAccess.scope.subjectScope, subjectId: riskAccess.scope.subjectId,
+    dataClass: riskAccess.scope.dataClass, outputKey,
+  });
+  if (currentVersion.status !== "succeeded") return jsonResponse({ success: false, status: currentVersion.status, error: "REPORT_OUTPUT_STORAGE_UNAVAILABLE", detail: currentVersion.warning, request_id: requestId }, currentVersion.status === "not_configured" ? 503 : 500, requestId);
+  const sourceDefinition = {
+    type: "report_factory",
+    report_type: body.type,
+    sources: dataPackage.dataSources,
+    model: context.model,
+    evidence_id: evidence.id,
+    source_status: context.sourceStatus,
+  };
+  const saved = await saveFormalReportWithSnapshot({
+    orgId: riskAccess.scope.orgId, subjectScope: riskAccess.scope.subjectScope, subjectId: riskAccess.scope.subjectId,
+    projectId: riskAccess.scope.requestedProjectId ?? (riskAccess.scope.subjectScope === "project" ? riskAccess.scope.subjectId : null),
+    dataClass: riskAccess.scope.dataClass, outputType: "generated_report", outputKey, title: report.title,
+    contentType: "text/markdown", content: report.content,
+    structuredPayload: { report, request: body, generation_status: status, access }, sourceDefinition, sourceSnapshotAt: generatedAt,
+    actor: user, actorBusinessRole: riskAccess.scope.businessRole,
+    idempotencyKey: `v634:report:${requestId}`, expectedVersion: currentVersion.data ?? 0,
+    snapshotType: snapshotTypeFor(body.type, riskAccess.scope.subjectScope), periodStart, periodEnd,
+    metrics: { visible_projects: access.visible_projects, total_projects: access.total_projects, project_fact_count: dataPackage.projectFacts.length, finance_fact_count: dataPackage.financeFacts.length, risk_fact_count: dataPackage.riskFacts.length },
+    exceptions: [
+      ...dataPackage.riskFacts.map(description => ({ type: "risk", description })),
+      ...context.finance.alerts.map(alert => ({ type: "finance", title: alert.title, owner: alert.owner, due_date: alert.dueDate, priority: alert.priority })),
+    ],
+    narrative: dataPackage.executiveSummary,
+  });
+  if (saved.status !== "succeeded" || !saved.data) return jsonResponse({ success: false, status: saved.status, error: "REPORT_FORMAL_PERSIST_FAILED", detail: saved.warning, request_id: requestId }, saved.status === "conflict" ? 409 : saved.status === "not_configured" ? 503 : 500, requestId);
+  report.formalOutputId = saved.data.output.id;
+  report.reportingSnapshotId = String(saved.data.snapshot.id || "");
+  report.formalStatus = saved.data.output.status;
+  report.version = saved.data.output.version;
+  const operationAudit = await writeOperationAudit({
+    user,
+    action: "report_generate",
+    resourceType: "formal_business_output",
+    resourceId: saved.data.output.id,
+    status: "succeeded",
+    severity: body.type === "monthly" ? "medium" : "low",
+    summary: `生成并留档${REPORT_TYPE_LABELS[body.type]}：${body.projectName}`,
+    detail: { report_type: body.type, access, output_version: saved.data.output.version, reporting_snapshot_id: saved.data.snapshot.id },
+    requestId,
+  });
   const knowledgeReferences = [];
   const knowledgeDashboard = buildKnowledgeOperationDashboard();
   for (const item of knowledgeDashboard.items.filter(entry => entry.impactedModules.includes("报告工厂")).slice(0, 5)) {
-    const saved = await createKnowledgeOutputReference({
+    const knowledgeSaved = await createKnowledgeOutputReference({
       outputType: "report",
-      outputId: report.id,
+      outputId: saved.data.output.id,
       outputTitle: report.title,
       moduleName: "报告工厂",
       pageId: item.pageId,
@@ -268,13 +352,15 @@ export async function POST(request: Request): Promise<Response> {
       user,
       requestId,
     }).catch(error => ({ status: "failed" as const, warning: error instanceof Error ? error.message : String(error), requestId }));
-    if (saved.status === "succeeded") knowledgeReferences.push(saved.reference);
+    if (knowledgeSaved.status === "succeeded") knowledgeReferences.push(knowledgeSaved.reference);
   }
 
   return jsonResponse({
     success: true,
     status,
     report,
+    formal_output_id: saved.data.output.id,
+    reporting_snapshot_id: saved.data.snapshot.id,
     evidence,
     access,
     knowledge_references: knowledgeReferences,

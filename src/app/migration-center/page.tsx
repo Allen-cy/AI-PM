@@ -30,6 +30,7 @@ import {
   type MigrationAreaId,
 } from "@/features/migration/readiness";
 import { buildMigrationScaleReadinessDashboard } from "@/features/migration/scale-readiness";
+import { loadCurrentBusinessContextSearchParams } from "@/features/operating-model/client-context";
 
 const levelColor = {
   "not-ready": "var(--red)",
@@ -456,7 +457,9 @@ export default function MigrationCenterPage() {
     setReportError("");
     try {
       const reportTitle = batchName.trim() || defaultBatchName(analysis);
-      const response = await fetch("/api/migration/report", {
+      const businessContext = await loadCurrentBusinessContextSearchParams({ preferredRole: "pmo" });
+      if (!businessContext.get("project_id")) throw new Error("请先选择本次迁移所属的项目。");
+      const response = await fetch(`/api/migration/report?${businessContext.toString()}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -490,7 +493,9 @@ export default function MigrationCenterPage() {
     setDownloadingComparisonReport(true);
     setComparisonReportError("");
     try {
-      const response = await fetch("/api/migration/batch-comparison/report", {
+      const businessContext = await loadCurrentBusinessContextSearchParams({ preferredRole: "pmo" });
+      if (!businessContext.get("project_id")) throw new Error("请先选择本次迁移所属的项目。");
+      const response = await fetch(`/api/migration/batch-comparison/report?${businessContext.toString()}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ comparison }),
@@ -525,7 +530,9 @@ export default function MigrationCenterPage() {
     setDownloadingCutoverPackage(true);
     setCutoverPackageError("");
     try {
-      const response = await fetch("/api/migration/cutover-decision/report", {
+      const businessContext = await loadCurrentBusinessContextSearchParams({ preferredRole: "pmo" });
+      if (!businessContext.get("project_id")) throw new Error("请先选择本次迁移所属的项目。");
+      const response = await fetch(`/api/migration/cutover-decision/report?${businessContext.toString()}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ decisionPackage }),

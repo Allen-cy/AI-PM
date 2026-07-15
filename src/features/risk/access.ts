@@ -117,6 +117,7 @@ export async function authorizeRiskRequest(
   } catch {
     return { ok: false, error: "PROJECT_OUTSIDE_CONTEXT", status: 403 };
   }
+  const effectiveMappings = (mappings.data ?? []).filter(item => !requestedProjectId || item.projectId === requestedProjectId);
 
   return {
     ok: true,
@@ -129,8 +130,8 @@ export async function authorizeRiskRequest(
       subjectId: context.subjectId,
       dataClass,
       projectIds,
-      sourceRecordIds: [...new Set((mappings.data ?? []).map(item => item.sourceRecordId).filter(Boolean))],
-      externalProjectCodes: [...new Set((mappings.data ?? []).map(item => item.externalProjectCode).filter((value): value is string => Boolean(value)))],
+      sourceRecordIds: [...new Set(effectiveMappings.map(item => item.sourceRecordId).filter(Boolean))],
+      externalProjectCodes: [...new Set(effectiveMappings.map(item => item.externalProjectCode).filter((value): value is string => Boolean(value)))],
       requestedProjectId: requestedProjectId || undefined,
     },
   };

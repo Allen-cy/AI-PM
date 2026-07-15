@@ -14,12 +14,14 @@ const normalized = entries.map(item => ({ level: String(item.level || item.sever
 const counts = normalized.reduce((result, item) => ({ ...result, [item.level]: (result[item.level] || 0) + 1 }), {});
 const v633Pattern = /project_control|project_issues|project_changes|unified_action_items|issue_change_events|begin_v633|finish_v633|apply_project_issue_change/i;
 const v633Findings = normalized.filter(item => v633Pattern.test(`${item.name} ${item.detail}`));
+const v634Pattern = /formal_business_output|save_v634|transition_v634|materialize_v634|prevent_v634/i;
+const v634Findings = normalized.filter(item => v634Pattern.test(`${item.name} ${item.detail}`));
 const findingTypes = normalized.reduce((result, item) => {
   const key = `${item.level}:${item.name}`;
   result[key] = (result[key] || 0) + 1;
   return result;
 }, {});
 const output = summaryOnly
-  ? { project_ref: projectRef, counts, v633_findings: v633Findings, finding_types: findingTypes }
-  : { project_ref: projectRef, counts, v633_findings: v633Findings, findings: normalized };
+  ? { project_ref: projectRef, counts, v633_findings: v633Findings, v634_findings: v634Findings, finding_types: findingTypes }
+  : { project_ref: projectRef, counts, v633_findings: v633Findings, v634_findings: v634Findings, findings: normalized };
 console.log(JSON.stringify(output, null, 2));
