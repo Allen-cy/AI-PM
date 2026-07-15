@@ -95,6 +95,14 @@ test("V6.5 exposes the governed flow page and daily AI cron", () => {
   assert.match(vercel, /api\/cron\/role-ai-scan/);
 });
 
+test("V6.5 role AI cron passes the global login gate and keeps its own secret authorization", async () => {
+  const { isPublicRequestPath } = await import("../src/features/auth/api-access.ts");
+  const cron = read("src/app/api/cron/role-ai-scan/route.ts");
+  assert.equal(isPublicRequestPath("/api/cron/role-ai-scan"), true);
+  assert.match(cron, /CRON_SECRET/);
+  assert.match(cron, /authorization/);
+});
+
 test("V6.5 configuration writes require idempotency keys and optimistic versions", () => {
   const schedule = read("src/app/api/role-assistant/route.ts");
   const organizationFeishu = read("src/app/api/integrations/feishu/organization-connection/route.ts");

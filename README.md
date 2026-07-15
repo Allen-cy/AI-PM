@@ -35,6 +35,10 @@ The easiest way to deploy your Next.js app is to use the [Vercel Platform](https
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
 
+## AI-PMO System V6.5.1
+
+V6.5.1 修复角色 AI 定时入口被全局登录门禁提前拦截的问题。`/api/cron/role-ai-scan` 现在与其他 Vercel Cron 入口一致，可穿过登录门禁到达自身的 `CRON_SECRET` 鉴权；匿名或错误密钥仍返回 401，只有 Vercel 调度器和持有正确专用密钥的受控调用可执行扫描。
+
 ## AI-PMO System V6.5.0
 
 V6.5.0 把 PM/运营提交 → PMO 复核与正式汇报冻结 → CEO 决策 → 下行行动 → 执行回执 → 效果复核变成可操作、可追溯的跨角色业务事件链。每次状态变化都在同一数据库事务内保存领域状态与追加式事件，所有写入强制业务上下文、稳定项目、数据分类、幂等键和期望版本；正式报告可直接复用为汇报快照，不再重复录入。

@@ -12,6 +12,7 @@ const PUBLIC_REQUEST_PATHS: readonly string[] = [
   "/api/cron/operating-calendar",
   "/api/cron/feishu-reconcile",
   "/api/cron/decision-sla",
+  "/api/cron/role-ai-scan",
   "/api/internal/p17-p25-audit",
   "/api/rag/health",
   "/api/version",
