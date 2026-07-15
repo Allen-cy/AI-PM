@@ -1,6 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import { getAuthSupabase } from "@/features/auth/server";
-import { readFeishuConfig } from "@/features/feishu/config";
+import { getOrganizationFeishuConfig } from "@/features/feishu/user-config";
 import { FEISHU_RECONCILE_DOMAINS, buildReconcileIdempotencyKey } from "@/features/feishu/reconcile-contract";
 import { FeishuReconcileError, runFeishuReconcile } from "@/features/feishu/reconcile-service";
 
@@ -31,8 +31,6 @@ export async function GET(request: Request) {
   const requestId = crypto.randomUUID();
   const headers = { "Cache-Control": "no-store", "X-Request-Id": requestId };
   if (!authorized(request)) return Response.json({ status: "failed", error: "CRON_UNAUTHORIZED", request_id: requestId }, { status: 401, headers });
-  const config = readFeishuConfig();
-  if (!config) return Response.json({ status: "failed", error: "GLOBAL_FEISHU_NOT_CONFIGURED", request_id: requestId }, { status: 503, headers });
   const supabase = getAuthSupabase();
   const organizations = await supabase.from("organizations").select("id").eq("status", "active");
   if (organizations.error) {
@@ -43,6 +41,9 @@ export async function GET(request: Request) {
   for (const organization of organizations.data ?? []) {
     const organizationRequestId = `${requestId}:${organization.id}`;
     try {
+      const effective = await getOrganizationFeishuConfig(organization.id);
+      const config = effective.config;
+      if (!config) throw new FeishuReconcileError(effective.setupHint || "组织共享飞书台账未配置。", "ORGANIZATION_FEISHU_NOT_CONFIGURED", 503);
       const idempotencyKey = await buildReconcileIdempotencyKey({
         orgId: organization.id,
         dataClass: "production",

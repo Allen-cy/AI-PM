@@ -15,6 +15,10 @@
     {
       "path": "/api/cron/feishu-reconcile",
       "schedule": "30 0 * * *"
+    },
+    {
+      "path": "/api/cron/role-ai-scan",
+      "schedule": "35 0 * * *"
     }
   ]
 }

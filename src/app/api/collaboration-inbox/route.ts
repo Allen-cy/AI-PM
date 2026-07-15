@@ -7,7 +7,7 @@ export const runtime = "nodejs";
 
 type InboxItem = {
   id: string;
-  type: "risk" | "joint_check" | "operating_calendar" | "governance_approval" | "management_signal" | "ai_recommendation" | "decision_receipt" | "feishu_confirmation" | "formal_output" | "action" | "closure_review" | "benefit_review" | "correction" | "report_receipt" | "evidence_review" | "data_quality" | "governance_action" | "capacity_conflict" | "project_dependency";
+  type: "risk" | "joint_check" | "operating_calendar" | "governance_approval" | "management_signal" | "ai_recommendation" | "decision_receipt" | "feishu_confirmation" | "formal_output" | "cross_role_flow" | "action" | "closure_review" | "benefit_review" | "correction" | "report_receipt" | "evidence_review" | "data_quality" | "governance_action" | "capacity_conflict" | "project_dependency";
   title: string;
   status: string;
   projectId: string | null;
@@ -68,6 +68,7 @@ export async function GET(request: Request) {
     { source: "ai_recommendations", promise: supabase.from("ai_recommendations").select("id,subject_scope,subject_id,recommendation_type,title,status,created_at,updated_at").eq("org_id", orgId).eq("data_class", dataClass).eq("actor_user_id", user.id).eq("business_role", role).eq("status", "pending_confirmation").limit(200) },
     { source: "feishu_action_confirmations", promise: supabase.from("feishu_action_confirmations").select("id,project_id,action_type,target_summary,status,risk_level,created_at,updated_at").eq("requester_id", user.id).eq("org_id", orgId).eq("data_class", dataClass).in("status", ["pending_confirmation", "failed"]).limit(200) },
     { source: "formal_business_outputs", promise: supabase.from("formal_business_outputs").select("id,project_id,subject_scope,subject_id,output_type,title,status,created_at,updated_at").eq("org_id", orgId).eq("data_class", dataClass).in("status", role === "ceo" ? ["submitted", "approved", "published"] : ["submitted"]).limit(200) },
+    { source: "cross_role_flows", promise: projectIds.length ? supabase.from("cross_role_flows").select("id,project_id,title,status,pmo_owner_user_id,decision_owner_user_id,execution_owner_user_id,deadline,created_by,updated_at").eq("org_id", orgId).eq("data_class", dataClass).in("project_id", projectIds).not("status", "in", "(closed,cancelled)").limit(200) : empty() },
     { source: "collaboration_inbox_receipts", promise: supabase.from("collaboration_inbox_receipts").select("id,item_type,source_type,source_id,status,snoozed_until,version,updated_at").eq("user_id", user.id).eq("org_id", orgId).eq("business_role", role).eq("data_class", dataClass).limit(1000) },
     { source: "projects", promise: projectIds.length ? supabase.from("projects").select("id,name").eq("org_id", orgId).eq("data_class", dataClass).in("id", projectIds).limit(300) : empty() },
   ];
@@ -123,9 +124,16 @@ export async function GET(request: Request) {
     if (!relevant && subjectScope !== "organization") continue;
     items.push({ id: `formal:${row.id}`, type: "formal_output", title: `正式成果：${String(row.title || row.output_type)}`, status: String(row.status), projectId: row.project_id ? String(row.project_id) : null, dueAt: null, priority: row.status === "submitted" ? "high" : "medium", actionUrl: "/reports", sourceId: String(row.id) });
   }
+  for (const row of rows.get("cross_role_flows") ?? []) {
+    const relevant = role === "pmo"
+      || (["ceo", "sponsor"].includes(role) && ["decision_submitted", "decision_made", "effect_reviewed"].includes(String(row.status)))
+      || String(row.created_by) === user.id || String(row.execution_owner_user_id) === user.id;
+    if (!relevant) continue;
+    items.push({ id: `cross-role:${row.id}`, type: "cross_role_flow", title: `跨角色闭环：${String(row.title || "待处理事项")}`, status: String(row.status), projectId: row.project_id ? String(row.project_id) : null, dueAt: row.deadline ? String(row.deadline) : null, priority: ["decision_submitted", "action_dispatched"].includes(String(row.status)) ? "critical" : "high", actionUrl: "/cross-role-flow", sourceId: String(row.id) });
+  }
   const projectNameById = new Map((rows.get("projects") ?? []).map(row => [String(row.id), String(row.name || "未命名项目")]));
   const sourceForType: Record<InboxItem["type"], string> = {
-    risk: "risks", joint_check: "business_joint_check_items", operating_calendar: "business_operating_occurrences", governance_approval: "project_governance_artifacts", management_signal: "management_signals", ai_recommendation: "ai_recommendations", decision_receipt: "decision_receipts", feishu_confirmation: "feishu_action_confirmations", formal_output: "formal_business_outputs", action: "unified_action_items", closure_review: "project_closure_assessments", benefit_review: "benefit_realization_reviews", correction: "feedback_correction_events", report_receipt: "reporting_snapshots", evidence_review: "evidence_links", data_quality: "data_quality_issues", governance_action: "governance_cadence_actions", capacity_conflict: "capacity_conflict_actions", project_dependency: "project_dependencies",
+    risk: "risks", joint_check: "business_joint_check_items", operating_calendar: "business_operating_occurrences", governance_approval: "project_governance_artifacts", management_signal: "management_signals", ai_recommendation: "ai_recommendations", decision_receipt: "decision_receipts", feishu_confirmation: "feishu_action_confirmations", formal_output: "formal_business_outputs", cross_role_flow: "cross_role_flows", action: "unified_action_items", closure_review: "project_closure_assessments", benefit_review: "benefit_realization_reviews", correction: "feedback_correction_events", report_receipt: "reporting_snapshots", evidence_review: "evidence_links", data_quality: "data_quality_issues", governance_action: "governance_cadence_actions", capacity_conflict: "capacity_conflict_actions", project_dependency: "project_dependencies",
   };
   const sourceUpdatedAt = new Map<string, string>();
   for (const [source, sourceRows] of rows) for (const row of sourceRows) sourceUpdatedAt.set(`${source}:${row.id}`, String(row.updated_at || row.created_at || "") || "");
@@ -148,6 +156,7 @@ const RECEIPT_SOURCES = new Set([
   "ai_recommendations", "decision_receipts", "feishu_action_confirmations", "formal_business_outputs", "unified_action_items",
   "project_closure_assessments", "benefit_realization_reviews", "feedback_correction_events", "reporting_snapshots", "evidence_links",
   "data_quality_issues", "governance_cadence_actions", "capacity_conflict_actions", "project_dependencies",
+  "cross_role_flows",
 ]);
 
 export async function POST(request: Request) {

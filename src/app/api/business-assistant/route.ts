@@ -1,6 +1,6 @@
 import { requireAuthenticatedApiUser } from "@/features/auth/server";
 import { FeishuBaseClient, type FeishuRecordItem } from "@/features/feishu/client";
-import { getEffectiveFeishuConfig } from "@/features/feishu/user-config";
+import { getOrganizationFeishuConfig } from "@/features/feishu/user-config";
 import { resolveBusinessAssistantAccess } from "@/features/operating-assistant/access";
 import {
   loadAssistantActions,
@@ -44,7 +44,7 @@ export async function GET(request: Request): Promise<Response> {
     const status = identities.status === "not_configured" ? 503 : 500;
     return json({ status: identities.status, error: "PROJECT_IDENTITY_LOAD_FAILED", detail: identities.warning, request_id: requestId }, status, requestId);
   }
-  const effective = await getEffectiveFeishuConfig();
+  const effective = await getOrganizationFeishuConfig(context.orgId);
   if (!effective.config?.tables.project) return json({
     status: "not_configured",
     error: "FEISHU_PROJECT_SOURCE_NOT_CONFIGURED",

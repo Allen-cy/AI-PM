@@ -11,10 +11,11 @@ type AssistantOutput = {
   pending_confirmation?: string[];
 };
 type Run = { id: string; business_role: string; scenario: string; model_name?: string | null; status: string; output?: AssistantOutput; error_message?: string | null; started_at: string };
-type Recommendation = { id: string; recommendation_type: string; title: string; reason: string; proposed_payload: Record<string, unknown>; status: string; executed_resource_type?: string | null; executed_resource_id?: string | null };
+type Recommendation = { id: string; recommendation_type: string; title: string; reason: string; proposed_payload: Record<string, unknown>; status: string; confidence?: number | null; evidence_refs?: string[]; effect_status?: string; effect_summary?: string | null; executed_resource_type?: string | null; executed_resource_id?: string | null };
 type Evaluation = { id: string; run_id: string; rating?: number | null; verdict: string; correction?: string | null; adopted?: boolean | null; outcome?: string | null; accuracy_score?: number | null; refusal_outcome?: string; false_positive?: boolean; false_negative?: boolean; human_modified?: boolean; human_edit_summary?: string | null; closure_effect?: string; created_at: string };
 type EvaluationDraft = { rating: string; verdict: string; correction: string; adopted: string; outcome: string; accuracyScore: string; refusalOutcome: string; falsePositive: boolean; falseNegative: boolean; humanModified: boolean; humanEditSummary: string; closureEffect: string };
 type EvaluationMetrics = { evaluation_count: number; accuracy_rate: number | null; correct_refusal_rate: number | null; false_positive_rate: number | null; false_negative_rate: number | null; adoption_rate: number | null; human_modification_rate: number | null; closure_effect_achieved_rate: number | null };
+type ScanSchedule = { id: string; scenario: string; schedule: string; confidence_threshold: number; status: string; next_run_at: string; last_run_at?: string | null; last_status?: string | null; version: number };
 
 const EMPTY_EVALUATION: EvaluationDraft = { rating: "5", verdict: "useful", correction: "", adopted: "", outcome: "", accuracyScore: "1", refusalOutcome: "not_applicable", falsePositive: false, falseNegative: false, humanModified: false, humanEditSummary: "", closureEffect: "not_evaluated" };
 const MATERIALIZABLE_TYPES = new Set(["action", "risk", "issue", "change", "governance", "decision_brief", "report", "feishu_draft"]);
@@ -31,6 +32,10 @@ export default function RoleAssistantPage() {
   const [saving, setSaving] = useState(false);
   const [scenario, setScenario] = useState("daily_business_assistant");
   const [rejectReason, setRejectReason] = useState<Record<string, string>>({});
+  const [schedules, setSchedules] = useState<ScanSchedule[]>([]);
+  const [scheduleCadence, setScheduleCadence] = useState("daily");
+  const [scheduleStatus, setScheduleStatus] = useState("active");
+  const [confidenceThreshold, setConfidenceThreshold] = useState("0.65");
 
   const load = useCallback(async () => {
     setError("");
@@ -55,6 +60,7 @@ export default function RoleAssistantPage() {
       setRecommendations(payload.recommendations || []);
       setEvaluations(payload.evaluations || []);
       setEvaluationMetrics(payload.evaluation_metrics || null);
+      setSchedules(payload.schedules || []);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "角色助理加载失败");
     }
@@ -79,6 +85,7 @@ export default function RoleAssistantPage() {
       else if (operation === "scan") setMessage(`主动扫描完成：发现 ${body.findings?.length || 0} 项，新建信号 ${body.created || 0} 项，刷新 ${body.refreshed || 0} 项。`);
       else if (operation === "materialize_recommendation") setMessage(`已生成所属业务领域草稿：${body.materialization?.resource_type || "草稿"}；这不代表行动已经执行或完成。`);
       else if (operation === "evaluate") setMessage("效果评测已保存，将用于后续模型与提示词改进。");
+      else if (operation === "save_schedule") setMessage("角色AI定时扫描计划已保存；每次输出仍需人工接受或驳回。" );
       else setMessage("人工确认动作已保存。");
       await load();
     } catch (caught) {
@@ -125,6 +132,18 @@ export default function RoleAssistantPage() {
         </div>
       </section>
 
+      {["pm", "operations", "pmo", "ceo"].includes(context?.businessRole || "") && <section className="card" style={{ marginBottom: 16 }}>
+        <div className="section-title">⏱️ 角色AI定时扫描</div>
+        <p style={{ color: "var(--text2)", lineHeight: 1.7 }}>系统按计划扫描当前角色授权范围内的管理信号、风险和行动，保留证据与置信度；建议只进入待确认箱，不会自动执行。</p>
+        <div style={{ display: "flex", gap: 9, flexWrap: "wrap", marginTop: 10 }}>
+          <select className="input" style={{ maxWidth: 180 }} value={scheduleCadence} onChange={event => setScheduleCadence(event.target.value)}><option value="hourly">每小时</option><option value="daily">每天</option><option value="weekly">每周</option></select>
+          <select className="input" style={{ maxWidth: 180 }} value={scheduleStatus} onChange={event => setScheduleStatus(event.target.value)}><option value="active">启用</option><option value="paused">暂停</option><option value="disabled">停用</option></select>
+          <label style={{ display: "flex", alignItems: "center", gap: 7, color: "var(--text2)" }}>最低置信度<input className="input" style={{ width: 100 }} type="number" min="0" max="1" step="0.05" value={confidenceThreshold} onChange={event => setConfidenceThreshold(event.target.value)}/></label>
+          <button className="btn-primary" disabled={saving} onClick={() => void operate("save_schedule", { scenario: "daily_exception_scan", schedule: scheduleCadence, status: scheduleStatus, confidence_threshold: Number(confidenceThreshold), expected_version: schedules.find(item => item.scenario === "daily_exception_scan")?.version || 0, idempotency_key: `role-ai-schedule:${crypto.randomUUID()}` })}>保存扫描计划</button>
+        </div>
+        {schedules.map(item => <p key={item.id} style={{ color: "var(--text2)", marginTop: 9 }}>当前：{item.schedule} · {item.status} · 阈值 {(item.confidence_threshold * 100).toFixed(0)}% · 下次 {new Date(item.next_run_at).toLocaleString("zh-CN")}{item.last_run_at ? ` · 最近 ${new Date(item.last_run_at).toLocaleString("zh-CN")}（${item.last_status || "完成"}）` : ""}</p>)}
+      </section>}
+
       {latest && <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(300px,1fr))", gap: 16 }}>
         <div className="card"><div className="section-title">✅ 事实</div>{latest.facts?.map((item, index) => <article key={index} style={{ padding: 10, background: "var(--surface2)", borderRadius: 10, marginTop: 8 }}><strong>{item.statement}</strong><p style={{ color: "var(--accent2)", fontSize: ".72rem", marginTop: 5 }}>{item.evidence_ids.join(" · ")}</p></article>)}</div>
         <div className="card"><div className="section-title">🔎 推断</div>{latest.inferences?.map((item, index) => <article key={index} style={{ padding: 10, background: "var(--surface2)", borderRadius: 10, marginTop: 8 }}><strong>{item.statement}</strong><p style={{ color: "var(--text2)", fontSize: ".72rem", marginTop: 5 }}>置信度 {(item.confidence * 100).toFixed(0)}% · {item.evidence_ids.join(" · ")}</p></article>)}</div>
@@ -135,7 +154,7 @@ export default function RoleAssistantPage() {
       <section className="card" style={{ marginTop: 16 }}>
         <div className="section-title">📥 AI建议确认箱</div>
         {recommendations.length === 0 ? <p style={{ color: "var(--text2)" }}>尚无待确认AI建议。</p> : recommendations.map(item => <article key={item.id} style={{ padding: 11, background: "var(--surface2)", borderRadius: 10, marginTop: 8 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}><div><strong>{item.title}</strong><p style={{ color: "var(--text2)", fontSize: ".78rem", marginTop: 5 }}>{item.recommendation_type} · {item.reason}</p></div><span className="tag tag-blue">{item.status}</span></div>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}><div><strong>{item.title}</strong><p style={{ color: "var(--text2)", fontSize: ".78rem", marginTop: 5 }}>{item.recommendation_type} · {item.reason}{item.confidence != null ? ` · 置信度 ${(item.confidence * 100).toFixed(0)}%` : ""}</p>{(item.evidence_refs?.length ?? 0) > 0 && <p style={{ color: "var(--accent2)", fontSize: ".72rem", marginTop: 4 }}>依据：{item.evidence_refs?.join(" · ")}</p>}{item.effect_status && item.effect_status !== "not_evaluated" && <p style={{ color: "var(--green)", fontSize: ".72rem", marginTop: 4 }}>效果：{item.effect_status}{item.effect_summary ? ` · ${item.effect_summary}` : ""}</p>}</div><span className="tag tag-blue">{item.status}</span></div>
           <details style={{ marginTop: 9 }}><summary style={{ cursor: "pointer", color: "var(--cyan)" }}>落地预览（不会直接写入业务事实）</summary><pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", padding: 10, background: "var(--surface)", borderRadius: 8, marginTop: 8, fontSize: ".72rem" }}>{JSON.stringify(item.proposed_payload, null, 2)}</pre></details>
           {item.status === "pending_confirmation" && <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 9 }}><button className="btn-primary" disabled={saving} onClick={() => void operate("accept_recommendation", { recommendation_id: item.id, confirm: true })}>人工接受</button><input className="input" style={{ maxWidth: 300 }} placeholder="拒绝原因" value={rejectReason[item.id] || ""} onChange={event => setRejectReason({ ...rejectReason, [item.id]: event.target.value })}/><button className="btn-secondary" disabled={saving || !rejectReason[item.id]} onClick={() => void operate("reject_recommendation", { recommendation_id: item.id, reason: rejectReason[item.id] })}>拒绝</button></div>}
           {item.status === "accepted" && MATERIALIZABLE_TYPES.has(item.recommendation_type) && <div style={{ marginTop: 9 }}><button className="btn-primary" disabled={saving} onClick={() => void operate("materialize_recommendation", { recommendation_id: item.id, confirm_materialization: true })}>二次确认并生成业务草稿</button><p style={{ color: "var(--amber)", fontSize: ".75rem", marginTop: 6 }}>草稿只会进入风险/问题/变更/治理/决策/汇报/飞书/行动的真实状态机；不代表行动已经执行或完成。</p></div>}

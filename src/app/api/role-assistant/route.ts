@@ -227,12 +227,12 @@ export async function GET(request: Request) {
   const scope = await contextFor(request);
   if ("error" in scope) return json({ error: scope.error, detail: "detail" in scope ? scope.detail : undefined, request_id: requestId }, scope.status, requestId);
   const supabase = getAuthSupabase();
-  const [runs, recommendations, evaluations, executionAttempts] = await Promise.all([
+  const [runs, recommendations, evaluations, executionAttempts, schedules] = await Promise.all([
     supabase.from("ai_assistant_runs").select("id,business_role,scenario,prompt_version,model_provider,model_name,status,output,error_class,error_message,started_at,completed_at")
       .eq("actor_user_id", scope.user.id).eq("business_role", scope.role).eq("org_id", scope.context.orgId)
       .eq("subject_scope", scope.context.subjectScope).eq("subject_id", scope.context.subjectId).eq("data_class", scope.dataClass)
       .order("created_at", { ascending: false }).limit(30),
-    supabase.from("ai_recommendations").select("id,run_id,recommendation_type,title,reason,proposed_payload,status,confirmed_at,executed_resource_type,executed_resource_id,created_at")
+    supabase.from("ai_recommendations").select("id,run_id,recommendation_type,title,reason,proposed_payload,status,confidence,evidence_refs,effect_status,effect_summary,confirmed_at,executed_resource_type,executed_resource_id,created_at")
       .eq("actor_user_id", scope.user.id).eq("business_role", scope.role).eq("org_id", scope.context.orgId)
       .eq("subject_scope", scope.context.subjectScope).eq("subject_id", scope.context.subjectId).eq("data_class", scope.dataClass)
       .order("created_at", { ascending: false }).limit(100),
@@ -244,8 +244,12 @@ export async function GET(request: Request) {
       .eq("actor_user_id", scope.user.id).eq("business_role", scope.role).eq("org_id", scope.context.orgId)
       .eq("subject_scope", scope.context.subjectScope).eq("subject_id", scope.context.subjectId).eq("data_class", scope.dataClass)
       .order("created_at", { ascending: false }).limit(100),
+    supabase.from("role_ai_scan_schedules").select("id,scenario,schedule,confidence_threshold,status,next_run_at,last_run_at,last_run_id,last_status,version")
+      .eq("actor_user_id", scope.user.id).eq("business_role", scope.role).eq("org_id", scope.context.orgId)
+      .eq("subject_scope", scope.context.subjectScope).eq("subject_id", scope.context.subjectId).eq("data_class", scope.dataClass)
+      .order("created_at", { ascending: false }).limit(20),
   ]);
-  const error = runs.error || recommendations.error || evaluations.error || executionAttempts.error;
+  const error = runs.error || recommendations.error || evaluations.error || executionAttempts.error || schedules.error;
   if (error) return json({ error: "ROLE_ASSISTANT_STORAGE_UNAVAILABLE", detail: error.message, request_id: requestId }, 503, requestId);
   const runIds = new Set((runs.data ?? []).map(item => String(item.id)));
   const safeRecommendations = (recommendations.data ?? []).filter(item => runIds.has(String(item.run_id)));
@@ -253,7 +257,7 @@ export async function GET(request: Request) {
   const safeAttempts = (executionAttempts.data ?? []).filter(item => runIds.has(String(item.run_id)));
   return json({
     status: "succeeded", context: scope.context, data_class: scope.dataClass, runs: runs.data ?? [],
-    recommendations: safeRecommendations, evaluations: safeEvaluations, evaluation_metrics: evaluationMetrics(safeEvaluations), execution_attempts: safeAttempts,
+    recommendations: safeRecommendations, evaluations: safeEvaluations, evaluation_metrics: evaluationMetrics(safeEvaluations), execution_attempts: safeAttempts, schedules: schedules.data ?? [],
     source: { type: "supabase", fallback_used: false }, request_id: requestId,
   }, 200, requestId);
 }
@@ -267,6 +271,30 @@ export async function POST(request: Request) {
   catch { return json({ error: "INVALID_JSON", request_id: requestId }, 400, requestId); }
   const operation = String(body.operation || "");
   const supabase = getAuthSupabase();
+
+  if (operation === "save_schedule") {
+    if (!["pm", "operations", "pmo", "ceo"].includes(scope.role)) return json({ error: "SCHEDULE_ROLE_FORBIDDEN", request_id: requestId }, 403, requestId);
+    const schedule = ["hourly", "daily", "weekly"].includes(String(body.schedule)) ? String(body.schedule) : "daily";
+    const status = ["active", "paused", "disabled"].includes(String(body.status)) ? String(body.status) : "active";
+    const scenario = String(body.scenario || "daily_exception_scan").trim();
+    const confidence = Number(body.confidence_threshold ?? 0.65);
+    const expectedVersion = Number(body.expected_version ?? 0);
+    const idempotencyKey = String(body.idempotency_key || "").trim();
+    if (!idempotencyKey) return json({ error: "SCHEDULE_IDEMPOTENCY_KEY_REQUIRED", request_id: requestId }, 400, requestId);
+    if (!scenario || !Number.isFinite(confidence) || confidence < 0 || confidence > 1 || !Number.isSafeInteger(expectedVersion) || expectedVersion < 0) return json({ error: "SCHEDULE_INPUT_INVALID", request_id: requestId }, 400, requestId);
+    const current = await supabase.from("role_ai_scan_schedules").select("*,last_idempotency_key").eq("actor_user_id", scope.user.id).eq("business_role", scope.role)
+      .eq("org_id", scope.context.orgId).eq("subject_scope", scope.context.subjectScope).eq("subject_id", scope.context.subjectId)
+      .eq("data_class", scope.dataClass).eq("scenario", scenario).maybeSingle();
+    if (current.error) return json({ error: "SCHEDULE_LOAD_FAILED", detail: current.error.message, request_id: requestId }, 503, requestId);
+    if (current.data?.last_idempotency_key === idempotencyKey) return json({ status: "succeeded", replayed: true, schedule: current.data, idempotency_key: idempotencyKey, request_id: requestId }, 200, requestId);
+    if (Number(current.data?.version || 0) !== expectedVersion) return json({ error: "SCHEDULE_VERSION_CONFLICT", current_version: Number(current.data?.version || 0), request_id: requestId }, 409, requestId);
+    const payload = { schedule, status, confidence_threshold: confidence, next_run_at: new Date().toISOString(), last_idempotency_key: idempotencyKey, updated_at: new Date().toISOString() };
+    const saved = current.data
+      ? await supabase.from("role_ai_scan_schedules").update({ ...payload, version: expectedVersion + 1 }).eq("id", current.data.id).eq("version", expectedVersion).select("*").single()
+      : await supabase.from("role_ai_scan_schedules").insert({ ...payload, org_id: scope.context.orgId, actor_user_id: scope.user.id, business_role: scope.role, subject_scope: scope.context.subjectScope, subject_id: scope.context.subjectId, data_class: scope.dataClass, scenario }).select("*").single();
+    if (saved.error) return json({ error: "SCHEDULE_SAVE_FAILED", detail: saved.error.message, request_id: requestId }, 503, requestId);
+    return json({ status: "succeeded", schedule: saved.data, idempotency_key: idempotencyKey, request_id: requestId }, current.data ? 200 : 201, requestId);
+  }
 
   if (operation === "scan") {
     try {
@@ -324,7 +352,9 @@ feishu_draft={project_id,evidence_ids,type:message|task|calendar|document,idempo
       if (output.recommendations.length > 0) {
         const saved = await supabase.from("ai_recommendations").insert(output.recommendations.map((item, index) => ({
           ...recommendationContext(scope, runId), recommendation_type: item.type, title: item.title, reason: item.reason,
-          proposed_payload: item.proposed_payload, status: "pending_confirmation", idempotency_key: `ai:${runId}:${index + 1}`,
+          proposed_payload: item.proposed_payload, status: "pending_confirmation", confidence: 0.7,
+          evidence_refs: Array.isArray(item.proposed_payload.evidence_ids) ? item.proposed_payload.evidence_ids : [],
+          idempotency_key: `ai:${runId}:${index + 1}`,
         })));
         if (saved.error) throw saved.error;
       }
@@ -374,6 +404,12 @@ feishu_draft={project_id,evidence_ids,type:message|task|calendar|document,idempo
         human_modified: humanModified, human_edit_summary: humanEditSummary || null, closure_effect: closureEffect,
       }).select("id").single();
       if (evaluation.error) throw evaluation.error;
+      if (recommendationId && closureEffect !== "not_evaluated" && closureEffect !== "too_early") {
+        await supabase.from("ai_recommendations").update({
+          effect_status: closureEffect, effect_summary: String(body.outcome || body.correction || "").trim() || verdict,
+          effect_evaluated_by: scope.user.id, effect_evaluated_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+        }).eq("id", recommendationId).eq("run_id", runId).eq("actor_user_id", scope.user.id);
+      }
       await writeOperationAudit({ user: scope.user, action: "role_assistant_evaluate", resourceType: "ai_assistant_run", resourceId: runId, status: "succeeded", summary: "当前用户已提交角色助理效果评测", detail: { businessRole: scope.role, dataClass: scope.dataClass, verdict, rating, accuracyScore, refusalOutcome, falsePositive: body.false_positive === true, falseNegative: body.false_negative === true, adopted: body.adopted, humanModified, closureEffect }, requestId });
       return json({ status: "succeeded", evaluation_id: evaluation.data.id, request_id: requestId }, 200, requestId);
     }

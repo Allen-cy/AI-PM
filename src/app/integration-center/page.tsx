@@ -574,6 +574,7 @@ export default function IntegrationCenterPage() {
             </p>
           </div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
+            <Link href="/integration-center/organization-feishu" className="btn-secondary" style={{ textDecoration: "none" }}>组织飞书连接</Link>
             <Link href="/migration-center" className="btn-secondary" style={{ textDecoration: "none" }}>迁移与数据接入</Link>
             <Link href="/account" className="btn-secondary" style={{ textDecoration: "none" }}>用户配置</Link>
           </div>

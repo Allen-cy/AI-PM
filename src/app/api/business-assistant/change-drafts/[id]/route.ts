@@ -1,5 +1,4 @@
 import { requireAuthenticatedApiUser } from "@/features/auth/server";
-import { readFeishuConfig } from "@/features/feishu/config";
 import { getUserFeishuConfig } from "@/features/feishu/user-config";
 import {
   authorizeAssistantProject,
@@ -56,10 +55,11 @@ export async function PATCH(
     if (identities.status !== "succeeded") return json({ status: identities.status, detail: identities.warning, request_id: requestId }, identities.status === "not_configured" ? 503 : 500, requestId);
     let feishuConfig = null;
     try {
-      feishuConfig = await getUserFeishuConfig(draft.requestedBy) ?? readFeishuConfig();
+      feishuConfig = await getUserFeishuConfig(draft.requestedBy);
     } catch {
       return json({ status: "not_configured", detail: "草稿申请人的个人飞书凭据不可用，未创建写回队列。", request_id: requestId }, 503, requestId);
     }
+    if (!feishuConfig) return json({ status: "not_configured", detail: "草稿申请人尚未配置个人飞书，系统不会回退到管理员身份。", request_id: requestId }, 503, requestId);
     const current = await loadAssistantCurrentFacts({
       draft: { role: draft.businessRole, projectId: draft.projectId, sourceType: draft.sourceType, sourceRecordId: draft.sourceRecordId, changes: draft.changes },
       identities: identities.data ?? [],

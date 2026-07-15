@@ -7,7 +7,7 @@ import {
 } from "../../../../../../../../features/feishu/action-confirmations.ts";
 import { executeFeishuAction } from "../../../../../../../../features/feishu/action-payload.ts";
 import { FeishuApiError, FeishuBaseClient } from "../../../../../../../../features/feishu/client.ts";
-import { getEffectiveFeishuConfig, getUserFeishuConfig, larkCliHint } from "../../../../../../../../features/feishu/user-config.ts";
+import { getUserFeishuConfig, larkCliHint } from "../../../../../../../../features/feishu/user-config.ts";
 import { executeBusinessUpdateWriteback } from "../../../../../../../../features/operating-assistant/writeback.ts";
 import { writeIntegrationSyncLog } from "../../../../../../../../features/operating-system/sync-logs.ts";
 import { writeOperationAudit } from "../../../../../../../../features/security/repository.ts";
@@ -119,20 +119,17 @@ export async function POST(request: Request, context: RouteContext): Promise<Res
     }, httpStatus, requestId);
   }
 
-  const requirePersonalFeishu = confirmation.payload.require_personal_feishu === true;
+  const require_personal_feishu = true;
   const executor_user_id = user.id;
-  const personalFeishuConfig = requirePersonalFeishu ? await getUserFeishuConfig(executor_user_id) : null;
-  const effectiveFeishu = requirePersonalFeishu
-    ? { config: personalFeishuConfig, source: "user" as const, larkCliHint }
-    : await getEffectiveFeishuConfig();
-  const setupHint = "setupHint" in effectiveFeishu ? effectiveFeishu.setupHint : undefined;
+  const personalFeishuConfig = await getUserFeishuConfig(executor_user_id);
+  const effectiveFeishu = { config: personalFeishuConfig, source: "user" as const, larkCliHint };
   if (!effectiveFeishu.config) {
     return json({
       request_id: requestId,
       status: "not_configured",
       confirmation,
       riskReview,
-      warning: requirePersonalFeishu ? "该动作要求使用确认人的个人飞书接入。请先在用户中心配置个人飞书。" : setupHint || "飞书接入未配置，请先在用户中心配置个人飞书或联系管理员配置全局飞书。",
+      warning: require_personal_feishu ? "消息、任务、文档和业务写回必须使用确认人的个人飞书接入。请先在用户中心完成配置；系统不会回退到管理员身份。" : "个人飞书配置缺失。",
       lark_cli_hint: effectiveFeishu.larkCliHint,
     }, 503, requestId);
   }
@@ -143,7 +140,7 @@ export async function POST(request: Request, context: RouteContext): Promise<Res
       confirmation,
       riskReview,
       warning: "当前飞书配置缺少同步流水表，无法安全执行通用写入动作。",
-      remediation: "请在用户中心或 Vercel 环境变量中配置 FEISHU_SYNC_LEDGER_TABLE_ID，并确保字段使用中文描述。",
+      remediation: "请在用户中心的个人飞书表映射中配置同步流水表，并确保字段使用中文描述。",
     }, 503, requestId);
   }
 

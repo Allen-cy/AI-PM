@@ -2,7 +2,7 @@ import { getAuthSupabase, type AppUser } from "../auth/server.ts";
 import type { FeishuActionConfirmationRecord } from "../feishu/action-confirmations.ts";
 import { validateFeishuActionBody, type FeishuActionBody } from "../feishu/action-payload.ts";
 import { FeishuApiError, FeishuBaseClient } from "../feishu/client.ts";
-import { readFeishuConfig, type FeishuConfig, type FeishuTableKey } from "../feishu/config.ts";
+import { type FeishuConfig, type FeishuTableKey } from "../feishu/config.ts";
 import { getUserFeishuConfig } from "../feishu/user-config.ts";
 import { resolveBusinessContext } from "../operating-model/context.ts";
 import { listBusinessRoleAssignments } from "../operating-model/persistence.ts";
@@ -30,7 +30,7 @@ export interface BusinessUpdateWritebackExecution {
   warning?: string;
   draft?: BusinessUpdateDraftRecord;
   resource?: Record<string, unknown>;
-  feishuSource?: "user" | "global";
+  feishuSource?: "user";
   errorCode?: string;
 }
 
@@ -47,11 +47,10 @@ async function loadRequester(draft: BusinessUpdateDraftRecord): Promise<AppUser 
   return error || !data ? null : data as AppUser;
 }
 
-async function loadFeishuForRequester(userId: string): Promise<{ config: FeishuConfig | null; source?: "user" | "global" }> {
+async function loadFeishuForRequester(userId: string): Promise<{ config: FeishuConfig | null; source?: "user" }> {
   const personal = await getUserFeishuConfig(userId);
   if (personal) return { config: personal, source: "user" };
-  const global = readFeishuConfig();
-  return { config: global, source: global ? "global" : undefined };
+  return { config: null };
 }
 
 async function finalizeWithRetry(input: Parameters<typeof finalizeBusinessUpdateWriteback>[0]): ReturnType<typeof finalizeBusinessUpdateWriteback> {
@@ -105,13 +104,13 @@ export async function executeBusinessUpdateWriteback(input: {
   const access = await authorizeAssistantProject({ user: requester, context, projectId: draft.projectId, dataClass: draft.dataClass, action: actionForDraft(draft) });
   if (!access.allowed) return { status: "forbidden", warning: access.warning ?? "申请人已无权更新该项目。", errorCode: "P19_PROJECT_ACCESS_REVOKED" };
 
-  let effective: { config: FeishuConfig | null; source?: "user" | "global" };
+  let effective: { config: FeishuConfig | null; source?: "user" };
   try {
     effective = await loadFeishuForRequester(requester.id);
   } catch {
     return { status: "not_configured", warning: "申请人的个人飞书凭据不可用。", errorCode: "P19_PERSONAL_FEISHU_UNAVAILABLE" };
   }
-  if (!effective.config || !effective.source) return { status: "not_configured", warning: "申请人未配置个人飞书，系统也没有全局飞书配置。", errorCode: "P19_FEISHU_NOT_CONFIGURED" };
+  if (!effective.config || !effective.source) return { status: "not_configured", warning: "申请人未配置个人飞书；为避免借用管理员身份，系统不会执行写回。", errorCode: "P19_PERSONAL_FEISHU_REQUIRED" };
   const tableKey = String(payload.table_key) as FeishuTableKey;
   if (!effective.config.tables[tableKey]) return { status: "not_configured", warning: `飞书配置缺少 ${tableKey} 表ID。`, errorCode: "P19_FEISHU_TABLE_NOT_CONFIGURED" };
   if (!effective.config.tables.syncLedger) return { status: "not_configured", warning: "飞书配置缺少同步流水表ID，不允许执行受控写回。", errorCode: "P19_SYNC_LEDGER_NOT_CONFIGURED" };

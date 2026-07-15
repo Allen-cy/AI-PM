@@ -42,6 +42,7 @@ test("V6.4 unified inbox contract covers every required source and keeps governe
   assert.deepEqual(REQUIRED_INBOX_SOURCES, [
     "risk", "joint_check", "operating_calendar", "governance_approval", "management_signal",
     "ai_recommendation", "decision_receipt", "feishu_confirmation", "formal_output",
+    "cross_role_flow",
   ]);
   const result = sortAndSummarizeInbox([
     { id: "2", type: "formal_output", title: "周报", status: "submitted", projectId: "p1", projectName: "A", dueAt: null, priority: "medium", actionUrl: "/reports", sourceId: "o1", sourceType: "formal_business_outputs", sourceUpdatedAt: "2026-07-15", dataClass: "test" },

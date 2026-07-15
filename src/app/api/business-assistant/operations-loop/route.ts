@@ -1,6 +1,6 @@
 import { getAuthSupabase, requireAuthenticatedApiUser } from "@/features/auth/server";
 import { FeishuBaseClient, type FeishuRecordItem } from "@/features/feishu/client";
-import { getEffectiveFeishuConfig } from "@/features/feishu/user-config";
+import { getOrganizationFeishuConfig } from "@/features/feishu/user-config";
 import { resolveBusinessAssistantAccess } from "@/features/operating-assistant/access";
 import { buildPmOperationsJointChecks } from "@/features/operating-assistant/joint-checks";
 import { loadAssistantProjectIdentities } from "@/features/operating-assistant/repository";
@@ -23,7 +23,7 @@ async function records(client: FeishuBaseClient, table: "project" | "milestone" 
 }
 
 async function runJointCheck(scope: Extract<Awaited<ReturnType<typeof scopeFor>>, { ok: true }>, requestId: string) {
-  const effective = await getEffectiveFeishuConfig(); if (!effective.config?.tables.project) throw new Error(effective.setupHint || "飞书项目台账未配置");
+  const effective = await getOrganizationFeishuConfig(scope.context.orgId); if (!effective.config?.tables.project) throw new Error(effective.setupHint || "飞书项目台账未配置");
   const client = new FeishuBaseClient(effective.config);
   const [projects, milestones, risks, contracts, payments] = await Promise.all([records(client, "project", true), records(client, "milestone"), records(client, "risk"), records(client, "contract"), records(client, "payment")]);
   const warnings = [milestones.warning, risks.warning, contracts.warning, payments.warning].filter((value): value is string => Boolean(value));
@@ -76,4 +76,3 @@ export async function POST(request: Request): Promise<Response> {
     return json({ status: "succeeded", result, source: { type: "supabase+feishu", fallback_used: false }, request_id: requestId }, 200, requestId);
   } catch (error) { const detail = error instanceof Error ? error.message : "unknown"; return json({ error: "OPERATIONS_LOOP_OPERATION_FAILED", detail, request_id: requestId }, /CONFLICT|TRANSITION/.test(detail) ? 409 : /REQUIRED|FORBIDDEN/.test(detail) ? 403 : /does not exist|schema cache/i.test(detail) ? 503 : 500, requestId); }
 }
-

@@ -44,6 +44,14 @@ export function feishuBaseTokenCredentialContext(userId: string): string {
   return `user_feishu_connections:${userId}:base_token`;
 }
 
+export function organizationFeishuAppSecretCredentialContext(orgId: string): string {
+  return `organization_feishu_connections:${orgId}:app_secret`;
+}
+
+export function organizationFeishuBaseTokenCredentialContext(orgId: string): string {
+  return `organization_feishu_connections:${orgId}:base_token`;
+}
+
 export interface StoredCredentialInput {
   encrypted?: string | null;
   plaintext?: string | null;

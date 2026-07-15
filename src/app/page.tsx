@@ -32,6 +32,13 @@ const PHASE_MODULES = [
         color: "amber",
       },
       {
+        href: "/cross-role-flow",
+        icon: "🔄",
+        title: "跨角色经营闭环",
+        desc: "PM/运营提交、PMO复核与冻结汇报、CEO决策、行动回执和效果复核",
+        color: "purple",
+      },
+      {
         href: "/business-finance",
         icon: "💰",
         title: "组合业财与收益实现",

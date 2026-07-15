@@ -3,6 +3,7 @@ import {
   listPublishedRiskRetrospectiveRagDocuments,
   recordRiskRetrospectiveRagUsage,
 } from '../../../../features/risk/retrospective-assets.ts';
+import { listPublishedDynamicKnowledgeDocuments } from '../../../../features/knowledge/dynamic-rag.ts';
 import { RagValidationError, validateRagQuery } from '../../../../features/rag/validation.ts';
 
 export const runtime = 'nodejs';
@@ -88,10 +89,14 @@ export async function POST(request: Request): Promise<Response> {
       return problem(access.status, 'Knowledge Scope Forbidden', access.detail || access.error, id);
     }
     const riskScope = access?.ok ? access.scope : undefined;
-    const dynamicDocuments = riskScope
-      ? await listPublishedRiskRetrospectiveRagDocuments(riskScope)
-      : { status: 'succeeded' as const, documents: [] };
-    const result = queryRagWithAdditionalDocuments(input, dynamicDocuments.documents);
+    const [riskDocuments, dynamicKnowledge] = riskScope
+      ? await Promise.all([
+        listPublishedRiskRetrospectiveRagDocuments(riskScope),
+        listPublishedDynamicKnowledgeDocuments(riskScope),
+      ])
+      : [{ status: 'succeeded' as const, documents: [] }, { status: 'succeeded' as const, documents: [] }];
+    const additionalDocuments = [...riskDocuments.documents, ...dynamicKnowledge.documents];
+    const result = queryRagWithAdditionalDocuments(input, additionalDocuments);
     result.trace_id = id;
     const usage = await recordRiskRetrospectiveRagUsage({
       query: input.query,
@@ -123,7 +128,15 @@ export async function POST(request: Request): Promise<Response> {
       });
       if (saved.status === 'succeeded') knowledgeReferences.push(saved.reference);
     }
-    return Response.json({ ...result, knowledge_references: knowledgeReferences }, {
+    return Response.json({
+      ...result,
+      knowledge_references: knowledgeReferences,
+      dynamic_knowledge: {
+        document_count: dynamicKnowledge.documents.length,
+        risk_retrospective_count: riskDocuments.documents.length,
+        warnings: ["warning" in riskDocuments ? riskDocuments.warning : undefined, dynamicKnowledge.warning].filter(Boolean),
+      },
+    }, {
       status: 200,
       headers: {
         'Cache-Control': 'no-store',

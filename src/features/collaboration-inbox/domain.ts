@@ -8,6 +8,7 @@ export const REQUIRED_INBOX_SOURCES = [
   "decision_receipt",
   "feishu_confirmation",
   "formal_output",
+  "cross_role_flow",
 ] as const;
 
 export type RequiredInboxType = typeof REQUIRED_INBOX_SOURCES[number];

@@ -1,5 +1,5 @@
 import { getAuthSupabase, getCurrentUser } from "@/features/auth/server";
-import { getEffectiveFeishuConfig } from "@/features/feishu/user-config";
+import { getOrganizationFeishuConfig } from "@/features/feishu/user-config";
 import {
   FEISHU_RECONCILE_DOMAINS,
   type FeishuReconcileDataClass,
@@ -155,11 +155,11 @@ export async function POST(request: Request) {
     return response({ status: "failed", error: "IDEMPOTENCY_AND_VERSION_REQUIRED", request_id: requestId }, 400, requestId);
   }
   const domains = parseDomains(body.domains);
-  const effective = await getEffectiveFeishuConfig();
+  const effective = await getOrganizationFeishuConfig(authorized.context.orgId);
   if (!effective.config) {
     return response({ status: "failed", error: "FEISHU_NOT_CONFIGURED", detail: effective.setupHint, request_id: requestId }, 503, requestId);
   }
-  const sourceScope = effective.source === "user" ? "user" : "organization";
+  const sourceScope = "organization" as const;
   try {
     const result = await runFeishuReconcile({
       config: effective.config,
@@ -167,7 +167,7 @@ export async function POST(request: Request) {
       orgId: authorized.context.orgId,
       dataClass: authorized.dataClass,
       sourceScope,
-      sourceUserId: sourceScope === "user" ? authorized.user.id : null,
+      sourceUserId: null,
       triggerType: "manual",
       domains,
       idempotencyKey,
