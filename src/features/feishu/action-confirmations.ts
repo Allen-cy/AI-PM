@@ -50,6 +50,9 @@ export interface FeishuActionConfirmationRecord {
   writebackLastAttemptAt?: string | null;
   writebackLeaseExpiresAt?: string | null;
   writebackLastError?: string | null;
+  orgId?: string | null;
+  projectId?: string | null;
+  dataClass?: string | null;
 }
 
 export type FeishuActionConfirmationRiskReviewLevel = "low" | "medium" | "high";
@@ -156,6 +159,9 @@ function mapRow(row: Record<string, unknown>): FeishuActionConfirmationRecord {
     writebackLastAttemptAt: typeof row.writeback_last_attempt_at === "string" ? row.writeback_last_attempt_at : null,
     writebackLeaseExpiresAt: typeof row.writeback_lease_expires_at === "string" ? row.writeback_lease_expires_at : null,
     writebackLastError: typeof row.writeback_last_error === "string" ? row.writeback_last_error : null,
+    orgId: typeof row.org_id === "string" ? row.org_id : null,
+    projectId: typeof row.project_id === "string" ? row.project_id : null,
+    dataClass: typeof row.data_class === "string" ? row.data_class : null,
   };
 }
 
@@ -442,6 +448,7 @@ export async function createFeishuActionConfirmation(input: {
   sourcePage?: string | null;
   payload: FeishuActionBody;
   requestId: string;
+  scope?: { orgId: string; projectId: string; dataClass: "production" | "sample" | "test" | "diagnostic" | "unclassified" };
 }): Promise<FeishuActionConfirmationWriteResult> {
   if (!hasAuthStorageEnvironment()) {
     return { ...notConfigured(), warning: "Supabase 未配置，无法创建飞书写入确认队列。" };
@@ -474,6 +481,9 @@ export async function createFeishuActionConfirmation(input: {
       payload: input.payload,
       preview,
       request_id: input.requestId,
+      org_id: input.scope?.orgId ?? null,
+      project_id: input.scope?.projectId ?? null,
+      data_class: input.scope?.dataClass ?? null,
     })
     .select("*")
     .single();

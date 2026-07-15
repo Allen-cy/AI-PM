@@ -103,6 +103,7 @@ export default function OperationsCenterPage() {
       <strong style={{ color: "var(--accent2)" }}>采用、可靠性与企业化运营中心</strong>
       <span className="tag tag-blue">P25 真实运行与规模化</span>
       <Link href="/operations-center/golden-chains" className="btn-secondary" style={{ textDecoration: "none" }}>五条黄金链路验收</Link>
+      <Link href="/operations-center/pilot-acceptance" className="btn-secondary" style={{ textDecoration: "none" }}>V6.6受控试点验收</Link>
       {data && <span className="tag" style={{ marginLeft: "auto" }}>{role} · {data.data_class}</span>}
     </header>
     <div style={{ maxWidth: 1500, margin: "0 auto", padding: 28 }}>

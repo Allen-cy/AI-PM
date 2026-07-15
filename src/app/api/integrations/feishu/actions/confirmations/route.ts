@@ -13,6 +13,8 @@ import {
   validateFeishuActionBody,
   type FeishuActionBody,
 } from "../../../../../../features/feishu/action-payload.ts";
+import { resolveBusinessContext, type BusinessRole, type SubjectScope } from "@/features/operating-model/context";
+import { listBusinessRoleAssignments, loadContextProjectIdentityMappings } from "@/features/operating-model/persistence";
 
 export const runtime = "nodejs";
 
@@ -91,12 +93,37 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   const preview = buildFeishuActionPreview(payload);
+  let scope: { orgId: string; projectId: string; dataClass: "production" | "sample" | "test" | "diagnostic" | "unclassified" } | undefined;
+  if (body.business_context && typeof body.business_context === "object" && !Array.isArray(body.business_context)) {
+    const candidate = body.business_context as Record<string, unknown>;
+    const role = text(candidate.role, 32) as BusinessRole | null;
+    const orgId = text(candidate.org_id, 80);
+    const subjectScope = text(candidate.subject_scope, 32) as SubjectScope | null;
+    const subjectId = text(candidate.subject_id, 160);
+    const dataClass = text(candidate.data_class, 32) as "production" | "sample" | "test" | "diagnostic" | "unclassified" | null;
+    const projectId = text(candidate.project_id, 80);
+    if (!role || !orgId || !subjectScope || !subjectId || !dataClass || !projectId || !["production", "sample", "test", "diagnostic", "unclassified"].includes(dataClass)) {
+      return json({ request_id: requestId, status: "failed", warning: "业务上下文不完整。" }, 400, requestId);
+    }
+    const assignments = await listBusinessRoleAssignments(user.id);
+    if (assignments.status !== "succeeded") return json({ request_id: requestId, status: "failed", warning: assignments.warning || "角色数据不可用。" }, 503, requestId);
+    const context = resolveBusinessContext({ user: { id: user.id, systemRole: user.role }, assignments: assignments.data ?? [], requestedRole: role, requestedOrgId: orgId, requestedSubjectScope: subjectScope, requestedSubjectId: subjectId });
+    if (!context) return json({ request_id: requestId, status: "forbidden", warning: "当前账号无权使用该业务上下文。" }, 403, requestId);
+    const mappings = await loadContextProjectIdentityMappings({ context, dataClass });
+    if (mappings.status !== "succeeded") return json({ request_id: requestId, status: "failed", warning: mappings.warning || "项目范围不可用。" }, 503, requestId);
+    if (!(mappings.data ?? []).some(item => item.projectId === projectId)) return json({ request_id: requestId, status: "forbidden", warning: "项目不在当前授权范围。" }, 403, requestId);
+    scope = { orgId, projectId, dataClass };
+  }
+  if ((text(body.sourcePage) ?? text(body.source_page)) === "/operations-center/pilot-acceptance" && !scope) {
+    return json({ request_id: requestId, status: "failed", warning: "受控试点飞书动作必须携带并校验业务上下文。" }, 400, requestId);
+  }
   const result = await createFeishuActionConfirmation({
     user,
     source: sourceFrom(body.source),
     sourcePage: text(body.sourcePage) ?? text(body.source_page) ?? "/integration-center",
     payload,
     requestId,
+    scope,
   });
   const status = result.status === "succeeded" ? 201 : result.status === "not_configured" ? 503 : 500;
   return json({
