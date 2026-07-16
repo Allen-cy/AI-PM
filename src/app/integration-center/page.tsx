@@ -637,6 +637,12 @@ export default function IntegrationCenterPage() {
                       最近批次：{reconcile.data.latest_batch.status}；读取 {reconcile.data.latest_batch.total_records} 条，新增 {reconcile.data.latest_batch.inserted_records} 条，更新 {reconcile.data.latest_batch.updated_records} 条，未变化 {reconcile.data.latest_batch.unchanged_records} 条，软删除标记 {reconcile.data.latest_batch.tombstoned_records} 条，隔离 {reconcile.data.latest_batch.quarantined_records} 条。
                     </p>
                   )}
+                  {Number(reconcile.data?.quality?.pending_quarantine_count ?? 0) > 0 && (
+                    <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", padding: "12px 14px", borderRadius: 12, background: "rgba(245,158,11,.08)", border: "1px solid rgba(245,158,11,.28)" }}>
+                      <span style={{ color: "var(--amber)", lineHeight: 1.6 }}>隔离记录需要补齐飞书中文字段“数据分类”，系统不会把未确认数据自动写入正式空间。</span>
+                      <Link className="btn-secondary" href="/integration-center/data-governance" style={{ textDecoration: "none", marginLeft: "auto" }}>进入分类治理台</Link>
+                    </div>
+                  )}
                 </div>
               )}
             </section>

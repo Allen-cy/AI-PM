@@ -1,4 +1,5 @@
 import { getAuthSupabase, getCurrentUser } from "@/features/auth/server";
+import { buildFeishuClassificationSummary, recommendFeishuDataClass, type FeishuQuarantineSourceRow } from "@/features/feishu/quarantine-governance";
 import { buildControlledPilotPreflight, CONTROLLED_PILOT_MODULES } from "@/features/pilot-acceptance/domain";
 import { resolveBusinessContext, type BusinessRole, type SubjectScope } from "@/features/operating-model/context";
 import { listBusinessRoleAssignments, loadContextProjectIdentityMappings } from "@/features/operating-model/persistence";
@@ -189,6 +190,51 @@ function markdownReport(bundle: NonNullable<Awaited<ReturnType<typeof loadBundle
   ].join("\n");
 }
 
+async function startupPackReport(access: Access, dataset: Awaited<ReturnType<typeof loadDataset>>) {
+  const quarantine = await getAuthSupabase().from("feishu_reconcile_quarantine")
+    .select("id,domain,source_record_id,external_project_code,reason_code,reason_detail,status,occurrence_count,last_seen_at,source_payload")
+    .eq("org_id", access.orgId).eq("data_class", access.dataClass)
+    .in("status", ["pending", "under_review"]).order("last_seen_at", { ascending: false }).limit(1000);
+  if (quarantine.error) throw quarantine.error;
+  const recommendations = (quarantine.data ?? []).map(row => recommendFeishuDataClass(row as FeishuQuarantineSourceRow));
+  const classification = buildFeishuClassificationSummary(recommendations);
+  const roleLabel: Record<string, string> = { pm: "项目经理", operations: "运营", pmo: "PMO", ceo: "CEO" };
+  const projectLines = dataset.candidates.projects.map(project => `- ${text(project.name) || "未命名项目"}${text(project.oa_no) ? `（${text(project.oa_no)}）` : ""}`);
+  const participantLines = dataset.candidates.participants.map(participant => `- ${roleLabel[text(participant.business_role)] || text(participant.business_role)}：${text(participant.user_name) || "未命名成员"}；账号类型 ${text(participant.account_kind)}`);
+  const preflightLines = dataset.preflight.items.map(item => `- [${item.status === "ready" ? "x" : " "}] ${item.label}：${item.current}/${item.target}；${item.detail}；操作路径 ${item.actionHref}`);
+  const domainLines = classification.byDomain.map(item => `- ${item.label}：${item.count}条`);
+  const recommendationLines = classification.byRecommendation.filter(item => item.count > 0).map(item => `- 建议“${item.label}”：${item.count}条`);
+  return [
+    "# AI-PMO V6.6 正式受控试点启动包", "",
+    `- 生成时间：${new Date().toISOString()}`,
+    `- 数据空间：${access.dataClass}`,
+    `- 组织范围：${access.orgId}`,
+    `- 当前结论：${dataset.preflight.baselineReady ? "具备建立正式基线的条件" : "正式基线前置条件未满足"}`, "",
+    "## 一、正式试点硬门槛", "", ...preflightLines, "",
+    "## 二、当前真实项目候选", "", ...(projectLines.length ? projectLines : ["- 0个。必须先在飞书明确数据分类并完成受治理对账。"]), "",
+    "## 三、四角色真人候选", "", ...(participantLines.length ? participantLines : ["- 0个。需要四位不同真实用户分别承担项目经理、运营、PMO、CEO。"]), "",
+    "## 四、飞书隔离数据治理", "",
+    `- 待治理：${classification.total}条`,
+    `- 明确正式项目候选：${classification.formalProjectCandidates}条`,
+    `- 必须人工判断：${classification.requiresManualDecision}条`,
+    ...domainLines, ...recommendationLines, "",
+    "治理路径：/integration-center/data-governance", "",
+    "## 五、推荐执行顺序", "",
+    "1. 下载分类治理CSV，由数据负责人核对，并在飞书补齐中文字段“数据分类”。",
+    "2. 带“样例来源/测试批次”的记录保留在样例或测试空间，不得改成正式。",
+    "3. 对至少5个真实项目明确填写“正式”，重新执行八领域飞书对账。",
+    "4. 在安全中心配置4位不同真实用户及PM、运营、PMO、CEO组织/项目范围。",
+    "5. 创建正式试点批次并纳入5个项目；四位用户分别登录本人签署。",
+    "6. 完成16模块、黄金链A/E、飞书消息/任务/智能表更新和一次真实失败恢复。",
+    "7. PMO提交终验，CEO本人确认正式通过。", "",
+    "## 六、不可自动代办的证据", "",
+    "- 系统不会代替四位真实用户签字。",
+    "- 系统不会把样例、测试或未分类记录伪装为正式项目。",
+    "- 飞书外部写入继续进入人工确认队列，未经确认不会执行。",
+    "- 只有生产事实、真实操作回执和追加式审计事件可进入正式验收。", "",
+  ].join("\n");
+}
+
 export async function GET(request: Request) {
   const requestId = crypto.randomUUID(); const access = await authorize(request);
   if (!access.ok) return json({ error: access.error, detail: access.detail, request_id: requestId }, access.status, requestId);
@@ -201,6 +247,12 @@ export async function GET(request: Request) {
       return new Response(markdownReport(bundle), { status: 200, headers: { "Content-Type": "text/markdown; charset=utf-8", "Content-Disposition": `attachment; filename="controlled-pilot-${runId}.md"`, "Cache-Control": "no-store", "X-Request-Id": requestId } });
     }
     const data = await loadDataset(access, runId);
+    if (url.searchParams.get("format") === "startup-pack") {
+      if (access.role !== "pmo" || access.subjectScope !== "organization" || access.subjectId !== access.orgId) {
+        return json({ error: "ORGANIZATION_PMO_CONTEXT_REQUIRED", request_id: requestId }, 403, requestId);
+      }
+      return new Response(await startupPackReport(access, data), { status: 200, headers: { "Content-Type": "text/markdown; charset=utf-8", "Content-Disposition": `attachment; filename="controlled-pilot-startup-${new Date().toISOString().slice(0, 10)}.md"`, "Cache-Control": "no-store", "X-Request-Id": requestId } });
+    }
     return json({ status: "succeeded", request_id: requestId, context: access.context, source: { type: "supabase", fallback_used: false }, data_class: access.dataClass, generated_at: new Date().toISOString(), warnings: [], data }, 200, requestId);
   } catch (error) {
     return json({ error: "PILOT_ACCEPTANCE_STORAGE_UNAVAILABLE", detail: error instanceof Error ? error.message : "unknown", required_migrations: ["20260716040000_v660_controlled_pilot_acceptance.sql", "20260716123000_v663_formal_pilot_identity_evidence_guard.sql"], request_id: requestId }, 503, requestId);

@@ -35,6 +35,12 @@ The easiest way to deploy your Next.js app is to use the [Vercel Platform](https
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
 
+## AI-PMO System V6.6.4
+
+V6.6.4 把飞书隔离记录从单一数量提示升级为可执行的数据分类治理台。组织级 PMO 可以逐条查看项目、合同、回款、风险和同步账本的隔离原因、脱敏后的记录摘要、分类建议与依据，并下载中文 CSV 回到飞书补齐“数据分类”。系统只有在飞书已明确填写“正式”时才认可 production 候选；带“样例来源/测试批次”的记录只建议进入样例或测试空间，缺少证据的记录保持待人工判断。
+
+受控试点页新增“正式试点启动包”，一次性导出五项目、四角色真人匹配、黄金链 A/E、飞书三类回执和隔离数据的当前差距、操作路径与不可代办边界。生产只读审计确认当前 237 条唯一隔离记录中，234 条带样例或测试标记，另 3 条需人工判断，不能用来冒充五个真实试点项目。本版本不新增数据库对象，继续复用 V6.2 隔离台账与 V6.6 试点门禁；详细说明见 `docs/v664-feishu-quarantine-governance-and-pilot-startup.md`。
+
 ## AI-PMO System V6.6.3
 
 V6.6.3 收紧正式受控试点的身份与外部证据门禁。用户账号由数据库持久化标记为真实用户、测试账号或服务账号；正式试点只接受四位不同真实用户，技术演练只接受测试账号。页面新增正式试点启动检查，直接展示五个 production 项目、四角色不同真实人员匹配、黄金链 A/E 与三类飞书写入的准备度和补齐入口。

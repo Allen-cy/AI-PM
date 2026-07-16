@@ -167,7 +167,10 @@ export default function ControlledPilotAcceptancePage() {
       <Link href="/operations-center" style={{ color: "var(--text2)", textDecoration: "none" }}>← 返回运营中心</Link>
       <strong style={{ color: "var(--accent2)" }}>V6.6 全模块受控试点验收台</strong>
       <span className="tag tag-blue">技术演练 ≠ 正式试点</span>
-      {selected && <a className="btn-secondary" style={{ textDecoration: "none", marginLeft: "auto" }} href={`/api/operations-center/pilot-acceptance?${queryFor(context!, selected.run.id)}&format=markdown`}>下载验收报告</a>}
+      <div style={{ marginLeft: "auto", display: "flex", gap: 8, flexWrap: "wrap" }}>
+        {context && dataClass === "production" && currentRole === "pmo" && <a className="btn-secondary" style={{ textDecoration: "none" }} href={`/api/operations-center/pilot-acceptance?${queryFor(context)}&format=startup-pack`}>下载正式试点启动包</a>}
+        {selected && <a className="btn-secondary" style={{ textDecoration: "none" }} href={`/api/operations-center/pilot-acceptance?${queryFor(context!, selected.run.id)}&format=markdown`}>下载验收报告</a>}
+      </div>
     </header>
     <div style={{ maxWidth: 1480, margin: "0 auto", padding: 28 }}>
       {initializing && !workspace && <section className="card" style={{ marginBottom: 16, color: "var(--text2)" }}>正在读取当前业务身份和受控试点数据…</section>}
@@ -190,7 +193,8 @@ export default function ControlledPilotAcceptancePage() {
           </article>)}
         </div>
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 12, fontSize: ".78rem" }}>
-          <Link href="/integration-center" style={{ color: "var(--accent2)" }}>飞书数据分类与确认队列</Link>
+          <Link href="/integration-center/data-governance" style={{ color: "var(--accent2)" }}>飞书隔离数据分类治理</Link>
+          <Link href="/integration-center" style={{ color: "var(--accent2)" }}>飞书确认队列与重新对账</Link>
           <Link href="/admin/security" style={{ color: "var(--accent2)" }}>配置真实用户、角色与授权</Link>
           <Link href="/operations-center/golden-chains" style={{ color: "var(--accent2)" }}>黄金链A/E验收台</Link>
         </div>
