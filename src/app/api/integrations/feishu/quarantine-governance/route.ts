@@ -5,8 +5,12 @@ import {
   recommendFeishuDataClass,
   type FeishuQuarantineSourceRow,
 } from "@/features/feishu/quarantine-governance";
+import { validateDataClassificationDecision, type GovernedClassification } from "@/features/feishu/classification-writeback";
+import { createDataClassificationDraft, listActiveDataClassificationDrafts } from "@/features/feishu/classification-writeback-repository";
+import type { FeishuTableKey } from "@/features/feishu/config";
 import { resolveBusinessContext, type BusinessRole, type SubjectScope } from "@/features/operating-model/context";
 import { listBusinessRoleAssignments } from "@/features/operating-model/persistence";
+import { writeOperationAudit } from "@/features/security/repository";
 
 export const runtime = "nodejs";
 
@@ -89,6 +93,10 @@ export async function GET(request: Request) {
     if (summary.byRecommendation.find(item => item.dataClass === "sample")?.count) {
       warnings.push("检测到带“样例来源”的记录；系统只建议归入样例空间，绝不会自动转为正式项目。");
     }
+    const drafts = await listActiveDataClassificationDrafts(items.map(item => item.quarantineId));
+    if (drafts.status === "not_configured") warnings.push("V6.6.6分类写回迁移尚未执行；当前仍可下载CSV治理。");
+    else if (drafts.status !== "succeeded") warnings.push(`分类写回草稿暂时不可用：${drafts.warning}`);
+    const draftsByQuarantine = new Map((drafts.status === "succeeded" ? drafts.data : []).map(draft => [draft.quarantineId, draft]));
     return json({
       status: "succeeded",
       request_id: requestId,
@@ -102,7 +110,7 @@ export async function GET(request: Request) {
       data_class: access.dataClass,
       generated_at: new Date().toISOString(),
       warnings,
-      data: { total: Number(result.count ?? items.length), summary, items },
+      data: { total: Number(result.count ?? items.length), summary, items: items.map(item => ({ ...item, classificationDraft: draftsByQuarantine.get(item.quarantineId) ?? null })) },
     }, 200, requestId);
   } catch (error) {
     return json({
@@ -111,5 +119,89 @@ export async function GET(request: Request) {
       detail: error instanceof Error ? error.message : "unknown",
       request_id: requestId,
     }, 503, requestId);
+  }
+}
+
+export async function POST(request: Request) {
+  const requestId = request.headers.get("x-idempotency-key")?.trim().slice(0, 160) || crypto.randomUUID();
+  const access = await authorize(request, requestId);
+  if (!access.ok) return access.response;
+  let body: Record<string, unknown>;
+  try {
+    const value = await request.json();
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("请求体必须为对象。");
+    body = value as Record<string, unknown>;
+  } catch (error) {
+    return json({ status: "failed", error: "INVALID_JSON", detail: error instanceof Error ? error.message : "请求体格式错误。", request_id: requestId }, 400, requestId);
+  }
+  const quarantineId = text(body.quarantine_id);
+  if (!quarantineId) return json({ status: "failed", error: "QUARANTINE_ID_REQUIRED", detail: "必须选择一条待治理记录。", request_id: requestId }, 422, requestId);
+  try {
+    const found = await getAuthSupabase().from("feishu_reconcile_quarantine")
+      .select("id,org_id,data_class,domain,source_record_id,occurrence_count,status,source_payload")
+      .eq("id", quarantineId).eq("org_id", access.orgId).eq("data_class", access.dataClass)
+      .in("status", ["pending", "under_review"]).maybeSingle();
+    if (found.error) throw found.error;
+    if (!found.data) return json({ status: "failed", error: "QUARANTINE_NOT_FOUND", detail: "记录不存在、已处理或不属于当前组织和数据空间。", request_id: requestId }, 404, requestId);
+    const sourcePayload = found.data.source_payload && typeof found.data.source_payload === "object" && !Array.isArray(found.data.source_payload)
+      ? found.data.source_payload as Record<string, unknown> : {};
+    let decision;
+    try {
+      decision = validateDataClassificationDecision({
+        targetDataClass: body.target_data_class,
+        reason: body.reason,
+        productionAcknowledged: body.production_acknowledged,
+        sourcePayload,
+      });
+    } catch (error) {
+      return json({ status: "failed", error: "CLASSIFICATION_DECISION_INVALID", detail: error instanceof Error ? error.message : "分类决定不合法。", request_id: requestId }, 422, requestId);
+    }
+    const idempotencyKey = request.headers.get("x-idempotency-key")?.trim().slice(0, 160)
+      || `classification:${quarantineId}:${decision.targetDataClass}:${requestId}`;
+    const created = await createDataClassificationDraft({
+      quarantine: {
+        id: String(found.data.id),
+        orgId: String(found.data.org_id),
+        domain: String(found.data.domain) as FeishuTableKey,
+        sourceRecordId: String(found.data.source_record_id),
+        occurrenceCount: Number(found.data.occurrence_count),
+        sourcePayload,
+      },
+      targetDataClass: decision.targetDataClass as GovernedClassification,
+      targetChineseValue: decision.targetChineseValue,
+      reason: decision.reason,
+      user: access.user,
+      idempotencyKey,
+      requestId,
+    });
+    if (created.status !== "succeeded") {
+      const status = created.status === "not_configured" ? 503 : created.status === "forbidden" ? 403 : created.status === "conflict" ? 409 : 500;
+      return json({ status: "failed", error: `CLASSIFICATION_DRAFT_${created.status.toUpperCase()}`, detail: created.warning, request_id: requestId }, status, requestId);
+    }
+    await writeOperationAudit({
+      user: access.user,
+      action: "feishu_data_classification_draft_create",
+      resourceType: "feishu_data_classification_draft",
+      resourceId: created.data.draft.id,
+      status: "succeeded",
+      severity: decision.targetDataClass === "production" ? "high" : "medium",
+      summary: `创建飞书数据分类写回确认：${decision.targetChineseValue}`,
+      detail: { quarantine_id: quarantineId, domain: found.data.domain, source_record_id: found.data.source_record_id, target_data_class: decision.targetDataClass, confirmation_id: created.data.confirmationId, duplicate: created.data.duplicate },
+      requestId,
+    });
+    return json({
+      status: "confirmation_required",
+      confirmation_required: true,
+      request_id: requestId,
+      data: {
+        draft: created.data.draft,
+        confirmation_id: created.data.confirmationId,
+        confirmation_url: `/integration-center?confirmation_id=${encodeURIComponent(created.data.confirmationId)}`,
+        duplicate: created.data.duplicate,
+      },
+      boundary: "当前仅保存PMO分类决定并进入高风险飞书确认队列；未执行Base写入，也未创建正式项目。",
+    }, 202, requestId);
+  } catch (error) {
+    return json({ status: "failed", error: "CLASSIFICATION_DRAFT_UNAVAILABLE", detail: error instanceof Error ? error.message : "unknown", request_id: requestId }, 503, requestId);
   }
 }

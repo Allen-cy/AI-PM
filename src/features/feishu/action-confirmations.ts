@@ -341,7 +341,7 @@ export function buildFeishuConfirmationRiskReview(
       riskLevel = elevateRisk(riskLevel, "high");
       const tableKey = payloadString(confirmation.payload, "table_key");
       const recordId = payloadString(confirmation.payload, "record_id");
-      const draftId = payloadString(confirmation.payload, "business_update_draft_id");
+      const draftId = payloadString(confirmation.payload, "business_update_draft_id") || payloadString(confirmation.payload, "classification_draft_id");
       const dataClass = payloadString(confirmation.payload, "data_class");
       const fields = confirmation.payload.fields;
       if (!tableKey || !recordId || !draftId) {

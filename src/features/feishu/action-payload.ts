@@ -47,13 +47,13 @@ function stringArray(body: FeishuActionBody, field: string): string[] | undefine
   return value.map(item => item.trim());
 }
 
-const WRITABLE_BASE_TABLES = ["project", "milestone", "risk", "contract", "payment"] as const;
+const WRITABLE_BASE_TABLES = ["project", "milestone", "task", "risk", "contract", "payment", "cost", "syncLedger"] as const;
 type WritableBaseTable = typeof WRITABLE_BASE_TABLES[number];
 
 function baseTable(body: FeishuActionBody): WritableBaseTable {
   const value = text(body, "table_key", 32);
   if (!WRITABLE_BASE_TABLES.includes(value as WritableBaseTable)) {
-    throw new ActionValidationError("table_key must be project, milestone, risk, contract, or payment.");
+    throw new ActionValidationError("table_key must be a configured governed Base table.");
   }
   return value as WritableBaseTable;
 }
@@ -79,9 +79,16 @@ function businessFieldPatch(body: FeishuActionBody, field: "fields" | "expected_
 function validateBaseRecordUpdate(body: FeishuActionBody): void {
   baseTable(body);
   text(body, "record_id", 160);
-  text(body, "business_update_draft_id", 80);
+  const businessDraftId = optionalText(body, "business_update_draft_id", 80);
+  const classificationDraftId = optionalText(body, "classification_draft_id", 80);
+  if (Boolean(businessDraftId) === Boolean(classificationDraftId)) {
+    throw new ActionValidationError("base record update must link exactly one governed draft.");
+  }
   text(body, "org_id", 80);
-  text(body, "project_id", 80);
+  if (businessDraftId) text(body, "project_id", 80);
+  if (classificationDraftId && body.project_id !== undefined && body.project_id !== null && body.project_id !== "") {
+    throw new ActionValidationError("classification writeback cannot invent a project_id before reconciliation.");
+  }
   const dataClass = text(body, "data_class", 32);
   if (!["production", "sample", "test", "diagnostic", "unclassified"].includes(dataClass)) {
     throw new ActionValidationError("data_class is invalid.");
@@ -92,6 +99,15 @@ function validateBaseRecordUpdate(body: FeishuActionBody): void {
   const expectedKeys = Object.keys(expected).sort();
   if (JSON.stringify(nextKeys) !== JSON.stringify(expectedKeys)) {
     throw new ActionValidationError("fields and expected_fields must contain the same Chinese business fields.");
+  }
+  if (classificationDraftId) {
+    if (JSON.stringify(nextKeys) !== JSON.stringify(["数据分类"])) {
+      throw new ActionValidationError("classification writeback may only update the Chinese field 数据分类.");
+    }
+    if (!["正式", "样例", "测试", "诊断"].includes(String(fields["数据分类"] ?? ""))) {
+      throw new ActionValidationError("数据分类值必须为正式、样例、测试或诊断。");
+    }
+    if (dataClass !== "unclassified") throw new ActionValidationError("classification writeback must remain unclassified until reconciliation.");
   }
 }
 

@@ -70,8 +70,9 @@ test("V6.6.4 exposes an organization-PMO governance API and actionable pages", (
   assert.match(route, /\.eq\("org_id", access\.orgId\)/);
   assert.match(route, /\.eq\("data_class", access\.dataClass\)/);
   assert.match(route, /source_payload/);
-  assert.doesNotMatch(route, /export async function POST/);
-  assert.match(governancePage, /系统只依据飞书原始字段给出分类建议/);
+  assert.match(route, /export async function POST/);
+  assert.doesNotMatch(route, /updateRecord\(/);
+  assert.match(governancePage, /系统依据飞书原始字段给出建议/);
   assert.match(governancePage, /下载分类治理 CSV/);
   assert.match(integrationPage, /\/integration-center\/data-governance/);
   assert.match(pilotRoute, /format"\) === "startup-pack"/);

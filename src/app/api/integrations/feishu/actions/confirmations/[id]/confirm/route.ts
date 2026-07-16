@@ -9,6 +9,7 @@ import { executeFeishuAction } from "../../../../../../../../features/feishu/act
 import { FeishuApiError, FeishuBaseClient } from "../../../../../../../../features/feishu/client.ts";
 import { getUserFeishuConfig, larkCliHint } from "../../../../../../../../features/feishu/user-config.ts";
 import { executeBusinessUpdateWriteback } from "../../../../../../../../features/operating-assistant/writeback.ts";
+import { executeDataClassificationWriteback } from "../../../../../../../../features/feishu/classification-writeback-executor.ts";
 import { writeIntegrationSyncLog } from "../../../../../../../../features/operating-system/sync-logs.ts";
 import { writeOperationAudit } from "../../../../../../../../features/security/repository.ts";
 
@@ -76,29 +77,32 @@ export async function POST(request: Request, context: RouteContext): Promise<Res
   }
 
   if (confirmation.actionType === "base_record_update") {
-    const executed = await executeBusinessUpdateWriteback({ confirmation, actor: user });
+    const classificationWriteback = typeof confirmation.payload.classification_draft_id === "string";
+    const executed = classificationWriteback
+      ? await executeDataClassificationWriteback({ confirmation, actor: user })
+      : await executeBusinessUpdateWriteback({ confirmation, actor: user });
     const refreshed = await getFeishuActionConfirmation(id);
     const effectiveConfirmation = refreshed.status === "succeeded" ? refreshed.confirmation : confirmation;
     const succeeded = executed.status === "succeeded" || executed.status === "duplicate";
     await writeOperationAudit({
       user,
-      action: "business_update_base_confirmation_execute",
+      action: classificationWriteback ? "data_classification_base_confirmation_execute" : "business_update_base_confirmation_execute",
       resourceType: "feishu_action_confirmation",
       resourceId: id,
       status: succeeded ? "succeeded" : "failed",
       severity: "high",
-      summary: succeeded ? `已人工确认并执行Base业务记录更新：${confirmation.targetSummary}` : `Base业务记录更新未执行：${confirmation.targetSummary}`,
-      detail: { action_type: confirmation.actionType, feishu_source: executed.feishuSource, error_code: executed.errorCode, data_class: confirmation.payload.data_class, business_update_draft_id: confirmation.payload.business_update_draft_id },
+      summary: succeeded ? `已人工确认并执行Base记录更新：${confirmation.targetSummary}` : `Base记录更新未执行：${confirmation.targetSummary}`,
+      detail: { action_type: confirmation.actionType, feishu_source: executed.feishuSource, error_code: executed.errorCode, data_class: confirmation.payload.data_class, business_update_draft_id: confirmation.payload.business_update_draft_id, classification_draft_id: confirmation.payload.classification_draft_id },
       requestId,
     });
     await writeIntegrationSyncLog({
       userId: user.id,
       source: "feishu",
-      eventType: "business_update_base_record_update",
+      eventType: classificationWriteback ? "data_classification_base_record_update" : "business_update_base_record_update",
       status: succeeded ? "succeeded" : "failed",
       severity: "high",
       summary: succeeded ? `飞书Base业务记录已经二次确认更新：${confirmation.targetSummary}` : `飞书Base业务记录写回被阻断：${confirmation.targetSummary}`,
-      detail: { confirmation_id: id, business_update_draft_id: confirmation.payload.business_update_draft_id, data_class: confirmation.payload.data_class, error_code: executed.errorCode, resource: executed.resource },
+      detail: { confirmation_id: id, business_update_draft_id: confirmation.payload.business_update_draft_id, classification_draft_id: confirmation.payload.classification_draft_id, data_class: confirmation.payload.data_class, error_code: executed.errorCode, resource: executed.resource },
       remediation: succeeded ? undefined : executed.warning ?? "刷新当前事实，检查申请人角色权限、个人飞书配置和数据空间后重试。",
       requestId,
     });

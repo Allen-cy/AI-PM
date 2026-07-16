@@ -35,6 +35,12 @@ The easiest way to deploy your Next.js app is to use the [Vercel Platform](https
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
 
+## AI-PMO System V6.6.6
+
+V6.6.6 将飞书隔离数据治理从“下载CSV后离开系统手工修改”升级为受控写回闭环。组织级 PMO 可以在治理台逐条选择正式、样例、测试或诊断并填写分类依据；决定与高风险飞书确认队列在同一数据库事务中保存，页面刷新后不会重复创建。系统当前只创建待确认任务，不直接修改飞书；最终执行仍要求申请人的个人飞书配置、显式二次确认、中文字段、当前值复核、同步流水、幂等键、写回租约和失败恢复。
+
+数据库和服务端同时禁止把带“样例来源/测试批次”的记录归入正式空间；分类写回在重新对账前保持 `unclassified`，不创建或猜测项目 UUID。成功写回仅关闭本次分类隔离项，仍需按目标数据空间重新对账后才会生成稳定镜像。本版本新增第48份 migration `20260716152000_v666_data_classification_writeback.sql`；事务烟测验证非法正式晋升被阻断、合法分类全状态机可执行且测试数据完整回滚。详细说明见 `docs/v666-data-classification-writeback.md`。
+
 ## AI-PMO System V6.6.5
 
 V6.6.5 是生产验收口径一致性补丁。它不改变 V6.6.4 的分类算法、接口、权限或数据库，只把仓库说明中的启发式原始载荷扫描与线上分类器最终输出明确区分：只读审计曾在234条原始载荷中检出样例/测试字样，但正式治理API按白名单业务证据计算后的可执行结果是230条“样例建议”、7条“人工判断”、0条“正式候选”。后续治理、CSV和试点启动包统一以线上分类器结果为准。

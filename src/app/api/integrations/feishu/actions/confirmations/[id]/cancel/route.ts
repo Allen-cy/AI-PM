@@ -6,6 +6,7 @@ import {
 } from "../../../../../../../../features/feishu/action-confirmations.ts";
 import { writeIntegrationSyncLog } from "../../../../../../../../features/operating-system/sync-logs.ts";
 import { cancelBusinessUpdateWriteback } from "../../../../../../../../features/operating-assistant/repository.ts";
+import { cancelDataClassificationWriteback } from "../../../../../../../../features/feishu/classification-writeback-repository.ts";
 import { writeOperationAudit } from "../../../../../../../../features/security/repository.ts";
 
 export const runtime = "nodejs";
@@ -49,7 +50,9 @@ export async function POST(request: Request, context: RouteContext): Promise<Res
 
   const reason = await readReason(request);
   const cancelled = confirmation.actionType === "base_record_update"
-    ? await cancelBusinessUpdateWriteback({ confirmationId: id, actorUserId: user.id, reason: reason || "用户取消飞书Base写回。" })
+    ? typeof confirmation.payload.classification_draft_id === "string"
+      ? await cancelDataClassificationWriteback({ confirmationId: id, actorUserId: user.id, reason: reason || "用户取消数据分类写回。" })
+      : await cancelBusinessUpdateWriteback({ confirmationId: id, actorUserId: user.id, reason: reason || "用户取消飞书Base写回。" })
     : await updateFeishuActionConfirmationStatus({ id, status: "cancelled", cancelReason: reason || "用户取消飞书写入。" });
   if (cancelled.status !== "succeeded") {
     const httpStatus = cancelled.status === "not_configured" ? 503 : cancelled.status === "conflict" ? 409 : cancelled.status === "not_found" ? 404 : 500;

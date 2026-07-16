@@ -29,6 +29,14 @@ type Recommendation = {
   requiredChineseField: "数据分类";
   suggestedChineseValue: string;
   canBecomeFormalProject: boolean;
+  classificationDraft: {
+    id: string;
+    status: "queued" | "writing" | "failed";
+    targetDataClass: string;
+    targetChineseValue: string;
+    feishuConfirmationId: string | null;
+    errorCode: string | null;
+  } | null;
 };
 
 type GovernanceSnapshot = {
@@ -69,6 +77,10 @@ export default function FeishuDataGovernancePage() {
   const [domain, setDomain] = useState("all");
   const [classification, setClassification] = useState("all");
   const [page, setPage] = useState(1);
+  const [decisions, setDecisions] = useState<Record<string, string>>({});
+  const [reasons, setReasons] = useState<Record<string, string>>({});
+  const [submittingId, setSubmittingId] = useState("");
+  const [notice, setNotice] = useState("");
 
   const queryFor = useCallback((active: StoredBusinessContext, format = "") => {
     const query = businessContextSearchParams(active, readStoredDataClass());
@@ -123,6 +135,43 @@ export default function FeishuDataGovernancePage() {
   const sampleCount = snapshot?.data.summary.byRecommendation.find(item => item.dataClass === "sample")?.count ?? 0;
   const productionCount = snapshot?.data.summary.byRecommendation.find(item => item.dataClass === "production")?.count ?? 0;
 
+  const createClassificationConfirmation = useCallback(async (item: Recommendation) => {
+    if (!context) return;
+    const target = decisions[item.quarantineId] || (item.recommendedDataClass === "unclassified" ? "" : item.recommendedDataClass);
+    if (!target) {
+      setError("请先由数据负责人选择正式、样例、测试或诊断。");
+      return;
+    }
+    const reason = (reasons[item.quarantineId] || (item.recommendedDataClass !== "unclassified"
+      ? `依据来源标记和业务核对，归入${item.recommendedDataClassLabel}数据空间。` : "")).trim();
+    if (reason.length < 4) {
+      setError("必须填写分类依据，不能只选择结果。");
+      return;
+    }
+    const productionAcknowledged = target === "production"
+      ? window.confirm("“正式”只能用于真实业务数据。确认该记录不是样例或测试数据，并由你承担本次分类责任吗？")
+      : false;
+    if (target === "production" && !productionAcknowledged) return;
+    setSubmittingId(item.quarantineId);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch(`/api/integrations/feishu/quarantine-governance?${queryFor(context)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ quarantine_id: item.quarantineId, target_data_class: target, reason, production_acknowledged: productionAcknowledged }),
+      });
+      const body = await response.json() as { status?: string; detail?: string; error?: string; data?: { confirmation_url?: string } };
+      if (!response.ok) throw new Error(body.detail || body.error || "分类写回确认创建失败。");
+      setNotice("分类决定已持久化并进入飞书高风险确认队列；当前尚未改写飞书。完成二次确认后，再按目标数据空间重新对账。");
+      await load(context);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "分类写回确认创建失败。");
+    } finally {
+      setSubmittingId("");
+    }
+  }, [context, decisions, load, queryFor, reasons]);
+
   return <main style={{ minHeight: "100vh", background: "var(--bg)" }}>
     <header style={{ padding: "15px 28px", borderBottom: "1px solid var(--border)", background: "var(--surface)", display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
       <Link href="/integration-center" style={{ color: "var(--text2)", textDecoration: "none" }}>← 返回数据与集成中心</Link>
@@ -133,11 +182,12 @@ export default function FeishuDataGovernancePage() {
     <div style={{ maxWidth: 1480, margin: "0 auto", padding: 28 }}>
       <section className="card" style={{ background: "linear-gradient(135deg,rgba(59,130,246,.12),rgba(139,92,246,.09))" }}>
         <h1 style={{ margin: 0, fontSize: "1.55rem" }}>把“有隔离记录”变成可逐条执行的数据治理清单</h1>
-        <p style={{ color: "var(--text2)", lineHeight: 1.75, marginBottom: 0 }}>系统只依据飞书原始字段给出分类建议，不修改源表、不代替业务负责人确认，也绝不会把缺少证据的记录自动推断为正式业务数据。完成飞书中文字段“数据分类”后，再回到集成中心重新对账。</p>
+        <p style={{ color: "var(--text2)", lineHeight: 1.75, marginBottom: 0 }}>系统依据飞书原始字段给出建议；数据负责人可在本页选择分类并生成写回确认，只有在独立确认队列完成高风险二次确认后才会修改飞书。系统绝不会把缺少证据的记录自动推断为正式业务数据。</p>
       </section>
 
       {loading && <section className="card" style={{ marginTop: 16 }}>正在读取隔离台账并计算分类建议…</section>}
       {error && <section className="card" style={{ marginTop: 16, color: "var(--red)", borderColor: "rgba(239,68,68,.35)" }}>{error}</section>}
+      {notice && <section className="card" style={{ marginTop: 16, color: "var(--green)", borderColor: "rgba(16,185,129,.35)" }}>{notice}</section>}
 
       {snapshot && <>
         {snapshot.warnings.map(warning => <section key={warning} className="card" style={{ marginTop: 12, color: "var(--amber)", borderColor: "rgba(245,158,11,.36)" }}>{warning}</section>)}
@@ -154,8 +204,8 @@ export default function FeishuDataGovernancePage() {
             ? `当前没有任何记录具备“明确正式”证据。${sampleCount ? `其中 ${sampleCount} 条带有样例来源或测试标记，必须留在样例/测试空间。` : ""} 因此不能用这些记录冒充五个真实试点项目。`
             : `已有 ${productionCount} 条记录明确标注为正式；补齐飞书字段并重新对账后，仍需完成稳定项目授权与四角色真人匹配。`}</p>
           <ol style={{ color: "var(--text2)", lineHeight: 1.85, paddingLeft: 22, marginBottom: 0 }}>
-            <li>下载分类治理 CSV，由数据负责人核对每条建议。</li>
-            <li>回到对应飞书智能表，新增或补齐中文字段“数据分类”，只允许：正式、样例、测试、诊断。</li>
+            <li>数据负责人逐条核对建议；可下载CSV，也可直接在明细中选择分类并填写依据。</li>
+            <li>创建写回确认后，前往飞书确认队列完成高风险二次确认；只允许写入中文字段“数据分类”。</li>
             <li>不要把带“样例来源/测试批次”的记录填写为正式。</li>
             <li>返回数据与集成中心执行“立即从飞书对账”，隔离记录通过门禁后会自动关闭。</li>
           </ol>
@@ -170,7 +220,7 @@ export default function FeishuDataGovernancePage() {
             </div>
           </div>
           <div style={{ overflowX: "auto", marginTop: 14 }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 980, fontSize: ".78rem" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1280, fontSize: ".78rem" }}>
               <thead><tr style={{ color: "var(--text2)", textAlign: "left", borderBottom: "1px solid var(--border)" }}>{["数据表", "记录", "项目编号", "隔离原因", "分类建议", "建议依据", "飞书操作"].map(label => <th key={label} style={{ padding: "10px 8px" }}>{label}</th>)}</tr></thead>
               <tbody>{pagedItems.map(item => {
                 const style = CLASS_STYLE[item.recommendedDataClass] ?? CLASS_STYLE.unclassified;
@@ -181,7 +231,18 @@ export default function FeishuDataGovernancePage() {
                   <td style={{ padding: "11px 8px" }}><span style={{ color: "var(--amber)" }}>{item.reasonCode}</span><div style={{ color: "var(--text2)", marginTop: 4, maxWidth: 250 }}>{item.reasonDetail}</div></td>
                   <td style={{ padding: "11px 8px" }}><span style={{ color: style.color, background: style.background, borderRadius: 999, padding: "4px 8px", whiteSpace: "nowrap" }}>{item.recommendedDataClassLabel}</span></td>
                   <td style={{ padding: "11px 8px", color: "var(--text2)", maxWidth: 320 }}>{item.basis.join("；")}</td>
-                  <td style={{ padding: "11px 8px" }}>填写“{item.requiredChineseField}”=<strong>{item.suggestedChineseValue}</strong></td>
+                  <td style={{ padding: "11px 8px", minWidth: 270 }}>{item.classificationDraft ? <div>
+                    <span className="tag tag-blue">{item.classificationDraft.status === "failed" ? "写回失败待恢复" : item.classificationDraft.status === "writing" ? "正在写回" : "等待二次确认"}</span>
+                    <div style={{ marginTop: 7 }}>目标：“{item.requiredChineseField}”=<strong>{item.classificationDraft.targetChineseValue}</strong></div>
+                    {item.classificationDraft.errorCode && <div style={{ color: "var(--red)", marginTop: 5 }}>{item.classificationDraft.errorCode}</div>}
+                    {item.classificationDraft.feishuConfirmationId && <Link href={`/integration-center?confirmation_id=${encodeURIComponent(item.classificationDraft.feishuConfirmationId)}`} style={{ color: "var(--accent2)", display: "inline-block", marginTop: 7 }}>前往确认队列 →</Link>}
+                  </div> : <div style={{ display: "grid", gap: 7 }}>
+                    <select className="input" value={decisions[item.quarantineId] || (item.recommendedDataClass === "unclassified" ? "" : item.recommendedDataClass)} onChange={event => setDecisions(current => ({ ...current, [item.quarantineId]: event.target.value }))}>
+                      <option value="">请选择分类</option><option value="production">正式</option><option value="sample">样例</option><option value="test">测试</option><option value="diagnostic">诊断</option>
+                    </select>
+                    <input className="input" value={reasons[item.quarantineId] ?? ""} onChange={event => setReasons(current => ({ ...current, [item.quarantineId]: event.target.value }))} placeholder={item.recommendedDataClass === "unclassified" ? "填写人工判断依据" : `可补充依据；默认采用“${item.recommendedDataClassLabel}”建议`} />
+                    <button className="btn-secondary" type="button" disabled={submittingId === item.quarantineId} onClick={() => void createClassificationConfirmation(item)}>{submittingId === item.quarantineId ? "正在创建…" : "创建写回确认"}</button>
+                  </div>}</td>
                 </tr>;
               })}</tbody>
             </table>
