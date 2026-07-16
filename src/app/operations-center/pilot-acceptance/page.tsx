@@ -18,13 +18,15 @@ type Bundle = {
   events: Array<{ id: string; event_type: string; actor_business_role: string; occurred_at: string }>;
   evaluation: Evaluation;
 };
-type CandidateParticipant = { id: string; user_id: string; user_name: string; business_role: string };
+type CandidateParticipant = { id: string; user_id: string; user_name: string; business_role: string; account_kind: "real_user" | "test_account" | "service_account" };
 type CandidateGolden = { id: string; project_id: string; project_name: string; chain_key: string; status: string };
 type CandidateFeishu = { id: string; action_type: string; target_summary: string; writeback_attempt_count: number };
+type PreflightItem = { code: string; label: string; detail: string; current: number; target: number; status: "ready" | "blocked" | "pending"; actionHref: string; actionLabel: string };
 type Workspace = {
   modules: ModuleDefinition[];
   runs: Run[];
   selected: Bundle | null;
+  preflight: { baselineReady: boolean; evidenceReady: boolean; metrics: Record<string, number>; items: PreflightItem[] };
   candidates: {
     projects: Array<{ id: string; name: string; oa_no?: string | null }>;
     participants: CandidateParticipant[];
@@ -154,6 +156,11 @@ export default function ControlledPilotAcceptancePage() {
     return [];
   }, [selected]);
   const metrics = selected?.evaluation.metrics ?? {};
+  const participantOptions = useMemo(() => {
+    const boundUsers = new Set(selected?.participants.map(item => item.user_id) ?? []);
+    const boundRoles = new Set(selected?.participants.map(item => item.business_role) ?? []);
+    return (workspace?.candidates.participants ?? []).filter(item => !boundUsers.has(item.user_id) && !boundRoles.has(item.business_role));
+  }, [selected?.participants, workspace?.candidates.participants]);
 
   return <main style={{ minHeight: "100vh", background: "var(--bg)" }}>
     <header style={{ padding: "15px 28px", borderBottom: "1px solid var(--border)", background: "var(--surface)", display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
@@ -169,6 +176,25 @@ export default function ControlledPilotAcceptancePage() {
         <h1 style={{ marginTop: 0, fontSize: "1.55rem" }}>把“系统功能存在”升级为“角色可以真实跑完业务闭环”</h1>
         <p style={{ color: "var(--text2)", lineHeight: 1.75 }}>技术演练只验证 test 空间的工程契约；正式试点必须使用 production 数据、五个真实项目、四位不同的真实人员本人签署，并完成黄金链 A/E、飞书消息/任务/智能表写入及一次真实失败恢复。系统不会自动代签，也不会把测试结果标记为正式通过。</p>
       </section>
+
+      {workspace && dataClass === "production" && <section className="card" style={{ marginTop: 16, borderColor: workspace.preflight.baselineReady ? "rgba(16,185,129,.42)" : "rgba(245,158,11,.42)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "start", flexWrap: "wrap" }}>
+          <div><div className="section-title">正式试点启动检查</div><p style={{ color: "var(--text2)", lineHeight: 1.7, marginBottom: 0 }}>先确认真实项目和四角色人员可以组成基线；黄金链与飞书回执可在试点运行过程中继续完成。测试账号不会进入正式试点候选，无项目范围的飞书历史记录不会计入证据。</p></div>
+          <span className={`tag ${workspace.preflight.baselineReady ? "tag-green" : "tag-red"}`}>{workspace.preflight.baselineReady ? "可建立正式基线" : "前置条件未满足"}</span>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(240px,1fr))", gap: 10, marginTop: 14 }}>
+          {workspace.preflight.items.map(item => <article key={item.code} style={{ padding: 12, borderRadius: 12, background: "var(--surface2)", border: `1px solid ${item.status === "ready" ? "rgba(16,185,129,.32)" : item.status === "blocked" ? "rgba(239,68,68,.28)" : "rgba(245,158,11,.28)"}` }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}><strong>{item.label}</strong><span className={`tag ${item.status === "ready" ? "tag-green" : item.status === "blocked" ? "tag-red" : "tag-blue"}`}>{item.current}/{item.target}</span></div>
+            <p style={{ color: "var(--text2)", fontSize: ".76rem", lineHeight: 1.6, minHeight: 48 }}>{item.detail}</p>
+            <Link href={item.actionHref} style={{ color: "var(--accent2)", fontSize: ".78rem" }}>{item.actionLabel} →</Link>
+          </article>)}
+        </div>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 12, fontSize: ".78rem" }}>
+          <Link href="/integration-center" style={{ color: "var(--accent2)" }}>飞书数据分类与确认队列</Link>
+          <Link href="/admin/security" style={{ color: "var(--accent2)" }}>配置真实用户、角色与授权</Link>
+          <Link href="/operations-center/golden-chains" style={{ color: "var(--accent2)" }}>黄金链A/E验收台</Link>
+        </div>
+      </section>}
 
       {!initializing && workspace && currentRole === "pmo" && !selected && <section className="card" style={{ marginTop: 16 }}>
         <div className="section-title">创建当前数据空间的验收批次</div>
@@ -199,7 +225,7 @@ export default function ControlledPilotAcceptancePage() {
         <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(310px,1fr))", gap: 16, marginTop: 16, alignItems: "start" }}>
           <article className="card"><div className="section-title">① 五项目覆盖</div><div>{selected.projects.map(item => <p key={item.id} style={{ color: "var(--text2)" }}>✓ {item.project?.name || "未命名项目"}{item.project?.oa_no ? ` · ${item.project.oa_no}` : ""}</p>)}</div>{currentRole === "pmo" && ["draft", "collecting"].includes(selected.run.status) && <><BusinessEntitySelect kind="project" value={projectId} onChange={setProjectId} placeholder="选择要纳入的项目"/><button className="btn-secondary" style={{ marginTop: 8 }} disabled={busy || !projectId} onClick={() => void mutate("add_project", { payload: { project_id: projectId, coverage_note: "纳入V6.6全模块验收" } })}>纳入项目</button></>}</article>
 
-          <article className="card"><div className="section-title">② 四角色职责分离</div>{selected.participants.map(item => <p key={item.id} style={{ color: item.self_signed_at ? "var(--green)" : "var(--text2)" }}>{item.self_signed_at ? "✓" : "○"} {ROLE_LABEL[item.business_role]} · {item.user?.name || "未命名成员"} · {item.self_signed_at ? "本人已签署" : "待本人签署"}</p>)}{currentRole === "pmo" && ["draft", "collecting"].includes(selected.run.status) && <><select className="input" value={participantAssignment} onChange={event => setParticipantAssignment(event.target.value)}><option value="">选择角色成员</option>{workspace?.candidates.participants.map(item => <option key={item.id} value={item.id}>{ROLE_LABEL[item.business_role]} · {item.user_name}</option>)}</select><button className="btn-secondary" style={{ marginTop: 8 }} disabled={busy || !participantAssignment} onClick={() => void mutate("bind_participant", { payload: { assignment_id: participantAssignment, participant_kind: selected.run.mode === "formal_pilot" ? "real_user" : "test_account" } })}>绑定角色</button></>}</article>
+          <article className="card"><div className="section-title">② 四角色职责分离</div>{selected.participants.map(item => <p key={item.id} style={{ color: item.self_signed_at ? "var(--green)" : "var(--text2)" }}>{item.self_signed_at ? "✓" : "○"} {ROLE_LABEL[item.business_role]} · {item.user?.name || "未命名成员"} · {item.self_signed_at ? "本人已签署" : "待本人签署"}</p>)}{currentRole === "pmo" && ["draft", "collecting"].includes(selected.run.status) && <><select className="input" value={participantAssignment} onChange={event => setParticipantAssignment(event.target.value)}><option value="">选择角色成员</option>{participantOptions.map(item => <option key={item.id} value={item.id}>{ROLE_LABEL[item.business_role]} · {item.user_name} · {item.account_kind === "real_user" ? "真实用户" : "测试账号"}</option>)}</select><button className="btn-secondary" style={{ marginTop: 8 }} disabled={busy || !participantAssignment} onClick={() => void mutate("bind_participant", { payload: { assignment_id: participantAssignment, participant_kind: selected.run.mode === "formal_pilot" ? "real_user" : "test_account" } })}>绑定角色</button><p style={{ color: "var(--text2)", fontSize: ".72rem", lineHeight: 1.55 }}>同一账号不能承担两个试点角色；正式试点只显示数据库标记为真实用户的有效角色分配。</p></>}</article>
 
           <article className="card"><div className="section-title">③ 本人签署</div><p style={{ color: "var(--text2)", lineHeight: 1.65 }}>签署动作只认当前登录账号与当前业务角色，管理员和系统任务不能代签。</p><textarea className="input" value={signoffStatement} onChange={event => setSignoffStatement(event.target.value)} placeholder="本人验收声明"/><button className="btn-primary" style={{ marginTop: 8 }} disabled={busy || !canSelfSign || signoffStatement.trim().length < 12} onClick={() => void mutate("self_signoff", { confirm: true, statement: signoffStatement })}>本人签署</button>{!canSelfSign && <p style={{ color: "var(--amber)", fontSize: ".75rem" }}>当前角色未绑定、已签署，或需切换到本人角色后操作。</p>}</article>
 

@@ -20,7 +20,14 @@ type AppUser = {
   name: string | null;
   role: Role;
   status: UserStatus;
+  accountKind: "real_user" | "test_account" | "service_account";
 };
+
+function accountKindLabel(value: AppUser["accountKind"]): string {
+  if (value === "real_user") return "真实用户";
+  if (value === "test_account") return "测试账号";
+  return "服务账号";
+}
 
 type ProjectAccessGrant = {
   id: string;
@@ -331,13 +338,14 @@ export default function AdminSecurityPage() {
     await runOperation({ operation: "revoke_reporting_relationship", relationshipId: id, reason }, "业务汇报关系已撤销");
   }
 
-  async function updateUser(user: AppUser, next: Partial<Pick<AppUser, "role" | "status">>) {
+  async function updateUser(user: AppUser, next: Partial<Pick<AppUser, "role" | "status" | "accountKind">>) {
     await runOperation({
       operation: "update_user_role",
       userId: user.id,
       role: next.role ?? user.role,
       status: next.status ?? user.status,
-    }, "用户角色/状态已更新");
+      accountKind: next.accountKind ?? user.accountKind,
+    }, "用户角色、状态或账号类别已更新");
   }
 
   async function saveConfig() {
@@ -462,7 +470,7 @@ export default function AdminSecurityPage() {
                 <label>
                   <span style={labelStyle}>用户</span>
                   <AdminSelect value={businessRoleDraft.userId} onChange={event => setBusinessRoleDraft(prev => ({ ...prev, userId: event.target.value }))}>
-                    {snapshot.users.map(user => <option key={user.id} value={user.id}>{user.name || user.email}</option>)}
+                    {snapshot.users.map(user => <option key={user.id} value={user.id}>{user.name || user.email} · {accountKindLabel(user.accountKind)}</option>)}
                   </AdminSelect>
                 </label>
                 <label>
@@ -556,9 +564,9 @@ export default function AdminSecurityPage() {
                     setReportingDraft(prev => ({ ...prev, subjectScope, subjectId }));
                   }}><option value="project">项目</option><option value="portfolio">项目组合</option><option value="organization">组织</option></AdminSelect></label>
                   <label style={{ gridColumn: "span 2" }}><span style={labelStyle}>管理对象</span><AdminSelect value={reportingDraft.subjectId} onChange={event => setReportingDraft(prev => ({ ...prev, subjectId: event.target.value }))}>{reportingSubjects.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}</AdminSelect></label>
-                  <label><span style={labelStyle}>上报人</span><AdminSelect value={reportingDraft.fromUserId} onChange={event => setReportingDraft(prev => ({ ...prev, fromUserId: event.target.value }))}>{snapshot.users.map(user => <option key={user.id} value={user.id}>{user.name || user.email}</option>)}</AdminSelect></label>
+                  <label><span style={labelStyle}>上报人</span><AdminSelect value={reportingDraft.fromUserId} onChange={event => setReportingDraft(prev => ({ ...prev, fromUserId: event.target.value }))}>{snapshot.users.map(user => <option key={user.id} value={user.id}>{user.name || user.email} · {accountKindLabel(user.accountKind)}</option>)}</AdminSelect></label>
                   <label><span style={labelStyle}>上报角色</span><AdminSelect value={reportingDraft.fromBusinessRole} onChange={event => setReportingDraft(prev => ({ ...prev, fromBusinessRole: event.target.value as BusinessRoleKey }))}><option value="pm">项目经理</option><option value="operations">运营</option><option value="pmo">PMO</option></AdminSelect></label>
-                  <label><span style={labelStyle}>接收人</span><AdminSelect value={reportingDraft.toUserId} onChange={event => setReportingDraft(prev => ({ ...prev, toUserId: event.target.value }))}>{snapshot.users.filter(user => user.id !== reportingDraft.fromUserId).map(user => <option key={user.id} value={user.id}>{user.name || user.email}</option>)}</AdminSelect></label>
+                  <label><span style={labelStyle}>接收人</span><AdminSelect value={reportingDraft.toUserId} onChange={event => setReportingDraft(prev => ({ ...prev, toUserId: event.target.value }))}>{snapshot.users.filter(user => user.id !== reportingDraft.fromUserId).map(user => <option key={user.id} value={user.id}>{user.name || user.email} · {accountKindLabel(user.accountKind)}</option>)}</AdminSelect></label>
                   <label><span style={labelStyle}>接收角色</span><AdminSelect value={reportingDraft.toBusinessRole} onChange={event => setReportingDraft(prev => ({ ...prev, toBusinessRole: event.target.value as BusinessRoleKey }))}><option value="pmo">PMO</option><option value="ceo">CEO</option><option value="sponsor">项目发起人</option></AdminSelect></label>
                   <label><span style={labelStyle}>生效时间</span><AdminInput type="datetime-local" value={reportingDraft.validFrom} onChange={event => setReportingDraft(prev => ({ ...prev, validFrom: event.target.value }))} /></label>
                   <label><span style={labelStyle}>失效时间（可选）</span><AdminInput type="datetime-local" value={reportingDraft.validUntil} onChange={event => setReportingDraft(prev => ({ ...prev, validUntil: event.target.value }))} /></label>
@@ -630,7 +638,7 @@ export default function AdminSecurityPage() {
                     <div>
                       <div style={{ fontWeight: 900 }}>{user.name || user.email}</div>
                       <div style={{ color: "var(--text2)", fontSize: "0.76rem", marginTop: 3 }}>{user.email} · {user.phone}</div>
-                      <div style={{ display: "flex", gap: 6, marginTop: 8 }}><StatusTag value={user.role} /><StatusTag value={user.status} /></div>
+                      <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}><StatusTag value={user.role} /><StatusTag value={user.status} /><StatusTag value={accountKindLabel(user.accountKind)} /></div>
                     </div>
                     <div style={{ display: "grid", gap: 6 }}>
                       <button className="btn-secondary" onClick={() => void updateUser(user, { role: user.role === "admin" ? "user" : "admin" })} disabled={saving}>
@@ -639,6 +647,11 @@ export default function AdminSecurityPage() {
                       <button className="btn-secondary" onClick={() => void updateUser(user, { status: user.status === "active" ? "disabled" : "active" })} disabled={saving}>
                         {user.status === "active" ? "禁用" : "启用"}
                       </button>
+                      <AdminSelect value={user.accountKind} onChange={event => void updateUser(user, { accountKind: event.target.value as AppUser["accountKind"] })} disabled={saving} aria-label={`${user.name || user.email}账号类别`}>
+                        <option value="real_user">真实用户</option>
+                        <option value="test_account">测试账号</option>
+                        <option value="service_account">服务账号</option>
+                      </AdminSelect>
                     </div>
                   </div>
                 ))}
@@ -651,7 +664,7 @@ export default function AdminSecurityPage() {
                 <label>
                   <span style={labelStyle}>授权用户</span>
                   <AdminSelect value={grantDraft.userId} onChange={event => setGrantDraft(prev => ({ ...prev, userId: event.target.value }))}>
-                    {snapshot.users.map(user => <option key={user.id} value={user.id}>{user.name || user.email} / {user.role}</option>)}
+                    {snapshot.users.map(user => <option key={user.id} value={user.id}>{user.name || user.email} / {user.role} / {accountKindLabel(user.accountKind)}</option>)}
                   </AdminSelect>
                 </label>
                 <label>

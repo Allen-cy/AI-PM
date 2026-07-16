@@ -40,6 +40,7 @@ export interface AdminSecuritySnapshot {
     name: string | null;
     role: AppRole;
     status: "active" | "disabled";
+    accountKind: "real_user" | "test_account" | "service_account";
     created_at?: string;
   }>;
   projectAccess: Array<ProjectAccessGrant & {
@@ -265,7 +266,7 @@ export async function loadAdminSecuritySnapshot(): Promise<AdminSecuritySnapshot
 
   const supabase = getAuthSupabase();
   const [users, grants, requests, audits, configs, businessRoles, organizations, portfolios, projects, managementRules, reportingRelationships] = await Promise.all([
-    supabase.from("app_users").select("id,email,phone,name,role,status,created_at").order("created_at", { ascending: false }).limit(200),
+    supabase.from("app_users").select("id,email,phone,name,role,status,account_kind,created_at").order("created_at", { ascending: false }).limit(200),
     supabase.from("user_project_access_grants").select("id,user_id,project_name,project_code,access_level,status,grant_reason,granted_by_name,created_at,updated_at").order("updated_at", { ascending: false }).limit(200),
     supabase.from("project_access_requests").select("id,requester_id,requester_name,requester_email,project_name,project_code,access_level,reason,status,reviewer_name,review_comment,related_grant_id,created_at,reviewed_at").order("created_at", { ascending: false }).limit(200),
     supabase.from("operation_audit_logs").select("id,actor_name,actor_role,action,resource_type,resource_id,status,severity,summary,created_at,request_id").order("created_at", { ascending: false }).limit(100),
@@ -287,6 +288,7 @@ export async function loadAdminSecuritySnapshot(): Promise<AdminSecuritySnapshot
       name: row.name,
       role: row.role,
       status: row.status,
+      accountKind: row.account_kind,
       created_at: row.created_at,
     }));
   }

@@ -35,6 +35,12 @@ The easiest way to deploy your Next.js app is to use the [Vercel Platform](https
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
 
+## AI-PMO System V6.6.3
+
+V6.6.3 收紧正式受控试点的身份与外部证据门禁。用户账号由数据库持久化标记为真实用户、测试账号或服务账号；正式试点只接受四位不同真实用户，技术演练只接受测试账号。页面新增正式试点启动检查，直接展示五个 production 项目、四角色不同真实人员匹配、黄金链 A/E 与三类飞书写入的准备度和补齐入口。
+
+飞书确认只有在执行成功、绑定稳定项目且该项目属于当前试点批次时，才能成为试点证据；无项目范围的历史回执继续保留，但不能用于通过验收。管理员可在安全中心审计并维护账号类别；已进入试点的账号不能改成与试点模式冲突的类别。数据库触发器独立验证参与人身份与飞书项目范围，接口和页面只做前置引导，不能绕过数据库事实。详细记录见 `docs/v663-formal-pilot-identity-evidence-guard.md`。
+
 ## AI-PMO System V6.6.2
 
 V6.6.2 收紧四角色职责分离门禁。生产审计发现旧组织中仍有 3 条由同一用户跨角色向自己汇报或升级的活动关系；迁移保留完整历史，将它们暂停并记录原因，不删除原始记录。数据库新增已验证约束，禁止任何同一用户同时成为活动汇报关系的上报人和接收人。

@@ -66,8 +66,102 @@ export interface ControlledPilotEvaluation {
   };
 }
 
+export interface ControlledPilotPreflightInput {
+  mode: ControlledPilotMode;
+  projectCount: number;
+  participants: Array<{ userId: string; businessRole: string; accountKind: string }>;
+  goldenChains: Array<{ chainKey: string; status: string }>;
+  feishuConfirmations: Array<{ actionType: string; projectId: string | null }>;
+}
+
+export interface ControlledPilotPreflightItem {
+  code: string;
+  label: string;
+  detail: string;
+  current: number;
+  target: number;
+  status: "ready" | "blocked" | "pending";
+  actionHref: string;
+  actionLabel: string;
+}
+
+export interface ControlledPilotPreflight {
+  baselineReady: boolean;
+  evidenceReady: boolean;
+  metrics: {
+    projects: number;
+    assignableDistinctRoles: number;
+    goldenChains: number;
+    feishuTypes: number;
+  };
+  items: ControlledPilotPreflightItem[];
+}
+
 function unique(values: readonly string[]): Set<string> {
   return new Set(values.map(value => String(value || "").trim()).filter(Boolean));
+}
+
+function maximumDistinctRoleMatching(
+  participants: ControlledPilotPreflightInput["participants"],
+  expectedAccountKind: ControlledPilotParticipantKind,
+): number {
+  const candidates = participants.filter(item => item.accountKind === expectedAccountKind && CONTROLLED_PILOT_ROLES.includes(item.businessRole as ControlledPilotParticipantRole));
+  const usersByRole = new Map(CONTROLLED_PILOT_ROLES.map(role => [role, [...new Set(candidates.filter(item => item.businessRole === role).map(item => item.userId).filter(Boolean))]]));
+  const matchedRoleByUser = new Map<string, ControlledPilotParticipantRole>();
+  const tryAssign = (role: ControlledPilotParticipantRole, visited: Set<string>): boolean => {
+    for (const userId of usersByRole.get(role) ?? []) {
+      if (visited.has(userId)) continue;
+      visited.add(userId);
+      const previousRole = matchedRoleByUser.get(userId);
+      if (!previousRole || tryAssign(previousRole, visited)) {
+        matchedRoleByUser.set(userId, role);
+        return true;
+      }
+    }
+    return false;
+  };
+  return CONTROLLED_PILOT_ROLES.reduce((count, role) => count + (tryAssign(role, new Set()) ? 1 : 0), 0);
+}
+
+export function buildControlledPilotPreflight(input: ControlledPilotPreflightInput): ControlledPilotPreflight {
+  const expectedAccountKind: ControlledPilotParticipantKind = input.mode === "formal_pilot" ? "real_user" : "test_account";
+  const assignableDistinctRoles = maximumDistinctRoleMatching(input.participants, expectedAccountKind);
+  const requiredGoldenStatus = input.mode === "formal_pilot" ? "passed" : "verification";
+  const goldenChains = ["A", "E"].filter(chainKey => input.goldenChains.some(item => item.chainKey === chainKey && (item.status === "passed" || item.status === requiredGoldenStatus))).length;
+  const scopedFeishuTypes = unique(input.feishuConfirmations.filter(item => Boolean(item.projectId)).map(item => item.actionType));
+  const feishuTypes = ["message", "task", "base_record_update"].filter(actionType => scopedFeishuTypes.has(actionType)).length;
+  const projectsReady = input.projectCount >= 5;
+  const rolesReady = assignableDistinctRoles === CONTROLLED_PILOT_ROLES.length;
+  const goldenReady = goldenChains === 2;
+  const feishuReady = feishuTypes === 3;
+  const items: ControlledPilotPreflightItem[] = [
+    {
+      code: "PILOT_PROJECT_CANDIDATES_INCOMPLETE", label: "真实项目候选", current: input.projectCount, target: 5,
+      status: projectsReady ? "ready" : "blocked", detail: projectsReady ? "已有至少5个当前授权范围内的项目可纳入。" : "需要先将飞书项目按数据分类同步为production，并完成稳定项目授权。",
+      actionHref: "/integration-center", actionLabel: "治理飞书数据",
+    },
+    {
+      code: "PILOT_REAL_ROLE_MATCHING_INCOMPLETE", label: "四角色真人匹配", current: assignableDistinctRoles, target: 4,
+      status: rolesReady ? "ready" : "blocked", detail: rolesReady ? "PM、运营、PMO、CEO可由4个不同有效账号承担。" : `当前只能形成${assignableDistinctRoles}个不同账号的角色匹配；测试账号不会进入正式试点候选。`,
+      actionHref: "/admin/security", actionLabel: "配置角色与范围",
+    },
+    {
+      code: "PILOT_GOLDEN_CHAINS_PENDING", label: "黄金链A/E", current: goldenChains, target: 2,
+      status: goldenReady ? "ready" : "pending", detail: goldenReady ? "黄金链A/E均已有当前数据空间的合格运行。" : "试点过程中分别完成黄金链A与E，并由PMO关联已验证运行。",
+      actionHref: "/operations-center/golden-chains", actionLabel: "进入黄金链验收台",
+    },
+    {
+      code: "PILOT_FEISHU_EVIDENCE_PENDING", label: "飞书三类回执", current: feishuTypes, target: 3,
+      status: feishuReady ? "ready" : "pending", detail: feishuReady ? "消息、任务、智能表更新均已有项目范围内的成功记录。" : "所有回执必须绑定试点项目；无项目范围的历史成功记录不会计入正式证据。",
+      actionHref: "/integration-center", actionLabel: "进入飞书确认队列",
+    },
+  ];
+  return {
+    baselineReady: projectsReady && rolesReady,
+    evidenceReady: projectsReady && rolesReady && goldenReady && feishuReady,
+    metrics: { projects: input.projectCount, assignableDistinctRoles, goldenChains, feishuTypes },
+    items,
+  };
 }
 
 export function evaluateControlledPilot(input: ControlledPilotEvaluationInput): ControlledPilotEvaluation {

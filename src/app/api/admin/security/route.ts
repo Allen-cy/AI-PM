@@ -64,6 +64,11 @@ function status(value: unknown): "active" | "disabled" {
   throw new AdminSecurityError("用户状态必须是 active 或 disabled");
 }
 
+function accountKind(value: unknown): "real_user" | "test_account" | "service_account" {
+  if (value === "real_user" || value === "test_account" || value === "service_account") return value;
+  throw new AdminSecurityError("账号类别必须是真实用户、测试账号或服务账号");
+}
+
 function accessLevel(value: unknown): "viewer" | "editor" | "owner" {
   if (value === "viewer" || value === "editor" || value === "owner") return value;
   throw new AdminSecurityError("授权级别必须是 viewer、editor 或 owner");
@@ -179,12 +184,13 @@ export async function POST(request: Request) {
       const userId = text(body.userId, "userId", 80);
       const nextRole = role(body.role);
       const nextStatus = status(body.status || "active");
-      if (userId === admin.id && (nextRole !== "admin" || nextStatus !== "active")) {
-        throw new AdminSecurityError("不能降级或禁用当前登录管理员账号", 409);
+      const nextAccountKind = body.accountKind === undefined ? null : accountKind(body.accountKind);
+      if (userId === admin.id && (nextRole !== "admin" || nextStatus !== "active" || (nextAccountKind !== null && nextAccountKind !== "real_user"))) {
+        throw new AdminSecurityError("不能降级、禁用当前管理员或将其标记为测试/服务账号", 409);
       }
       const { error } = await supabase
         .from("app_users")
-        .update({ role: nextRole, status: nextStatus, updated_at: new Date().toISOString() })
+        .update({ role: nextRole, status: nextStatus, ...(nextAccountKind ? { account_kind: nextAccountKind } : {}), updated_at: new Date().toISOString() })
         .eq("id", userId);
       if (error) throw new AdminSecurityError(error.message, 500);
       const audit = await writeOperationAudit({
@@ -194,8 +200,8 @@ export async function POST(request: Request) {
         resourceId: userId,
         status: "succeeded",
         severity: "high",
-        summary: `更新用户角色/状态：${nextRole}/${nextStatus}`,
-        detail: { userId, role: nextRole, status: nextStatus },
+        summary: `更新用户角色/状态/账号类别：${nextRole}/${nextStatus}${nextAccountKind ? `/${nextAccountKind}` : ""}`,
+        detail: { userId, role: nextRole, status: nextStatus, ...(nextAccountKind ? { accountKind: nextAccountKind } : {}) },
         requestId,
       });
       return json({ ok: true, audit, request_id: requestId });

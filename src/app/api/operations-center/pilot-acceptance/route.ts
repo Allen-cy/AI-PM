@@ -1,5 +1,5 @@
 import { getAuthSupabase, getCurrentUser } from "@/features/auth/server";
-import { CONTROLLED_PILOT_MODULES } from "@/features/pilot-acceptance/domain";
+import { buildControlledPilotPreflight, CONTROLLED_PILOT_MODULES } from "@/features/pilot-acceptance/domain";
 import { resolveBusinessContext, type BusinessRole, type SubjectScope } from "@/features/operating-model/context";
 import { listBusinessRoleAssignments, loadContextProjectIdentityMappings } from "@/features/operating-model/persistence";
 import { writeOperationAudit } from "@/features/security/repository";
@@ -19,6 +19,18 @@ function hasSecret(value: unknown): boolean {
 }
 function json(body: unknown, status: number, requestId: string) {
   return Response.json(body, { status, headers: { "Cache-Control": "no-store", "X-Request-Id": requestId } });
+}
+
+function safeEvidenceReference(value: unknown): string {
+  const normalized = text(value).replace(/[\r\n]+/g, " ").slice(0, 300);
+  if (!normalized) return "";
+  if (/password|secret|token|api[_-]?key|credential/i.test(normalized)) return "[证据引用已脱敏]";
+  try {
+    const url = new URL(normalized);
+    return `${url.origin}${url.pathname}`.slice(0, 300);
+  } catch {
+    return normalized;
+  }
 }
 
 async function authorize(request: Request) {
@@ -62,7 +74,7 @@ async function loadBundle(access: Access, runId: string) {
   const participantUserIds = (participants.data ?? []).map(item => String(item.user_id));
   const [projectNames, userNames] = await Promise.all([
     projectIds.length ? supabase.from("projects").select("id,name,oa_no,data_class,status").in("id", projectIds) : Promise.resolve({ data: [], error: null }),
-    participantUserIds.length ? supabase.from("app_users").select("id,name,status").in("id", participantUserIds) : Promise.resolve({ data: [], error: null }),
+    participantUserIds.length ? supabase.from("app_users").select("id,name,status,account_kind").in("id", participantUserIds) : Promise.resolve({ data: [], error: null }),
   ]);
   if (projectNames.error || userNames.error) throw projectNames.error || userNames.error;
   const projectById = new Map((projectNames.data ?? []).map(item => [String(item.id), item]));
@@ -82,7 +94,7 @@ async function loadDataset(access: Access, requestedRunId = "") {
     access.projectIds.length ? supabase.from("projects").select("id,name,oa_no,data_class,status").eq("org_id", access.orgId).eq("data_class", access.dataClass).in("id", access.projectIds).order("name") : Promise.resolve({ data: [], error: null }),
     supabase.from("user_business_roles").select("id,user_id,business_role,subject_scope,subject_id,status,valid_from,valid_until").eq("org_id", access.orgId).eq("status", "active").in("business_role", ["pm", "operations", "pmo", "ceo"]),
     access.projectIds.length ? supabase.from("golden_chain_runs").select("id,project_id,chain_key,status,data_class,updated_at").eq("org_id", access.orgId).eq("data_class", access.dataClass).in("project_id", access.projectIds).in("chain_key", ["A", "E"]).in("status", ["verification", "passed"]).order("updated_at", { ascending: false }) : Promise.resolve({ data: [], error: null }),
-    supabase.from("feishu_action_confirmations").select("id,project_id,action_type,status,target_summary,writeback_attempt_count,executed_at,updated_at").eq("org_id", access.orgId).eq("data_class", access.dataClass).eq("status", "succeeded").in("action_type", ["message", "task", "base_record_update"]).order("updated_at", { ascending: false }).limit(200),
+    supabase.from("feishu_action_confirmations").select("id,project_id,action_type,status,target_summary,writeback_attempt_count,executed_at,updated_at").eq("org_id", access.orgId).eq("data_class", access.dataClass).eq("status", "succeeded").not("project_id", "is", null).in("action_type", ["message", "task", "base_record_update"]).order("updated_at", { ascending: false }).limit(200),
   ]);
   const failed = [runs, allProjects, assignments, goldenRuns, confirmations].find(result => result.error);
   if (failed?.error) throw failed.error;
@@ -92,10 +104,18 @@ async function loadDataset(access: Access, requestedRunId = "") {
     return subjectAllowed && Number.isFinite(starts) && starts <= now && (ends === null || (Number.isFinite(ends) && ends >= now));
   });
   const userIds = [...new Set(assignmentRows.map(item => String(item.user_id)))];
-  const users = userIds.length ? await supabase.from("app_users").select("id,name,status").in("id", userIds).eq("status", "active") : { data: [], error: null };
+  const users = userIds.length ? await supabase.from("app_users").select("id,name,status,account_kind").in("id", userIds).eq("status", "active") : { data: [], error: null };
   if (users.error) throw users.error;
   const userById = new Map((users.data ?? []).map(item => [String(item.id), item]));
   const projectById = new Map((allProjects.data ?? []).map(item => [String(item.id), item]));
+  const participantCandidates = assignmentRows.map(item => ({
+    ...item,
+    user_name: text(userById.get(String(item.user_id))?.name) || "未命名成员",
+    account_kind: text(userById.get(String(item.user_id))?.account_kind),
+  }));
+  const expectedAccountKind = access.dataClass === "production" ? "real_user" : "test_account";
+  const eligibleParticipantCandidates = participantCandidates.filter(item => item.account_kind === expectedAccountKind);
+  const scopedConfirmations = (confirmations.data ?? []).filter(item => Boolean(item.project_id) && access.projectIds.includes(String(item.project_id)));
   const runProjects = await supabase.from("controlled_pilot_projects").select("run_id,project_id").in("run_id", (runs.data ?? []).map(item => item.id).length ? (runs.data ?? []).map(item => item.id) : ["00000000-0000-0000-0000-000000000000"]);
   const runParticipants = await supabase.from("controlled_pilot_participants").select("run_id,user_id").in("run_id", (runs.data ?? []).map(item => item.id).length ? (runs.data ?? []).map(item => item.id) : ["00000000-0000-0000-0000-000000000000"]);
   if (runProjects.error || runParticipants.error) throw runProjects.error || runParticipants.error;
@@ -107,15 +127,23 @@ async function loadDataset(access: Access, requestedRunId = "") {
   });
   const runId = requestedRunId || text(visibleRuns[0]?.id);
   const selected = runId && visibleRuns.some(run => run.id === runId) ? await loadBundle(access, runId) : null;
+  const preflight = buildControlledPilotPreflight({
+    mode: access.dataClass === "production" ? "formal_pilot" : "technical_rehearsal",
+    projectCount: (allProjects.data ?? []).length,
+    participants: participantCandidates.map(item => ({ userId: text(item.user_id), businessRole: text(item.business_role), accountKind: item.account_kind })),
+    goldenChains: (goldenRuns.data ?? []).map(item => ({ chainKey: text(item.chain_key), status: text(item.status) })),
+    feishuConfirmations: scopedConfirmations.map(item => ({ actionType: text(item.action_type), projectId: text(item.project_id) || null })),
+  });
   return {
     modules: CONTROLLED_PILOT_MODULES,
     runs: visibleRuns,
     selected,
+    preflight,
     candidates: {
       projects: allProjects.data ?? [],
-      participants: assignmentRows.map(item => ({ ...item, user_name: text(userById.get(String(item.user_id))?.name) || "未命名成员" })),
+      participants: eligibleParticipantCandidates,
       golden_chains: (goldenRuns.data ?? []).map(item => ({ ...item, project_name: text(projectById.get(String(item.project_id))?.name) || "未命名项目" })),
-      feishu_confirmations: (confirmations.data ?? []).filter(item => !item.project_id || access.projectIds.includes(String(item.project_id))),
+      feishu_confirmations: scopedConfirmations,
     },
   };
 }
@@ -124,6 +152,18 @@ function markdownReport(bundle: NonNullable<Awaited<ReturnType<typeof loadBundle
   const evaluation = object(bundle.evaluation);
   const metrics = object(evaluation.metrics);
   const blockers = Array.isArray(evaluation.blockers) ? evaluation.blockers.map(object) : [];
+  const roleLabel: Record<string, string> = { pm: "项目经理", operations: "运营", pmo: "PMO", ceo: "CEO" };
+  const accountKindLabel: Record<string, string> = { real_user: "真实用户", test_account: "测试账号", service_account: "服务账号" };
+  const projectLines = bundle.projects.map(item => `- ${text(item.project?.name) || "未命名项目"}${text(item.project?.oa_no) ? `（${text(item.project?.oa_no)}）` : ""}；数据空间 ${text(item.project?.data_class) || text(bundle.run.data_class)}`);
+  const participantLines = bundle.participants.map(item => `- ${roleLabel[text(item.business_role)] || text(item.business_role)}：${text(item.user?.name) || "未命名成员"}；${accountKindLabel[text(item.user?.account_kind)] || "账号类型未知"}；${item.self_signed_at ? `本人已签署（${new Date(item.self_signed_at).toISOString()}）` : "待本人签署"}`);
+  const moduleLines = CONTROLLED_PILOT_MODULES.map(module => {
+    const check = bundle.module_checks.find(item => text(item.module_key) === module.key);
+    const evidence = Array.isArray(check?.evidence_refs) ? check.evidence_refs.map(safeEvidenceReference).filter(Boolean) : [];
+    return `- ${module.label}：${text(check?.result) || "pending"}${text(check?.summary) ? `；${text(check?.summary)}` : ""}；证据${evidence.length ? ` ${evidence.join("、")}` : " 0项"}`;
+  });
+  const goldenLines = bundle.golden_chains.map(item => `- 黄金链${text(item.chain_key)}：${text(item.verification_level)}；状态快照 ${text(item.status_snapshot)}`);
+  const feishuLines = bundle.feishu_evidence.map(item => `- ${text(item.action_type)}：尝试${Number(item.retry_count || 0)}次${item.failure_observed_at && item.recovered_at ? "；已验证失败后恢复" : ""}`);
+  const eventLines = bundle.events.slice(0, 30).map(item => `- ${new Date(item.occurred_at).toISOString()} · ${text(item.event_type)} · ${roleLabel[text(item.actor_business_role)] || text(item.actor_business_role)}`);
   return [
     `# ${text(bundle.run.name)} · 受控试点验收报告`, "",
     `- 模式：${bundle.run.mode === "formal_pilot" ? "正式试点" : "技术演练"}`,
@@ -139,6 +179,12 @@ function markdownReport(bundle: NonNullable<Awaited<ReturnType<typeof loadBundle
     `- 正式通过：${evaluation.formal_passed === true ? "是" : "否"}`, "",
     "## 阻断项", "",
     ...(blockers.length ? blockers.map(item => `- ${text(item.code)}：${text(item.detail)}`) : ["- 无"]), "",
+    "## 纳入项目", "", ...(projectLines.length ? projectLines : ["- 尚未纳入项目"]), "",
+    "## 四角色与本人签署", "", ...(participantLines.length ? participantLines : ["- 尚未绑定参与人"]), "",
+    "## 16类模块复核", "", ...moduleLines, "",
+    "## 黄金链证据", "", ...(goldenLines.length ? goldenLines : ["- 尚未关联黄金链A/E"]), "",
+    "## 飞书写入与恢复证据", "", ...(feishuLines.length ? feishuLines : ["- 尚未关联项目范围内的飞书成功回执"]), "",
+    "## 最近验收事件", "", ...(eventLines.length ? eventLines : ["- 暂无事件"]), "",
     "## 边界声明", "", "技术演练结果不得替代正式试点。正式通过只接受 production 数据、五个真实项目、四位真实人员本人签署、黄金链 A/E 正式通过和三类飞书真实回执。", "",
   ].join("\n");
 }
@@ -157,7 +203,7 @@ export async function GET(request: Request) {
     const data = await loadDataset(access, runId);
     return json({ status: "succeeded", request_id: requestId, context: access.context, source: { type: "supabase", fallback_used: false }, data_class: access.dataClass, generated_at: new Date().toISOString(), warnings: [], data }, 200, requestId);
   } catch (error) {
-    return json({ error: "PILOT_ACCEPTANCE_STORAGE_UNAVAILABLE", detail: error instanceof Error ? error.message : "unknown", required_migration: "20260716040000_v660_controlled_pilot_acceptance.sql", request_id: requestId }, 503, requestId);
+    return json({ error: "PILOT_ACCEPTANCE_STORAGE_UNAVAILABLE", detail: error instanceof Error ? error.message : "unknown", required_migrations: ["20260716040000_v660_controlled_pilot_acceptance.sql", "20260716123000_v663_formal_pilot_identity_evidence_guard.sql"], request_id: requestId }, 503, requestId);
   }
 }
 

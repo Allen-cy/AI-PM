@@ -5,7 +5,7 @@ import { isPublicRequestPath, resolveRequestAccess } from "../src/features/auth/
 
 const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
-test("V6.6.2 release derives browser version metadata from package.json", () => {
+test("V6.6.3 release derives browser version metadata from package.json", () => {
   const packageMetadata = JSON.parse(read("package.json")) as { version: string };
   const packageLock = JSON.parse(read("package-lock.json")) as {
     version: string;
@@ -13,7 +13,7 @@ test("V6.6.2 release derives browser version metadata from package.json", () => 
   };
   const nextConfig = read("next.config.ts");
 
-  assert.equal(packageMetadata.version, "6.6.2");
+  assert.equal(packageMetadata.version, "6.6.3");
   assert.equal(packageLock.version, packageMetadata.version);
   assert.equal(packageLock.packages[""]?.version, packageMetadata.version);
   assert.match(nextConfig, /packageMetadata\.version/);
@@ -73,8 +73,9 @@ test("homepage and version API consume the shared build label without stale hard
   }), "next");
 });
 
-test("README leads with the V6.6.2 release and preserves prior release order", () => {
+test("README leads with the V6.6.3 release and preserves prior release order", () => {
   const readme = read("README.md");
+  const v663 = readme.indexOf("## AI-PMO System V6.6.3");
   const v662 = readme.indexOf("## AI-PMO System V6.6.2");
   const v661 = readme.indexOf("## AI-PMO System V6.6.1");
   const v660 = readme.indexOf("## AI-PMO System V6.6.0");
@@ -91,6 +92,7 @@ test("README leads with the V6.6.2 release and preserves prior release order", (
   assert.notEqual(v631, -1);
   assert.notEqual(v630, -1);
   assert.notEqual(v620, -1);
+  assert.ok(v663 >= 0 && v663 < v662, "V6.6.3 release notes must appear before V6.6.2");
   assert.ok(v662 >= 0 && v662 < v661, "V6.6.2 release notes must appear before V6.6.1");
   assert.ok(v661 >= 0 && v661 < v660, "V6.6.1 release notes must appear before V6.6.0");
   assert.ok(v660 >= 0 && v660 < v651, "V6.6.0 release notes must appear before V6.5.1");
