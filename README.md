@@ -35,6 +35,12 @@ The easiest way to deploy your Next.js app is to use the [Vercel Platform](https
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
 
+## AI-PMO System V6.6.1
+
+V6.6.1 修复受控试点验收台首次进入时业务身份加载晚于页面初始化，导致顶部已经显示 PMO 身份、正文却错误提示“请先在顶部选择业务身份”并出现大面积空白的问题。业务上下文栏现在在首次解析完成后主动广播已生效身份；试点页面同时从服务端加载当前上下文并显示明确的初始化状态，避免把尚未加载误判成未选择身份。
+
+桌面 1440×900 与手机 375×812 均纳入真实浏览器验收，首次进入无需刷新即可加载技术演练或正式试点工作区，创建表单仅在身份和数据空间确认后显示。本修复不新增数据库对象，继续复用 V6.6.0 迁移和受控试点证据。
+
 ## AI-PMO System V6.6.0
 
 V6.6.0 新增“全模块受控试点验收台”，把技术演练与正式试点明确分成两条不可混用的验收路径。技术演练只能使用 `test` 数据和四个职责分离的测试账号；正式试点只能使用 `production` 数据，并强制五个真实项目、PM/运营/PMO/CEO 四位不同真实人员本人签署、16 项模块验收、黄金链 A/E 正式通过、飞书消息/任务/智能表三类成功回执，以及至少一次真实失败后重试恢复。

@@ -79,6 +79,17 @@ function isHiddenPath(pathname: string): boolean {
   return pathname.startsWith("/auth/") || pathname === "/auth";
 }
 
+function persistAndBroadcastBusinessContext(context: NonNullable<ContextResponse["active_context"]>) {
+  writeStoredBusinessContext({
+    assignmentId: context.assignmentId,
+    businessRole: context.businessRole,
+    orgId: context.orgId,
+    subjectScope: context.subjectScope,
+    subjectId: context.subjectId,
+  });
+  window.dispatchEvent(new CustomEvent("ai-pmo:business-context-changed", { detail: context }));
+}
+
 export function BusinessContextBar() {
   const pathname = usePathname();
   const [data, setData] = useState<ContextResponse | null>(null);
@@ -107,11 +118,13 @@ export function BusinessContextBar() {
         const saved = base.available_contexts?.find(item => item.id === savedId && item.status === "active");
         if (!saved || base.active_context?.assignmentId === saved.id) {
           const selected = saved ?? base.available_contexts?.find(item => item.id === base.active_context?.assignmentId);
-          if (selected) writeStoredBusinessContext({ assignmentId: selected.id, businessRole: selected.businessRole, orgId: selected.orgId, subjectScope: selected.subjectScope, subjectId: selected.subjectId });
           const savedProject = readStoredCurrentProject();
           const nextProject = base.available_projects?.some(item => item.id === savedProject) ? savedProject : base.available_projects?.[0]?.id || "";
           writeStoredCurrentProject(nextProject); setCurrentProjectId(nextProject);
-          if (!cancelled) setData(base);
+          if (!cancelled) {
+            setData(base);
+            if (selected) persistAndBroadcastBusinessContext({ assignmentId: selected.id, businessRole: selected.businessRole, orgId: selected.orgId, subjectScope: selected.subjectScope, subjectId: selected.subjectId });
+          }
           return;
         }
         const selectedResponse = await fetch(contextUrl(saved, storedDataClass), { cache: "no-store" });
@@ -120,7 +133,10 @@ export function BusinessContextBar() {
         const savedProject = readStoredCurrentProject();
         const nextProject = next.available_projects?.some(item => item.id === savedProject) ? savedProject : next.available_projects?.[0]?.id || "";
         writeStoredCurrentProject(nextProject); setCurrentProjectId(nextProject);
-        if (!cancelled) setData(next);
+        if (!cancelled) {
+          setData(next);
+          if (next.active_context) persistAndBroadcastBusinessContext(next.active_context);
+        }
       } catch {
         if (!cancelled) setData({ error: "BUSINESS_CONTEXT_LOAD_FAILED" });
       } finally {
@@ -145,11 +161,10 @@ export function BusinessContextBar() {
       const response = await fetch(contextUrl(assignment, dataClass), { cache: "no-store" });
       const next = await response.json() as ContextResponse;
       if (!response.ok) throw new Error(next.detail || next.error || "切换失败");
-      writeStoredBusinessContext({ assignmentId: assignment.id, businessRole: assignment.businessRole, orgId: assignment.orgId, subjectScope: assignment.subjectScope, subjectId: assignment.subjectId });
       const nextProject = next.available_projects?.[0]?.id || "";
       writeStoredCurrentProject(nextProject); setCurrentProjectId(nextProject);
       setData(next);
-      window.dispatchEvent(new CustomEvent("ai-pmo:business-context-changed", { detail: next.active_context }));
+      persistAndBroadcastBusinessContext({ assignmentId: assignment.id, businessRole: assignment.businessRole, orgId: assignment.orgId, subjectScope: assignment.subjectScope, subjectId: assignment.subjectId });
     } catch (error) {
       setData(previous => ({ ...previous, error: error instanceof Error ? error.message : "切换失败" }));
     } finally {

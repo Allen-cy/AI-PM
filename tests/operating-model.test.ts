@@ -639,6 +639,8 @@ test("P17 exposes a usable role context switcher admin assignment form and proje
   const project360Page = readFileSync("src/app/projects/[id]/page.tsx", "utf8");
 
   assert.match(contextBar, /\/api\/context\/current/);
+  assert.match(contextBar, /persistAndBroadcastBusinessContext/);
+  assert.match(contextBar, /ai-pmo:business-context-changed/);
   assert.match(clientContext, /ai-pmo-business-context-v1/);
   assert.match(clientContext, /ai-pmo-current-project-v1/);
   assert.match(clientContext, /ai-pmo-reporting-period-v1/);

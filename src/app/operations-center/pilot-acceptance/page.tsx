@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { BusinessEntitySelect } from "@/components/BusinessEntitySelect";
-import { businessContextSearchParams, readStoredBusinessContext, readStoredDataClass, type StoredBusinessContext } from "@/features/operating-model/client-context";
+import { businessContextSearchParams, loadCurrentBusinessContextSearchParams, readStoredBusinessContext, readStoredDataClass, type StoredBusinessContext } from "@/features/operating-model/client-context";
 
 type Run = { id: string; mode: "technical_rehearsal" | "formal_pilot"; data_class: string; name: string; objective: string; status: string; version: number; updated_at: string };
 type ModuleDefinition = { key: string; label: string };
@@ -45,6 +45,7 @@ export default function ControlledPilotAcceptancePage() {
   const [selectedRunId, setSelectedRunId] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
+  const [initializing, setInitializing] = useState(true);
   const [createForm, setCreateForm] = useState({ name: "V6.6全模块受控试点", objective: "验证五项目、四角色、黄金链A/E和飞书三类写入的真实闭环。" });
   const [projectId, setProjectId] = useState("");
   const [participantAssignment, setParticipantAssignment] = useState("");
@@ -75,15 +76,29 @@ export default function ControlledPilotAcceptancePage() {
   }, [queryFor]);
 
   useEffect(() => {
-    const initialize = () => {
-      const active = readStoredBusinessContext();
-      if (!active) { setNotice("请先在顶部选择业务身份。"); return; }
-      setContext(active); void load(active);
+    let cancelled = false;
+    const initialize = async () => {
+      setInitializing(true);
+      setWorkspace(null);
+      setNotice("");
+      try {
+        await loadCurrentBusinessContextSearchParams();
+        const active = readStoredBusinessContext();
+        if (!active) throw new Error("尚未分配有效业务角色，请联系管理员。");
+        if (cancelled) return;
+        setContext(active);
+        await load(active);
+      } catch (error) {
+        if (!cancelled) setNotice(error instanceof Error ? error.message : "业务身份加载失败。");
+      } finally {
+        if (!cancelled) setInitializing(false);
+      }
     };
-    const timer = window.setTimeout(initialize, 0);
-    window.addEventListener("ai-pmo:business-context-changed", initialize);
-    window.addEventListener("ai-pmo:data-class-changed", initialize);
-    return () => { window.clearTimeout(timer); window.removeEventListener("ai-pmo:business-context-changed", initialize); window.removeEventListener("ai-pmo:data-class-changed", initialize); };
+    const reload = () => { void initialize(); };
+    const timer = window.setTimeout(reload, 0);
+    window.addEventListener("ai-pmo:business-context-changed", reload);
+    window.addEventListener("ai-pmo:data-class-changed", reload);
+    return () => { cancelled = true; window.clearTimeout(timer); window.removeEventListener("ai-pmo:business-context-changed", reload); window.removeEventListener("ai-pmo:data-class-changed", reload); };
   }, [load]);
 
   async function mutate(operation: string, extra: Record<string, unknown> = {}) {
@@ -148,13 +163,14 @@ export default function ControlledPilotAcceptancePage() {
       {selected && <a className="btn-secondary" style={{ textDecoration: "none", marginLeft: "auto" }} href={`/api/operations-center/pilot-acceptance?${queryFor(context!, selected.run.id)}&format=markdown`}>下载验收报告</a>}
     </header>
     <div style={{ maxWidth: 1480, margin: "0 auto", padding: 28 }}>
+      {initializing && !workspace && <section className="card" style={{ marginBottom: 16, color: "var(--text2)" }}>正在读取当前业务身份和受控试点数据…</section>}
       {notice && <section className="card" style={{ marginBottom: 16, color: notice.includes("失败") || notice.includes("BLOCKED") ? "var(--red)" : "var(--amber)" }}>{notice}</section>}
       <section className="card" style={{ background: "linear-gradient(135deg,rgba(37,99,235,.13),rgba(124,58,237,.10))" }}>
         <h1 style={{ marginTop: 0, fontSize: "1.55rem" }}>把“系统功能存在”升级为“角色可以真实跑完业务闭环”</h1>
         <p style={{ color: "var(--text2)", lineHeight: 1.75 }}>技术演练只验证 test 空间的工程契约；正式试点必须使用 production 数据、五个真实项目、四位不同的真实人员本人签署，并完成黄金链 A/E、飞书消息/任务/智能表写入及一次真实失败恢复。系统不会自动代签，也不会把测试结果标记为正式通过。</p>
       </section>
 
-      {currentRole === "pmo" && !selected && <section className="card" style={{ marginTop: 16 }}>
+      {!initializing && workspace && currentRole === "pmo" && !selected && <section className="card" style={{ marginTop: 16 }}>
         <div className="section-title">创建当前数据空间的验收批次</div>
         <p style={{ color: "var(--text2)" }}>{dataClass === "production" ? "将创建正式试点批次。" : "将创建技术演练批次。"}</p>
         <input className="input" value={createForm.name} onChange={event => setCreateForm({ ...createForm, name: event.target.value })} placeholder="验收批次名称"/>

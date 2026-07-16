@@ -107,6 +107,9 @@ test("V6.6 API and page use governed selectors, versioning, report download and 
   assert.match(route, /PILOT_PROJECT_OUTSIDE_CONTEXT/);
   assert.match(route, /PILOT_SIGNED_CEO_REQUIRED/);
   assert.match(page, /BusinessEntitySelect/);
+  assert.match(page, /loadCurrentBusinessContextSearchParams/);
+  assert.match(page, /正在读取当前业务身份和受控试点数据/);
+  assert.match(page, /workspace && currentRole === "pmo" && !selected/);
   assert.match(page, /技术演练/);
   assert.match(page, /正式试点/);
   assert.match(page, /本人签署/);
