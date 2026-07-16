@@ -35,6 +35,12 @@ The easiest way to deploy your Next.js app is to use the [Vercel Platform](https
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
 
+## AI-PMO System V6.6.8
+
+V6.6.8 修复登录成功短暂进入主页时的 React hydration mismatch。主页过去在服务端和浏览器首屏分别计算当前时段问候语与当天日期，跨时区或跨渲染时刻可能产生不同文本并触发 React #418。现在服务端和浏览器首屏统一使用确定的占位文本，组件挂载后再按浏览器本地时间更新问候与日期。
+
+本补丁不改变 V6.6.7 的飞书分类写回、目标镜像、权限或数据库契约，不新增 migration。生产浏览器验收覆盖登录跳转、治理数据加载、桌面 1440×900、手机 375×812、控制台、失败请求与横向溢出。详细说明见 `docs/v668-home-hydration-browser-acceptance.md`。
+
 ## AI-PMO System V6.6.7
 
 V6.6.7 补齐分类写回后的最后一段真实数据闭环。个人飞书连接只有与组织共享事实源指向同一个 Base、同一领域表和同一同步流水表时才允许执行，避免分类被写进另一套台账。飞书字段更新并完成同步流水后，系统会立即读取同一条飞书记录，并自动对目标数据空间执行单记录定向对账；只有稳定镜像成功、无失败且无隔离记录，确认事项才会关闭。
