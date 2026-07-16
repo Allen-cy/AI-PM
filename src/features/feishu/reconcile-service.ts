@@ -1,4 +1,4 @@
-import { FeishuBaseClient, type FeishuRecordPage } from "./client.ts";
+import { FeishuBaseClient, type FeishuRecordItem, type FeishuRecordPage } from "./client.ts";
 import type { FeishuConfig } from "./config.ts";
 import {
   FEISHU_RECONCILE_DOMAINS,
@@ -22,6 +22,10 @@ export interface ReconcileFeishuClient {
   ): Promise<FeishuRecordPage>;
 }
 
+export interface TargetedReconcileFeishuClient {
+  getRecord(domain: FeishuReconcileDomain, recordId: string): Promise<FeishuRecordItem>;
+}
+
 export interface RunFeishuReconcileInput {
   config: FeishuConfig;
   supabase: ReconcileSupabaseClient;
@@ -37,6 +41,8 @@ export interface RunFeishuReconcileInput {
   actorUserId: string | null;
   requestId: string;
   sourceCheckpoint: string;
+  fullSnapshot?: boolean;
+  sourceRecordIds?: string[];
 }
 
 interface BeginBatchResult {
@@ -68,6 +74,7 @@ export interface FeishuReconcileResult {
     type: "feishu";
     container: "飞书多维表格";
     scope: "organization" | "user";
+    snapshot: "full" | "targeted";
   };
   data_class: FeishuReconcileDataClass;
   source_checkpoint: string;
@@ -88,7 +95,11 @@ function uniqueOrderedDomains(domains: FeishuReconcileDomain[]): FeishuReconcile
   return FEISHU_RECONCILE_DOMAINS.filter(domain => requested.has(domain));
 }
 
-function validateInput(input: RunFeishuReconcileInput): FeishuReconcileDomain[] {
+function validateInput(input: RunFeishuReconcileInput): {
+  domains: FeishuReconcileDomain[];
+  fullSnapshot: boolean;
+  sourceRecordIds: string[];
+} {
   if (input.expectedVersion !== 0) {
     throw new FeishuReconcileError("首次同步的 expected_version 必须为 0。", "EXPECTED_VERSION_CONFLICT", 409);
   }
@@ -110,7 +121,15 @@ function validateInput(input: RunFeishuReconcileInput): FeishuReconcileDomain[] 
   if (input.sourceScope === "user" && !input.sourceUserId) {
     throw new FeishuReconcileError("个人飞书同步必须绑定当前用户。", "SOURCE_USER_REQUIRED", 400);
   }
-  return domains;
+  const fullSnapshot = input.fullSnapshot !== false;
+  const sourceRecordIds = Array.from(new Set((input.sourceRecordIds ?? []).map(item => item.trim()).filter(Boolean))).sort();
+  if (!fullSnapshot && (sourceRecordIds.length === 0 || sourceRecordIds.length > 100)) {
+    throw new FeishuReconcileError("定向同步必须提供1至100个飞书记录ID。", "TARGET_RECORD_IDS_REQUIRED", 400);
+  }
+  if (fullSnapshot && sourceRecordIds.length > 0) {
+    throw new FeishuReconcileError("完整快照同步不能混入定向记录范围。", "RECONCILE_SCOPE_CONFLICT", 400);
+  }
+  return { domains, fullSnapshot, sourceRecordIds };
 }
 
 async function callRpc<T>(
@@ -146,7 +165,7 @@ function resultFromExisting(input: RunFeishuReconcileInput, batch: BeginBatchRes
     batch_id: batch.batch_id,
     status: batch.status,
     replayed: true,
-    source: { type: "feishu", container: "飞书多维表格", scope: input.sourceScope },
+    source: { type: "feishu", container: "飞书多维表格", scope: input.sourceScope, snapshot: input.fullSnapshot === false ? "targeted" : "full" },
     data_class: input.dataClass,
     source_checkpoint: input.sourceCheckpoint,
     freshness: { latest_source_updated_at: null },
@@ -161,7 +180,7 @@ function resultFromExisting(input: RunFeishuReconcileInput, batch: BeginBatchRes
 }
 
 export async function runFeishuReconcile(input: RunFeishuReconcileInput): Promise<FeishuReconcileResult> {
-  const domains = validateInput(input);
+  const { domains, fullSnapshot, sourceRecordIds } = validateInput(input);
   const requestFingerprint = await canonicalRowHash({
     org_id: input.orgId,
     data_class: input.dataClass,
@@ -171,6 +190,8 @@ export async function runFeishuReconcile(input: RunFeishuReconcileInput): Promis
     domains,
     source_checkpoint: input.sourceCheckpoint,
     expected_version: input.expectedVersion,
+    full_snapshot: fullSnapshot,
+    source_record_ids: sourceRecordIds,
   });
   const begin = await callRpc<BeginBatchResult>(input.supabase, "begin_feishu_reconcile_batch_tx", {
     p_org_id: input.orgId,
@@ -224,6 +245,14 @@ export async function runFeishuReconcile(input: RunFeishuReconcileInput): Promis
         }
       } while (pageToken);
 
+      if (!fullSnapshot) {
+        const receivedRecordIds = normalized.map(item => item.source.record_id).sort();
+        if (receivedRecordIds.length !== sourceRecordIds.length
+          || receivedRecordIds.some((recordId, index) => recordId !== sourceRecordIds[index])) {
+          throw new FeishuReconcileError("定向同步返回的记录范围与申请不一致。", "TARGET_RECORD_SCOPE_MISMATCH", 409);
+        }
+      }
+
       const seenRecordIds = normalized
         .filter(item => item.data_class === input.dataClass)
         .map(item => item.source.record_id);
@@ -233,7 +262,7 @@ export async function runFeishuReconcile(input: RunFeishuReconcileInput): Promis
         p_records: normalized,
         p_seen_record_ids: seenRecordIds,
         p_source_page_count: pages,
-        p_full_snapshot: true,
+        p_full_snapshot: fullSnapshot,
         p_actor_user_id: input.actorUserId,
         p_request_id: input.requestId,
       });
@@ -256,7 +285,7 @@ export async function runFeishuReconcile(input: RunFeishuReconcileInput): Promis
       batch_id: String(finalized.id ?? batchId),
       status: String(finalized.status ?? "completed"),
       replayed: false,
-      source: { type: "feishu", container: "飞书多维表格", scope: input.sourceScope },
+      source: { type: "feishu", container: "飞书多维表格", scope: input.sourceScope, snapshot: fullSnapshot ? "full" : "targeted" },
       data_class: input.dataClass,
       source_checkpoint: input.sourceCheckpoint,
       freshness: { latest_source_updated_at: latestSourceUpdatedAt },
@@ -281,4 +310,33 @@ export async function runFeishuReconcile(input: RunFeishuReconcileInput): Promis
     });
     throw failure;
   }
+}
+
+export interface RunFeishuTargetedReconcileInput extends Omit<RunFeishuReconcileInput, "client" | "domains" | "fullSnapshot" | "sourceRecordIds"> {
+  domain: FeishuReconcileDomain;
+  sourceRecordId: string;
+  client?: TargetedReconcileFeishuClient;
+}
+
+export async function runFeishuTargetedReconcile(input: RunFeishuTargetedReconcileInput): Promise<FeishuReconcileResult> {
+  const sourceRecordId = input.sourceRecordId.trim();
+  if (!sourceRecordId) throw new FeishuReconcileError("定向同步缺少飞书记录ID。", "TARGET_RECORD_ID_REQUIRED", 400);
+  const client = input.client ?? new FeishuBaseClient(input.config);
+  let recordPromise: Promise<FeishuRecordItem> | null = null;
+  const pageClient: ReconcileFeishuClient = {
+    listRecordsPage: async (domain, options) => {
+      if (domain !== input.domain || options?.pageToken) {
+        throw new FeishuReconcileError("定向同步请求范围不一致。", "TARGET_RECONCILE_SCOPE_MISMATCH", 409);
+      }
+      recordPromise ??= client.getRecord(domain, sourceRecordId);
+      return { records: [await recordPromise], hasMore: false };
+    },
+  };
+  return runFeishuReconcile({
+    ...input,
+    client: pageClient,
+    domains: [input.domain],
+    fullSnapshot: false,
+    sourceRecordIds: [sourceRecordId],
+  });
 }

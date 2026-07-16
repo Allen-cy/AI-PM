@@ -35,6 +35,12 @@ The easiest way to deploy your Next.js app is to use the [Vercel Platform](https
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
 
+## AI-PMO System V6.6.7
+
+V6.6.7 补齐分类写回后的最后一段真实数据闭环。个人飞书连接只有与组织共享事实源指向同一个 Base、同一领域表和同一同步流水表时才允许执行，避免分类被写进另一套台账。飞书字段更新并完成同步流水后，系统会立即读取同一条飞书记录，并自动对目标数据空间执行单记录定向对账；只有稳定镜像成功、无失败且无隔离记录，确认事项才会关闭。
+
+定向对账显式使用 `full_snapshot=false`，不会扫描、删除或墓碑化同表其他记录。若飞书已经改写而镜像暂时失败，确认保持失败且可重试；重试会先识别飞书当前值，避免重复改写。本版本不新增数据库 migration，复用 V6.2 已上线的幂等批次与非完整快照 RPC。V6.6.6 所述“仍需人工重新对账”的历史断点由本版本正式关闭；237 条现存隔离记录仍未被自动分类或改写。详细说明见 `docs/v667-classification-target-reconcile.md`。
+
 ## AI-PMO System V6.6.6
 
 V6.6.6 将飞书隔离数据治理从“下载CSV后离开系统手工修改”升级为受控写回闭环。组织级 PMO 可以在治理台逐条选择正式、样例、测试或诊断并填写分类依据；决定与高风险飞书确认队列在同一数据库事务中保存，页面刷新后不会重复创建。系统当前只创建待确认任务，不直接修改飞书；最终执行仍要求申请人的个人飞书配置、显式二次确认、中文字段、当前值复核、同步流水、幂等键、写回租约和失败恢复。

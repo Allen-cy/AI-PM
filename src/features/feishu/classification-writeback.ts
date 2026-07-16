@@ -1,4 +1,4 @@
-import type { FeishuTableKey } from "./config.ts";
+import type { FeishuConfig, FeishuTableKey } from "./config.ts";
 
 export type GovernedClassification = "production" | "sample" | "test" | "diagnostic";
 
@@ -112,4 +112,16 @@ export function dataClassificationPayloadMatchesDraft(
     && !Object.hasOwn(payload, "project_id")
     && canonical(payload.fields) === canonical({ 数据分类: draft.targetChineseValue })
     && canonical(payload.expected_fields) === canonical({ 数据分类: draft.expectedChineseValue ?? null });
+}
+
+export function dataClassificationFeishuScopeMatches(
+  personal: FeishuConfig,
+  organization: FeishuConfig,
+  domain: FeishuTableKey,
+): boolean {
+  return personal.baseToken === organization.baseToken
+    && Boolean(personal.tables[domain])
+    && personal.tables[domain] === organization.tables[domain]
+    && Boolean(personal.tables.syncLedger)
+    && personal.tables.syncLedger === organization.tables.syncLedger;
 }

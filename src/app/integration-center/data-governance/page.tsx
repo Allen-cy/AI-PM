@@ -207,7 +207,8 @@ export default function FeishuDataGovernancePage() {
             <li>数据负责人逐条核对建议；可下载CSV，也可直接在明细中选择分类并填写依据。</li>
             <li>创建写回确认后，前往飞书确认队列完成高风险二次确认；只允许写入中文字段“数据分类”。</li>
             <li>不要把带“样例来源/测试批次”的记录填写为正式。</li>
-            <li>返回数据与集成中心执行“立即从飞书对账”，隔离记录通过门禁后会自动关闭。</li>
+            <li>写回成功后系统自动对该记录执行目标数据空间定向对账，不扫描或墓碑化同表其他记录；若镜像未成功，确认事项保持失败可重试且不会重复改写飞书。</li>
+            <li>数据与集成中心的“立即从飞书对账”继续用于八类事实全量复核，不再是单条分类闭环的必需人工步骤。</li>
           </ol>
         </section>
 
@@ -257,7 +258,7 @@ export default function FeishuDataGovernancePage() {
         </section>
 
         <section className="card" style={{ marginTop: 16, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-          <Link className="btn-primary" href="/integration-center" style={{ textDecoration: "none" }}>返回并重新对账</Link>
+          <Link className="btn-primary" href="/integration-center" style={{ textDecoration: "none" }}>返回数据与集成中心</Link>
           <Link className="btn-secondary" href="/operations-center/pilot-acceptance" style={{ textDecoration: "none" }}>查看正式试点门禁</Link>
           <span style={{ color: "var(--text2)", fontSize: ".78rem" }}>生成时间：{new Date(snapshot.generated_at).toLocaleString("zh-CN")}</span>
         </section>
