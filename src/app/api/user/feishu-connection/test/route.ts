@@ -1,14 +1,16 @@
 import { NextResponse } from "next/server";
 import { getAuthSupabase, getCurrentUser, isAuthStorageConfigured } from "@/features/auth/server";
 import { FeishuApiError, FeishuBaseClient } from "@/features/feishu/client";
-import { connectionToFeishuConfig, feishuSetupHint, larkCliHint } from "@/features/feishu/user-config";
+import { connectionToFeishuConfig, feishuSetupHint, getOrganizationFeishuConfig, larkCliHint } from "@/features/feishu/user-config";
 import type { FeishuTableKey } from "@/features/feishu/config";
 import {
   buildFeishuConfigCompletenessSteps,
   fieldMappingSteps,
+  organizationScopeAlignmentStep,
   summarizeFeishuConnectionSteps,
   writeCheckStep,
 } from "@/features/feishu/connection-test";
+import { listBusinessRoleAssignments } from "@/features/operating-model/persistence";
 import { evaluateFeishuFieldMappings } from "@/features/operating-system/diagnostics";
 import {
   feishuAppSecretCredentialContext,
@@ -93,6 +95,16 @@ export async function POST(request: Request) {
   }
 
   const supabase = getAuthSupabase();
+  const orgId = text(body.orgId);
+  if (orgId && user.role !== "admin") {
+    const assignments = await listBusinessRoleAssignments(user.id);
+    if (assignments.status !== "succeeded") {
+      return NextResponse.json({ request_id: requestId, status: "failed", warning: "BUSINESS_ROLE_STORAGE_UNAVAILABLE" }, { status: 503 });
+    }
+    if (!assignments.data?.some(item => item.orgId === orgId && item.status === "active")) {
+      return NextResponse.json({ request_id: requestId, status: "forbidden", warning: "PERSONAL_ORGANIZATION_SCOPE_FORBIDDEN" }, { status: 403 });
+    }
+  }
   const { data: existing, error } = await supabase
     .from("user_feishu_connections")
     .select("user_id,app_id,app_secret,app_secret_encrypted,base_token,base_token_encrypted,table_mapping,connection_mode,status")
@@ -140,6 +152,22 @@ export async function POST(request: Request) {
   }
 
   const client = new FeishuBaseClient(config);
+  let organizationConfig = null;
+  if (orgId) {
+    try {
+      organizationConfig = (await getOrganizationFeishuConfig(orgId)).config;
+    } catch {
+      organizationConfig = null;
+    }
+  }
+  steps.push(organizationScopeAlignmentStep({
+    requested: Boolean(orgId),
+    organizationConfigured: Boolean(organizationConfig),
+    sameBase: Boolean(organizationConfig && organizationConfig.baseToken === config.baseToken),
+    mismatchedTables: organizationConfig
+      ? tableKeys.filter(key => organizationConfig?.tables[key] !== config.tables[key])
+      : [],
+  }));
   let baseAccessible = false;
   let tableCount = 0;
   let missingRequiredTables: FeishuTableKey[] = [];

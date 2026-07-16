@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { getAuthSupabase, getCurrentUser, isAuthStorageConfigured } from "@/features/auth/server";
 import { feishuSetupHint, larkCliHint } from "@/features/feishu/user-config";
-import type { FeishuTableKey } from "@/features/feishu/config";
+import { readFeishuConfig, type FeishuTableKey } from "@/features/feishu/config";
+import { listBusinessRoleAssignments } from "@/features/operating-model/persistence";
 import {
   encryptCredential,
   feishuAppSecretCredentialContext,
@@ -119,7 +120,28 @@ async function encryptedColumnsAvailable(supabase: ReturnType<typeof getAuthSupa
   return !error;
 }
 
-export async function GET() {
+async function canAccessOrganization(user: { id: string; role: "admin" | "user" }, orgId: string): Promise<boolean> {
+  if (user.role === "admin") return true;
+  const assignments = await listBusinessRoleAssignments(user.id);
+  return assignments.status === "succeeded" && Boolean(assignments.data?.some(item => item.orgId === orgId && item.status === "active"));
+}
+
+async function readOrganizationTemplate(supabase: ReturnType<typeof getAuthSupabase>, orgId: string) {
+  const stored = await supabase.from("organization_feishu_connections")
+    .select("table_mapping,status")
+    .eq("org_id", orgId)
+    .maybeSingle();
+  if (stored.error) throw new Error("ORGANIZATION_FEISHU_STORAGE_UNAVAILABLE");
+  const environment = readFeishuConfig();
+  const tableMapping = normalizeMapping(stored.data?.table_mapping || environment?.tables || {});
+  const source = stored.data ? "organization" : environment ? "organization_environment" : "missing";
+  const configured = stored.data
+    ? stored.data.status !== "disabled" && stored.data.status !== "invalid" && Object.keys(tableMapping).length > 0
+    : Boolean(environment && Object.keys(tableMapping).length > 0);
+  return { orgId, source, configured, tableMapping, configuredTableCount: Object.keys(tableMapping).length };
+}
+
+export async function GET(request: Request) {
   if (!isAuthStorageConfigured()) {
     return NextResponse.json({ error: "AUTH_STORAGE_NOT_CONFIGURED" }, { status: 503 });
   }
@@ -128,10 +150,20 @@ export async function GET() {
   if (!user) return NextResponse.json({ error: "请先登录" }, { status: 401 });
 
   const supabase = getAuthSupabase();
+  const orgId = new URL(request.url).searchParams.get("org_id")?.trim() || "";
+  if (orgId && !(await canAccessOrganization(user, orgId))) {
+    return NextResponse.json({ error: "PERSONAL_ORGANIZATION_SCOPE_FORBIDDEN" }, { status: 403 });
+  }
   const { data, error, notificationStorageAvailable } = await readConnection(supabase, user.id);
 
   if (error) return NextResponse.json({ error: "FEISHU_SETTINGS_STORAGE_FAILED" }, { status: 500 });
-  return NextResponse.json({ connection: safeConnection(data, notificationStorageAvailable) });
+  let organizationTemplate = null;
+  try {
+    if (orgId) organizationTemplate = await readOrganizationTemplate(supabase, orgId);
+  } catch {
+    return NextResponse.json({ error: "ORGANIZATION_FEISHU_STORAGE_UNAVAILABLE" }, { status: 503 });
+  }
+  return NextResponse.json({ connection: safeConnection(data, notificationStorageAvailable), organizationTemplate });
 }
 
 export async function PUT(request: Request) {

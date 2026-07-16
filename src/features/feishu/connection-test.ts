@@ -155,3 +155,55 @@ export function writeCheckStep(input: {
     code: input.code,
   };
 }
+
+export function organizationScopeAlignmentStep(input: {
+  requested: boolean;
+  organizationConfigured: boolean;
+  sameBase: boolean;
+  mismatchedTables: FeishuTableKey[];
+}): FeishuConnectionTestStep {
+  if (!input.requested) {
+    return {
+      id: "organization_scope_alignment",
+      label: "组织事实源一致性",
+      status: "skipped",
+      detail: "尚未选择当前业务组织，本次未核对个人连接与组织共享台账。",
+      nextAction: "先在顶部业务身份中选择组织，再重新测试个人飞书连接。",
+    };
+  }
+  if (!input.organizationConfigured) {
+    return {
+      id: "organization_scope_alignment",
+      label: "组织事实源一致性",
+      status: "warning",
+      detail: "当前组织尚未配置可用的共享飞书事实源，无法核对Base与八类表映射。",
+      nextAction: "请组织级PMO先在数据与集成中心配置共享飞书项目台账。",
+    };
+  }
+  if (!input.sameBase) {
+    return {
+      id: "organization_scope_alignment",
+      label: "组织事实源一致性",
+      status: "failed",
+      detail: "个人连接与组织共享事实源不是同一个多维表格Base。",
+      nextAction: "请填写组织共享Base对应的App Token，系统不会跨台账写回。",
+      code: "PERSONAL_ORGANIZATION_BASE_MISMATCH",
+    };
+  }
+  if (input.mismatchedTables.length > 0) {
+    return {
+      id: "organization_scope_alignment",
+      label: "组织事实源一致性",
+      status: "failed",
+      detail: `以下表ID与组织共享台账不一致：${input.mismatchedTables.join("、")}`,
+      nextAction: "点击“复制组织八表映射”后重新保存并测试。",
+      code: "PERSONAL_ORGANIZATION_TABLE_MISMATCH",
+    };
+  }
+  return {
+    id: "organization_scope_alignment",
+    label: "组织事实源一致性",
+    status: "ok",
+    detail: "个人连接与组织共享Base及八类业务表映射一致，可用于受控写回与自动目标镜像。",
+  };
+}

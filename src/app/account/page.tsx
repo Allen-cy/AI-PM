@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { loadCurrentBusinessContextSearchParams } from "@/features/operating-model/client-context";
 
 interface AppUser {
   id: string;
@@ -40,8 +41,19 @@ interface FeishuConnection {
   configured: boolean;
   status: string;
   tableLabels: Record<FeishuTableKey, string>;
+  notificationReceiveIdType: string;
+  notificationReceiveId: string;
+  notificationStorageAvailable: boolean;
   setupHint: string;
   larkCliHint: string;
+}
+
+interface FeishuOrganizationTemplate {
+  orgId: string;
+  source: "organization" | "organization_environment" | "missing";
+  configured: boolean;
+  tableMapping: Partial<Record<FeishuTableKey, string>>;
+  configuredTableCount: number;
 }
 
 interface AiConnectionTestResult {
@@ -108,12 +120,18 @@ export default function AccountPage() {
     appSecret: string;
     baseToken: string;
     tableMapping: Partial<Record<FeishuTableKey, string>>;
+    notificationReceiveIdType: string;
+    notificationReceiveId: string;
   }>({
     appId: "",
     appSecret: "",
     baseToken: "",
     tableMapping: {},
+    notificationReceiveIdType: "",
+    notificationReceiveId: "",
   });
+  const [feishuOrgId, setFeishuOrgId] = useState("");
+  const [feishuOrganizationTemplate, setFeishuOrganizationTemplate] = useState<FeishuOrganizationTemplate | null>(null);
   const [editMode, setEditMode] = useState<EditMode>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [passwordMessage, setPasswordMessage] = useState<string | null>(null);
@@ -148,9 +166,17 @@ export default function AccountPage() {
           setProfile(nextProfile);
           setDraftProfile(nextProfile);
         }
+        let orgId = "";
+        try {
+          const context = await loadCurrentBusinessContextSearchParams();
+          orgId = context.get("org_id") || "";
+          if (!cancelled) setFeishuOrgId(orgId);
+        } catch {
+          orgId = "";
+        }
         const [aiResponse, feishuResponse] = await Promise.all([
           fetch("/api/user/ai-settings", { cache: "no-store" }),
-          fetch("/api/user/feishu-connection", { cache: "no-store" }),
+          fetch(`/api/user/feishu-connection${orgId ? `?org_id=${encodeURIComponent(orgId)}` : ""}`, { cache: "no-store" }),
         ]);
         if (!cancelled && aiResponse.ok) {
           const aiData = await aiResponse.json() as { settings?: AiSettings };
@@ -166,7 +192,8 @@ export default function AccountPage() {
           }
         }
         if (!cancelled && feishuResponse.ok) {
-          const feishuData = await feishuResponse.json() as { connection?: FeishuConnection };
+          const feishuData = await feishuResponse.json() as { connection?: FeishuConnection; organizationTemplate?: FeishuOrganizationTemplate | null };
+          setFeishuOrganizationTemplate(feishuData.organizationTemplate || null);
           if (feishuData.connection) {
             setFeishuConnection(feishuData.connection);
             setFeishuDraft({
@@ -174,6 +201,8 @@ export default function AccountPage() {
               appSecret: "",
               baseToken: "",
               tableMapping: feishuData.connection.tableMapping,
+              notificationReceiveIdType: feishuData.connection.notificationReceiveIdType || "",
+              notificationReceiveId: feishuData.connection.notificationReceiveId || "",
             });
           }
         }
@@ -308,6 +337,8 @@ export default function AccountPage() {
         appSecret: "",
         baseToken: "",
         tableMapping: data.connection.tableMapping,
+        notificationReceiveIdType: data.connection.notificationReceiveIdType || "",
+        notificationReceiveId: data.connection.notificationReceiveId || "",
       });
       setFeishuMessage("个人飞书接入配置已保存。");
     } catch (error) {
@@ -326,7 +357,7 @@ export default function AccountPage() {
       const response = await fetch("/api/user/feishu-connection/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...feishuDraft, includeWriteCheck }),
+        body: JSON.stringify({ ...feishuDraft, orgId: feishuOrgId, includeWriteCheck }),
       });
       const data = await response.json() as { test?: FeishuConnectionTestResult; warning?: string };
       if (!data.test) throw new Error(data.warning || "飞书连接测试失败");
@@ -337,6 +368,12 @@ export default function AccountPage() {
     } finally {
       setFeishuTesting(false);
     }
+  };
+
+  const copyOrganizationMapping = () => {
+    if (!feishuOrganizationTemplate?.configured) return;
+    setFeishuDraft(prev => ({ ...prev, tableMapping: { ...feishuOrganizationTemplate.tableMapping } }));
+    setFeishuMessage(`已复制当前组织的${feishuOrganizationTemplate.configuredTableCount}张业务表映射；请继续填写同一Base的App Token并保存测试。`);
   };
 
   const profileInput = (field: keyof typeof draftProfile) => (
@@ -368,7 +405,7 @@ export default function AccountPage() {
   const statusLabel = user?.status === "active" ? "正常启用" : "已停用";
 
   return (
-    <main style={{
+    <main className="account-page" style={{
       minHeight: "100vh",
       padding: 24,
       color: "#2b2118",
@@ -376,7 +413,7 @@ export default function AccountPage() {
         "radial-gradient(circle at 12% 10%, rgba(255,240,202,0.32), transparent 28%), linear-gradient(145deg, #2b1b11, #6a472c 48%, #2e1b12)",
     }}>
       <div style={{ maxWidth: 1080, margin: "0 auto" }}>
-        <header style={{
+        <header className="account-stack-mobile" style={{
           marginBottom: 22,
           borderRadius: 26,
           padding: "22px 24px",
@@ -411,7 +448,7 @@ export default function AccountPage() {
         </header>
 
         {user?.role === "admin" && (
-          <section style={{
+          <section className="account-stack-mobile" style={{
             marginBottom: 18,
             padding: "16px 18px",
             borderRadius: 20,
@@ -454,7 +491,7 @@ export default function AccountPage() {
           </section>
         )}
 
-        <section style={{
+        <section className="account-stack-mobile" style={{
           marginBottom: 18,
           padding: "16px 18px",
           borderRadius: 20,
@@ -483,7 +520,7 @@ export default function AccountPage() {
           </Link>
         </section>
 
-        <div style={{
+        <div className="account-profile-grid" style={{
           display: "grid",
           gridTemplateColumns: "330px minmax(0, 1fr)",
           gap: 20,
@@ -557,7 +594,7 @@ export default function AccountPage() {
                 { key: "email", label: "邮箱", value: profile.email, icon: "✉️" },
                 { key: "phone", label: "手机号码", value: profile.phone, icon: "📱" },
               ] as const).map(item => (
-                <div key={item.key} style={{
+                <div className="account-info-row" key={item.key} style={{
                   display: "grid",
                   gridTemplateColumns: "44px minmax(0, 1fr) auto",
                   gap: 12,
@@ -599,7 +636,7 @@ export default function AccountPage() {
                 </div>
               ))}
 
-              <div style={{
+              <div className="account-info-row" style={{
                 display: "grid",
                 gridTemplateColumns: "44px minmax(0, 1fr) auto",
                 gap: 12,
@@ -720,7 +757,7 @@ export default function AccountPage() {
           border: "1px solid rgba(255,255,255,0.55)",
           boxShadow: "0 22px 44px rgba(0,0,0,0.24), inset 0 2px 1px rgba(255,255,255,0.92), inset 0 -12px 28px rgba(49,89,144,0.12)",
         }}>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start", marginBottom: 18 }}>
+          <div className="account-stack-mobile" style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start", marginBottom: 18 }}>
             <div>
               <h2 style={{ fontSize: "1.25rem", marginBottom: 6 }}>AI模型配置</h2>
               <p style={{ color: "#52647c", fontSize: "0.88rem", lineHeight: 1.7 }}>
@@ -739,7 +776,7 @@ export default function AccountPage() {
             </span>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 14 }}>
+          <div className="account-responsive-grid" style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 14 }}>
             <div>
               <label style={brownLabelStyle}>模型提供商</label>
               <select
@@ -776,7 +813,7 @@ export default function AccountPage() {
             <input type="checkbox" checked={aiDraft.enabled} onChange={event => setAiDraft(prev => ({ ...prev, enabled: event.target.checked }))} />
             启用我的模型配置
           </label>
-          <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 16 }}>
+          <div className="account-action-row" style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 16 }}>
             <button className="btn-primary" onClick={saveAiSettings} disabled={aiSaving}>{aiSaving ? "保存中..." : "保存AI模型配置"}</button>
             <button className="btn-secondary" onClick={testAiSettings} disabled={aiTesting}>{aiTesting ? "测试中..." : "测试AI模型"}</button>
             {aiMessage && <span style={{ color: aiMessage.includes("已") ? "#287d4b" : "#a13d2c", fontSize: "0.84rem", fontWeight: 900 }}>{aiMessage}</span>}
@@ -814,11 +851,11 @@ export default function AccountPage() {
           border: "1px solid rgba(255,255,255,0.55)",
           boxShadow: "0 22px 44px rgba(0,0,0,0.24), inset 0 2px 1px rgba(255,255,255,0.92), inset 0 -12px 28px rgba(35,117,85,0.12)",
         }}>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start", marginBottom: 18 }}>
+          <div className="account-stack-mobile" style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start", marginBottom: 18 }}>
             <div>
               <h2 style={{ fontSize: "1.25rem", marginBottom: 6 }}>个人飞书接入</h2>
               <p style={{ color: "#4e695d", fontSize: "0.88rem", lineHeight: 1.7 }}>
-                注册用户使用自己的飞书应用和多维表格。使用飞书相关功能时，系统优先读取这里的个人配置。
+                注册用户使用自己的飞书应用身份访问组织共享Base。受控写回要求个人连接与当前组织使用同一个Base和同一组业务表。
               </p>
             </div>
             <span style={{
@@ -833,7 +870,7 @@ export default function AccountPage() {
             </span>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 14 }}>
+          <div className="account-responsive-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 14 }}>
             <div>
               <label style={brownLabelStyle}>App ID</label>
               <input style={lightInputStyle} value={feishuDraft.appId} onChange={event => setFeishuDraft(prev => ({ ...prev, appId: event.target.value }))} placeholder="飞书开放平台应用App ID" />
@@ -848,9 +885,24 @@ export default function AccountPage() {
             </div>
           </div>
 
+          <div style={{ marginTop: 16, padding: 14, borderRadius: 16, background: "rgba(255,255,255,0.58)", border: "1px solid rgba(79,125,104,0.18)", color: "#4e695d", lineHeight: 1.7 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+              <div>
+                <strong>组织事实源对齐</strong>
+                <div style={{ fontSize: "0.82rem", marginTop: 4 }}>
+                  {feishuOrganizationTemplate?.configured
+                    ? `当前组织已提供${feishuOrganizationTemplate.configuredTableCount}/8张业务表映射（${feishuOrganizationTemplate.source === "organization" ? "数据库配置" : "生产环境配置"}）。`
+                    : feishuOrgId ? "当前组织尚未提供可复用的共享表映射。" : "尚未选择有效业务组织，保存后只能验证个人Base。"}
+                </div>
+              </div>
+              <button className="btn-secondary" type="button" onClick={copyOrganizationMapping} disabled={!feishuOrganizationTemplate?.configured}>复制组织八表映射</button>
+            </div>
+            <div style={{ fontSize: "0.78rem", marginTop: 8 }}>表ID可以安全复用；App Secret和App Token不会从组织配置回显。请从你有权限的同一Base URL取得App Token。</div>
+          </div>
+
           <div style={{ marginTop: 18 }}>
             <div style={{ fontWeight: 900, marginBottom: 10 }}>智能表表ID映射（飞书字段名称请使用中文描述）</div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12 }}>
+            <div className="account-responsive-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12 }}>
               {(Object.keys(feishuConnection?.tableLabels || {
                 project: "项目台账表ID",
                 milestone: "里程碑表ID",
@@ -877,12 +929,27 @@ export default function AccountPage() {
             </div>
           </div>
 
+          <div className="account-responsive-grid" style={{ marginTop: 18, display: "grid", gridTemplateColumns: "minmax(180px, 0.7fr) minmax(0, 1.3fr)", gap: 12 }}>
+            <div>
+              <label style={brownLabelStyle}>通知接收对象类型（可选）</label>
+              <select style={lightInputStyle} value={feishuDraft.notificationReceiveIdType} onChange={event => setFeishuDraft(prev => ({ ...prev, notificationReceiveIdType: event.target.value }))}>
+                <option value="">不配置</option>
+                <option value="open_id">个人 open_id</option>
+                <option value="chat_id">群聊 chat_id</option>
+              </select>
+            </div>
+            <div>
+              <label style={brownLabelStyle}>通知接收ID（可选）</label>
+              <input style={lightInputStyle} value={feishuDraft.notificationReceiveId} onChange={event => setFeishuDraft(prev => ({ ...prev, notificationReceiveId: event.target.value }))} placeholder="与上方类型同时填写，用于风险提醒和个人通知" />
+            </div>
+          </div>
+
           <div style={{ marginTop: 16, padding: 14, borderRadius: 16, background: "rgba(255,255,255,0.52)", border: "1px solid rgba(79,125,104,0.16)", color: "#4e695d", fontSize: "0.82rem", lineHeight: 1.7 }}>
             <div><strong>网页端：</strong>{feishuConnection?.setupHint || "请配置个人飞书应用、多维表格App Token和表ID。"}</div>
             <div style={{ marginTop: 6 }}><strong>本机/Codex直连：</strong>{feishuConnection?.larkCliHint || "如果通过本机脚本直接操作飞书，需要安装并配置 lark-cli。"}</div>
           </div>
 
-          <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 16 }}>
+          <div className="account-action-row" style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 16 }}>
             <button className="btn-primary" onClick={saveFeishuConnection} disabled={feishuSaving}>{feishuSaving ? "保存中..." : "保存个人飞书配置"}</button>
             <button className="btn-secondary" onClick={() => testFeishuConnection(false)} disabled={feishuTesting}>{feishuTesting ? "测试中..." : "测试飞书连接"}</button>
             <button className="btn-secondary" onClick={() => testFeishuConnection(true)} disabled={feishuTesting}>确认写入测试</button>
@@ -919,6 +986,18 @@ export default function AccountPage() {
             </div>
           )}
         </section>
+        <style jsx global>{`
+          @media (max-width: 760px) {
+            .account-page { padding: 12px !important; }
+            .account-stack-mobile { align-items: stretch !important; flex-direction: column !important; }
+            .account-profile-grid { grid-template-columns: minmax(0, 1fr) !important; }
+            .account-responsive-grid { grid-template-columns: minmax(0, 1fr) !important; }
+            .account-action-row { align-items: stretch !important; flex-direction: column !important; }
+            .account-action-row > button { width: 100%; }
+            .account-info-row { grid-template-columns: 44px minmax(0, 1fr) !important; }
+            .account-info-row > button { grid-column: 1 / -1; width: 100%; }
+          }
+        `}</style>
       </div>
     </main>
   );

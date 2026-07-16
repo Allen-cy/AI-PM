@@ -35,6 +35,12 @@ The easiest way to deploy your Next.js app is to use the [Vercel Platform](https
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
 
+## AI-PMO System V6.6.9
+
+V6.6.9 把“个人飞书接入”从填写凭据升级为可验证的正式试点准备流程。用户中心会读取当前业务组织的非敏感八表映射并支持一键复制；连接测试同时校验个人App Token是否指向组织共享Base、项目/里程碑/任务/风险/合同/回款/成本/同步流水八张表是否完全一致。跨Base或表ID不一致会明确失败，避免直到分类确认执行阶段才发现写入目标错误。
+
+用户中心新增个人或群聊通知接收对象配置，补齐后端已支持但页面缺失的风险提醒入口；个人飞书、AI模型和资料区域在375px手机端改为单列，按钮与资料修改入口不会挤出页面。组织模板只返回表ID和来源状态，不返回App Secret或App Token；真实写入测试仍要求用户二次确认。本版本不新增数据库migration，详细说明见`docs/v669-personal-feishu-onboarding.md`。
+
 ## AI-PMO System V6.6.8
 
 V6.6.8 修复登录成功短暂进入主页时的 React hydration mismatch。主页过去在服务端和浏览器首屏分别计算当前时段问候语与当天日期，跨时区或跨渲染时刻可能产生不同文本并触发 React #418。现在服务端和浏览器首屏统一使用确定的占位文本，组件挂载后再按浏览器本地时间更新问候与日期。
