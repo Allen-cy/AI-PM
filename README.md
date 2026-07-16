@@ -35,6 +35,12 @@ The easiest way to deploy your Next.js app is to use the [Vercel Platform](https
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
 
+## AI-PMO System V6.6.2
+
+V6.6.2 收紧四角色职责分离门禁。生产审计发现旧组织中仍有 3 条由同一用户跨角色向自己汇报或升级的活动关系；迁移保留完整历史，将它们暂停并记录原因，不删除原始记录。数据库新增已验证约束，禁止任何同一用户同时成为活动汇报关系的上报人和接收人。
+
+管理员安全中心在提交前同步拒绝同一用户自循环，接收人列表不再提供当前上报人，按钮在身份冲突时保持不可用。四个隔离测试账号及 PM/运营 → PMO → CEO 的有效关系保持不变。生产库已登记 `20260716004254_v662_reporting_separation_guard.sql`，活动自循环为 0，安全审计为 0；详细记录见 `docs/v662-reporting-separation-guard.md`。
+
 ## AI-PMO System V6.6.1
 
 V6.6.1 修复受控试点验收台首次进入时业务身份加载晚于页面初始化，导致顶部已经显示 PMO 身份、正文却错误提示“请先在顶部选择业务身份”并出现大面积空白的问题。业务上下文栏现在在首次解析完成后主动广播已生效身份；试点页面同时从服务端加载当前上下文并显示明确的初始化状态，避免把尚未加载误判成未选择身份。

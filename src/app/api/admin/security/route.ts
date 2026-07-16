@@ -333,7 +333,7 @@ export async function POST(request: Request) {
       const fromRole = businessRole(body.fromBusinessRole);
       const toUserId = text(body.toUserId, "toUserId", 80);
       const toRole = businessRole(body.toBusinessRole);
-      if (fromUserId === toUserId && fromRole === toRole) throw new AdminSecurityError("汇报关系的上报方和接收方不能完全相同", 409);
+      if (fromUserId === toUserId) throw new AdminSecurityError("上报人和接收人必须是不同用户", 409);
       const validFrom = new Date(text(body.validFrom, "validFrom", 80));
       const validUntil = body.validUntil ? new Date(String(body.validUntil)) : null;
       if (!Number.isFinite(validFrom.getTime()) || (validUntil && (!Number.isFinite(validUntil.getTime()) || validUntil < validFrom))) throw new AdminSecurityError("汇报关系有效期不合法");

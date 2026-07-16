@@ -655,6 +655,18 @@ test("P17 exposes a usable role context switcher admin assignment form and proje
   assert.match(project360Page, /管理信号/);
 });
 
+test("V6.6.2 preserves reporting history while prohibiting active same-user loops", () => {
+  const migration = readFileSync("supabase/migrations/20260716004254_v662_reporting_separation_guard.sql", "utf8");
+  const route = readFileSync("src/app/api/admin/security/route.ts", "utf8");
+  const page = readFileSync("src/app/admin/security/page.tsx", "utf8");
+
+  assert.match(migration, /update\s+public\.business_reporting_relationships[\s\S]*?status\s*=\s*'suspended'[\s\S]*?from_user_id\s*=\s*to_user_id/i);
+  assert.match(migration, /business_reporting_relationships_no_active_self_loop[\s\S]*?from_user_id\s*<>\s*to_user_id\s+or\s+status\s*<>\s*'active'/i);
+  assert.match(migration, /audit_v61_database_security\(\)/i);
+  assert.match(route, /fromUserId\s*===\s*toUserId\)\s*throw new AdminSecurityError\("上报人和接收人必须是不同用户"/);
+  assert.match(page, /reportingDraft\.fromUserId\s*===\s*reportingDraft\.toUserId/);
+});
+
 test("project 360 uses canonical UUID joins and filters every lifecycle collection", () => {
   const persistence = readFileSync("src/features/operating-model/persistence.ts", "utf8");
   const route = readFileSync("src/app/api/projects/[id]/360/route.ts", "utf8");
